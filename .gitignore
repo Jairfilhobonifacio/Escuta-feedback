@@ -1,0 +1,21 @@
+# Segredos e sessão — NUNCA commitar
+.env
+waha_qr.png
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+
+# SO/editor
+.DS_Store
+Thumbs.db
+NUL
