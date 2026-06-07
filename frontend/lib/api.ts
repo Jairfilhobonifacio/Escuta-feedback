@@ -56,13 +56,33 @@ export interface ResponseRow {
   score: number | null;
   bucket: string | null;
   text: string | null;
+  /** 'nps' | 'exit' — opcionais enquanto a API antiga (sem o dashboard v2) estiver no ar. */
+  survey_type?: string;
+  survey_name?: string;
   sent_at: string | null;
   closed_at: string | null;
 }
 
+/** Motivo de cancelamento respondido numa exit survey (sem nota). */
+export interface ExitReason {
+  contact_name: string | null;
+  text: string;
+  closed_at: string | null;
+}
+
+export interface ExitBlock {
+  sent: number;
+  answered: number;
+  recent: ExitReason[];
+}
+
 export interface Dashboard {
   org: { slug: string; name: string };
+  /** KPIs de NPS (apenas surveys type='nps'). `kpis` é alias retrocompat de `nps`. */
   kpis: Kpis;
+  nps?: Kpis;
+  /** Exit surveys (churn) — opcional enquanto a API antiga estiver no ar. */
+  exit?: ExitBlock;
   recent: ResponseRow[];
 }
 

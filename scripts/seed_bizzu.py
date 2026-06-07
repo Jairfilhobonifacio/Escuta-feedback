@@ -5,6 +5,9 @@ Cria (ou reaproveita, se já existirem) os dados mínimos para tocar o piloto:
   - Survey 'NPS Bizzu' (type='nps', disparo manual) com perguntas nps + open
   - Survey 'Exit Bizzu' (type='exit', trigger_event='subscription_cancelled' —
     disparada automaticamente pelo POST /api/events/bizzu no churn)
+  - Survey 'CSAT Tópico Bizzu' (type='nps', trigger_event='topic_completed' —
+    disparada quando o aluno conclui um tópico de estudos; reusa o motor NPS
+    0-10 como escala única do produto)
   - N contatos com opt_in=True (--phones)
 
 100% async (SQLAlchemy 2.0: AsyncSession + select()). Toda query filtra por chave
@@ -91,6 +94,35 @@ SURVEYS = [
                 "key": "thanks",
                 "kind": "thanks",
                 "text": "Recebido — obrigado pela sinceridade! 💙 Se mudar de ideia, a porta tá sempre aberta.",
+            },
+        ],
+    },
+    {
+        # CSAT de qualidade do conteúdo do tópico: disparada pelo POST
+        # /api/events/bizzu quando o backend da Bizzu emite 'topic_completed'.
+        # Decisão consciente: reusa o motor NPS 0-10 (uma escala única em todo
+        # o produto — sem parser 1-5).
+        "name": "CSAT Tópico Bizzu",
+        "type": "nps",
+        "trigger_event": "topic_completed",
+        "questions": [
+            {
+                "key": "nps",
+                "kind": "nps",
+                "text": (
+                    "acabou de concluir mais um tópico! 🎯 De 0 a 10, que nota "
+                    "você dá pra qualidade do conteúdo (resumo e questões) desse tópico?"
+                ),
+            },
+            {
+                "key": "reason",
+                "kind": "open",
+                "text": "Valeu! O que faria essa nota virar 10? (pode responder em texto)",
+            },
+            {
+                "key": "thanks",
+                "kind": "thanks",
+                "text": "Anotado! 💙 Obrigado por ajudar a melhorar o Bizzu — bons estudos!",
             },
         ],
     },

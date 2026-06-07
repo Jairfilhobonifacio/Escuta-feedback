@@ -16,7 +16,13 @@ function bucketBadge(bucket: string | null, status: string) {
   if (bucket === "detractor") return <span className="badge detractor">detrator</span>;
   if (status === "sent") return <span className="badge open">aguardando nota</span>;
   if (status === "awaiting_reason") return <span className="badge open">aguardando motivo</span>;
+  if (status === "closed") return <span className="badge neutral">concluída</span>;
   return <span className="badge neutral">{status}</span>;
+}
+
+function typeBadge(type: string) {
+  if (type === "exit") return <span className="badge type t-exit">Exit</span>;
+  return <span className="badge type t-nps">NPS</span>;
 }
 
 function fmtDate(iso: string | null): string {
@@ -60,6 +66,7 @@ export default function DashboardPage() {
   if (!data) return <div className="empty">Carregando…</div>;
 
   const k = data.kpis;
+  const exit = data.exit ?? { sent: 0, answered: 0, recent: [] };
   const total = k.promoters + k.passives + k.detractors;
   const pct = (n: number) => (total ? (n / total) * 100 : 0);
 
@@ -113,22 +120,55 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      <div className="card exit-card">
+        <div className="card-head">
+          <div>
+            <div className="section-title">Motivos de cancelamento</div>
+            <div className="card-head-sub">o que clientes responderam na exit survey ao cancelar</div>
+          </div>
+          <span className="exit-counter">
+            {exit.answered}/{exit.sent} respondida{exit.answered === 1 ? "" : "s"}
+          </span>
+        </div>
+        {exit.recent.length === 0 ? (
+          <div className="empty">
+            <div className="big">🎉</div>
+            Nenhum cancelamento respondido ainda.
+          </div>
+        ) : (
+          <ul className="exit-list">
+            {exit.recent.map((m, i) => (
+              <li key={i} className="exit-item">
+                <div className="exit-quote">“{m.text}”</div>
+                <div className="exit-meta">
+                  {m.contact_name || "sem nome"} · {fmtDate(m.closed_at)}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="card">
+        <div className="card-head">
+          <div className="section-title">Respostas recentes</div>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Contato</th>
+                <th>Pesquisa</th>
                 <th>Nota</th>
                 <th>Classificação</th>
-                <th style={{ width: "40%" }}>Motivo</th>
+                <th style={{ width: "34%" }}>Motivo</th>
                 <th>Enviada</th>
               </tr>
             </thead>
             <tbody>
               {data.recent.length === 0 && (
                 <tr>
-                  <td colSpan={5}>
+                  <td colSpan={6}>
                     <div className="empty">
                       <div className="big">📭</div>
                       Nenhuma pesquisa enviada ainda. Crie uma em <b>Pesquisas</b> e dispare.
@@ -141,6 +181,10 @@ export default function DashboardPage() {
                   <td>
                     <div>{r.contact_name || <span className="faint">sem nome</span>}</div>
                     <div className="mono dim">{r.contact_phone}</div>
+                  </td>
+                  <td>
+                    {r.survey_type ? typeBadge(r.survey_type) : <span className="faint">—</span>}
+                    {r.survey_name && <div className="dim survey-cell-name">{r.survey_name}</div>}
                   </td>
                   <td>
                     <span className={`score-pill ${r.bucket ?? "none"}`}>{r.score ?? "·"}</span>

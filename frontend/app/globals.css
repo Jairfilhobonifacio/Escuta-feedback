@@ -5,7 +5,7 @@
 :root {
   /* paleta */
   --ink-900: #0c2f25;   /* verde-floresta profundo (sidebar) */
-  --ink-800: #11criar3b2f;
+  --ink-800: #113b2f;
   --ink-700: #1b4a3b;
   --paper: #f7f6f2;     /* fundo quente */
   --card: #ffffff;
@@ -177,6 +177,13 @@ tbody tr:hover { background: #fbfaf7; }
 .badge.neutral { background: #eef0ee; color: #5a665f; }
 .badge.open { background: #e8f0fd; color: #2457b8; }
 
+/* tipo de pesquisa (discreto, outline) */
+.badge.type { border: 1px solid; font-weight: 600; }
+.badge.type.t-nps { color: #1b6e44; border-color: #cfe8d8; background: #f4faf6; }
+.badge.type.t-exit { color: #b3433a; border-color: #f0d2cd; background: #fdf5f4; }
+
+.survey-cell-name { font-size: 12px; margin-top: 3px; }
+
 .score-pill {
   display: inline-grid; place-items: center;
   width: 30px; height: 30px; border-radius: 9px;
@@ -263,6 +270,28 @@ tbody tr:hover { background: #fbfaf7; }
   color: var(--text-faint); font-size: 13.5px;
 }
 .empty .big { font-size: 30px; margin-bottom: 8px; }
+
+/* ===== dashboard: cabeçalho de card + motivos de cancelamento (exit) ===== */
+
+.card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid #f0ede6;
+}
+.card-head-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
+
+.exit-card { margin-bottom: 18px; }
+.exit-counter {
+  font-size: 12px; font-weight: 650; white-space: nowrap;
+  color: var(--text-dim); background: #f3f1ea;
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 4px 11px;
+}
+.exit-list { list-style: none; margin: 0; padding: 0; }
+.exit-item { padding: 13px 20px; border-bottom: 1px solid #f0ede6; }
+.exit-item:last-child { border-bottom: none; }
+.exit-quote { font-size: 13.5px; line-height: 1.55; }
+.exit-meta { font-size: 12px; color: var(--text-faint); margin-top: 4px; }
 
 .refresh-note { font-size: 12px; color: var(--text-faint); }
 

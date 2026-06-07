@@ -457,6 +457,265 @@ index ac1a7bf..db0392a 100644
        await this.subscriptionRecovery.enqueueWinback(sub.id);
      }
    }
+diff --git a/src/plano-estudo-ia/plano-estudo-ia.service.spec.ts b/src/plano-estudo-ia/plano-estudo-ia.service.spec.ts
+index 5f8b00c..2f5decb 100644
+--- a/src/plano-estudo-ia/plano-estudo-ia.service.spec.ts
++++ b/src/plano-estudo-ia/plano-estudo-ia.service.spec.ts
+@@ -82,6 +82,7 @@ describe('PlanoEstudoIaService', () => {
+       selectorCacheService as never,
+       editorialTaskQuestionPoolService as never,
+       {} as never,
++      { captureForUser: jest.fn() } as never, // escuta
+       { transaction: (cb: (t: unknown) => Promise<unknown>) => cb({}) } as never,
+     );
+   });
+@@ -1558,6 +1559,7 @@ describe('PlanoEstudoIaService', () => {
+       selectorCacheService as never,
+       editorialTaskQuestionPoolService as never,
+       {} as never,
++      { captureForUser: jest.fn() } as never, // escuta
+       { transaction: (cb: (t: unknown) => Promise<unknown>) => cb({}) } as never,
+     );
+ 
+diff --git a/src/plano-estudo-ia/plano-estudo-ia.service.ts b/src/plano-estudo-ia/plano-estudo-ia.service.ts
+index cb5e2a9..2115001 100644
+--- a/src/plano-estudo-ia/plano-estudo-ia.service.ts
++++ b/src/plano-estudo-ia/plano-estudo-ia.service.ts
+@@ -48,6 +48,7 @@ import {
+ } from './snapshot-goal-distribution.service';
+ import { EditorialTaskQuestionPoolService } from './editorial-task-question-pool.service';
+ import { UserStudyRoutineService } from '../users/user-study-routine.service';
++import { EscutaService } from '../escuta/escuta.service';
+ import { isStudyPlanReadyForStudents } from './study-plan-template-readiness';
+ import { aggregateLogicalTopicProgress } from './logical-topic-progress';
+ import type {
+@@ -72,6 +73,18 @@ import type { SelectorResult, SelectedQuestion } from '../seletor-questoes-ia/se
+ const REVIEW_TOPIC_STATUS_PREFIX = 'REVIEW_TOPIC_';
+ const REVIEW_TOPIC_SELECTION_PREFIX = 'review-item::';
+ 
++/**
++ * Resultado consolidado de checkGoalCompletion. Os contadores consideram
++ * apenas tasks "graded" (taskType !== 'REVISAO'), mesmo critério usado para
++ * destravar a próxima meta.
++ */
++type GoalCompletionResult = {
++  allFinal: boolean;
++  nextGoalUnlocked: boolean;
++  finalizedTaskCount: number;
++  gradedTaskCount: number;
++};
++
+ /**
+  * Normaliza um valor de string para comparacao "fuzzy" entre snapshot
+  * task (subjectName/primaryTopic) e ECMT (materia.nome/topico.nome).
+@@ -138,6 +151,7 @@ export class PlanoEstudoIaService {
+     private readonly selectorCacheService: SelectorCacheService,
+     private readonly editorialTaskQuestionPoolService: EditorialTaskQuestionPoolService,
+     private readonly userStudyRoutineService: UserStudyRoutineService,
++    private readonly escuta: EscutaService,
+     @InjectConnection()
+     private readonly sequelize: Sequelize,
+   ) {}
+@@ -326,13 +340,14 @@ export class PlanoEstudoIaService {
+     }
+     await task.save();
+ 
+-    const { allFinal, nextGoalUnlocked } = await this.checkGoalCompletion(task);
++    const completion = await this.checkGoalCompletion(task);
++    this.notifyEscutaOfTaskCompletion(userId, task, completion);
+ 
+     return {
+       taskId: task.id,
+       status: task.status,
+-      currentGoalCompleted: allFinal,
+-      nextGoalUnlocked,
++      currentGoalCompleted: completion.allFinal,
++      nextGoalUnlocked: completion.nextGoalUnlocked,
+     };
+   }
+ 
+@@ -357,15 +372,16 @@ export class PlanoEstudoIaService {
+     task.status = this.deriveTaskStatusFromBlocks(blockStatus);
+     await task.save();
+ 
+-    const { allFinal, nextGoalUnlocked } = await this.checkGoalCompletion(task);
++    const completion = await this.checkGoalCompletion(task);
++    this.notifyEscutaOfTaskCompletion(userId, task, completion);
+ 
+     return {
+       taskId: task.id,
+       block: blockName,
+       blockStatus: status,
+       taskStatus: task.status,
+-      currentGoalCompleted: allFinal,
+-      nextGoalUnlocked,
++      currentGoalCompleted: completion.allFinal,
++      nextGoalUnlocked: completion.nextGoalUnlocked,
+     };
+   }
+ 
+@@ -985,7 +1001,8 @@ export class PlanoEstudoIaService {
+       completedTopics.length === reviewTopics.length ? 'CONCLUIDA' : 'INICIADA';
+     await task.save();
+ 
+-    const { nextGoalUnlocked } = await this.checkGoalCompletion(task);
++    const completion = await this.checkGoalCompletion(task);
++    this.notifyEscutaOfTaskCompletion(userId, task, completion);
+ 
+     return {
+       taskId: task.id,
+@@ -993,7 +1010,7 @@ export class PlanoEstudoIaService {
+       reviewTopicStatus: 'CONCLUIDA',
+       taskStatus: task.status,
+       completedTopics,
+-      nextGoalUnlocked,
++      nextGoalUnlocked: completion.nextGoalUnlocked,
+     };
+   }
+ 
+@@ -1979,13 +1996,15 @@ export class PlanoEstudoIaService {
+ 
+   private async checkGoalCompletion(
+     task: StudyPlanSnapshotTask,
+-  ): Promise<{ allFinal: boolean; nextGoalUnlocked: boolean }> {
++  ): Promise<GoalCompletionResult> {
+     const tasksInGoal = await this.snapshotTaskModel.findAll({
+       where: { goalId: task.goalId },
+     });
+-    const allFinal = tasksInGoal
+-      .filter((t) => t.taskType !== 'REVISAO')
+-      .every((t) => FINAL_TASK_STATUSES.has(t.status));
++    const gradedTasks = tasksInGoal.filter((t) => t.taskType !== 'REVISAO');
++    const finalizedTaskCount = gradedTasks.filter((t) =>
++      FINAL_TASK_STATUSES.has(t.status),
++    ).length;
++    const allFinal = finalizedTaskCount === gradedTasks.length;
+ 
+     let nextGoalUnlocked = false;
+     if (allFinal) {
+@@ -2005,7 +2024,52 @@ export class PlanoEstudoIaService {
+       }
+     }
+ 
+-    return { allFinal, nextGoalUnlocked };
++    return {
++      allFinal,
++      nextGoalUnlocked,
++      finalizedTaskCount,
++      gradedTaskCount: gradedTasks.length,
++    };
++  }
++
++  /**
++   * Gancho da Central de Feedbacks (Escuta): emite `topic_completed` quando a
++   * task acabou de ser salva como CONCLUIDA (PULADA não conta como conclusão)
++   * e `goal_completed` quando a meta inteira está finalizada.
++   *
++   * Fire-and-forget: captureForUser nunca lança nem bloqueia. A frequência é
++   * controlada do lado do Escuta (dedupe por event_id estável `task:<id>` /
++   * `goal:<id>` + cooldown de 7 dias por contato+survey) — sem throttling aqui.
++   */
++  private notifyEscutaOfTaskCompletion(
++    userId: string,
++    task: StudyPlanSnapshotTask,
++    completion: GoalCompletionResult,
++  ): void {
++    if (task.status === 'CONCLUIDA') {
++      this.escuta.captureForUser(userId, 'topic_completed', `task:${task.id}`, {
++        task_id: task.id,
++        task_type: task.taskType,
++        subject_name: task.subjectName,
++        topic: task.primaryTopic,
++        goal_id: task.goalId,
++        goal_progress:
++          completion.gradedTaskCount > 0
++            ? Math.round(
++                (completion.finalizedTaskCount / completion.gradedTaskCount) * 100,
++              )
++            : null,
++        goal_completed: completion.allFinal,
++      });
++    }
++    if (completion.allFinal) {
++      this.escuta.captureForUser(userId, 'goal_completed', `goal:${task.goalId}`, {
++        goal_id: task.goalId,
++        goal_number: task.goal?.goalNumber ?? null,
++        last_task_id: task.id,
++        tasks_in_goal: completion.gradedTaskCount,
++      });
++    }
+   }
+ 
+   private validateTaskStatus(status: string): void {
+@@ -2490,7 +2554,8 @@ export class PlanoEstudoIaService {
+         task.blockStatusJson = blockStatus;
+         task.status = this.deriveTaskStatusFromBlocks(blockStatus);
+         await task.save();
+-        await this.checkGoalCompletion(task);
++        const completion = await this.checkGoalCompletion(task);
++        this.notifyEscutaOfTaskCompletion(userId, task, completion);
+       }
+     }
+ 
+diff --git a/src/plano-estudo-ia/plano-estudo-ia.snapshot.spec.ts b/src/plano-estudo-ia/plano-estudo-ia.snapshot.spec.ts
+index 0265df1..650a1de 100644
+--- a/src/plano-estudo-ia/plano-estudo-ia.snapshot.spec.ts
++++ b/src/plano-estudo-ia/plano-estudo-ia.snapshot.spec.ts
+@@ -77,6 +77,7 @@ describe('PlanoEstudoIaService snapshot flow', () => {
+       selectorCacheService as never,
+       editorialTaskQuestionPoolService as never,
+       userStudyRoutineService as never,
++      { captureForUser: jest.fn() } as never, // escuta
+       { transaction: (cb: (t: unknown) => Promise<unknown>) => cb({}) } as never,
+     );
+   });
+@@ -515,6 +516,7 @@ describe('PlanoEstudoIaService snapshot flow', () => {
+           { generateCacheKey: jest.fn().mockReturnValue('cache-key-v2') } as never,
+           { getPool: jest.fn() } as never,
+           userStudyRoutineService as never,
++          { captureForUser: jest.fn() } as never, // escuta
+           { transaction: (cb: (t: unknown) => Promise<unknown>) => cb({}) } as never,
+         );
+       };
+diff --git a/src/types/user.types.ts b/src/types/user.types.ts
+index e1eb2c1..ed967e0 100644
+--- a/src/types/user.types.ts
++++ b/src/types/user.types.ts
+@@ -70,6 +70,13 @@ export interface UserPublic {
+   role: UserRole;
+   hasCpf: boolean;
+   hasPassword: boolean;
++  /**
++   * Consentimento específico p/ receber pesquisas/avisos via WhatsApp
++   * (Escuta). Ligado via signup ou PATCH /user/me; ligar exige telefone.
++   */
++  whatsappOptIn: boolean;
++  /** Carimbo de quando o consentimento foi dado. Null quando desligado. */
++  whatsappOptInAt: Date | null;
+   createdAt?: Date;
+   updatedAt?: Date;
+ }
+diff --git a/src/users/dto/update-profile.dto.ts b/src/users/dto/update-profile.dto.ts
+index 019d34f..c3948d4 100644
+--- a/src/users/dto/update-profile.dto.ts
++++ b/src/users/dto/update-profile.dto.ts
+@@ -1,4 +1,4 @@
+-import { IsEmail, IsOptional, IsString } from 'class-validator';
++import { IsBoolean, IsEmail, IsOptional, IsString } from 'class-validator';
+ 
+ export class UpdateProfileDto {
+   @IsOptional()
+@@ -16,4 +16,10 @@ export class UpdateProfileDto {
+   @IsOptional()
+   @IsString()
+   phoneNumber?: string | null;
++
++  // Consentimento p/ receber pesquisas/avisos via WhatsApp (Escuta).
++  // Ligar exige telefone preenchido — regra aplicada no UsersService.
++  @IsOptional()
++  @IsBoolean()
++  whatsappOptIn?: boolean;
+ }
 diff --git a/src/users/user.model.ts b/src/users/user.model.ts
 index 703b2db..595d844 100644
 --- a/src/users/user.model.ts
@@ -483,3 +742,276 @@ index 703b2db..595d844 100644
    @Column({
      type: DataType.TEXT,
      allowNull: true,
+diff --git a/src/users/users.controller.ts b/src/users/users.controller.ts
+index 51279b0..69a55b3 100644
+--- a/src/users/users.controller.ts
++++ b/src/users/users.controller.ts
+@@ -44,6 +44,7 @@ export class UsersController {
+       ultimoNome: dto.ultimoNome,
+       email: dto.email,
+       phoneNumber: dto.phoneNumber,
++      whatsappOptIn: dto.whatsappOptIn,
+     });
+     if (!user) {
+       throw new UnauthorizedException();
+diff --git a/src/users/users.service.ts b/src/users/users.service.ts
+index d27a554..d0ee3d2 100644
+--- a/src/users/users.service.ts
++++ b/src/users/users.service.ts
+@@ -88,7 +88,8 @@ function toUserPublic(user: User, activePlan: ActivePlanSnapshot = null): UserPu
+   const plain = user.get({ plain: true }) as User & { createdAt?: Date; updatedAt?: Date };
+   const {
+     id, primeiroNome, ultimoNome, email, phoneNumber, planoId, pendingPlanoId,
+-    role, cpfEncrypted, passwordHash, createdAt, updatedAt,
++    role, cpfEncrypted, passwordHash, whatsappOptIn, whatsappOptInAt,
++    createdAt, updatedAt,
+   } = plain;
+   const hasActivePlan = activePlan !== null;
+   return {
+@@ -106,6 +107,8 @@ function toUserPublic(user: User, activePlan: ActivePlanSnapshot = null): UserPu
+     role,
+     hasCpf: !!cpfEncrypted,
+     hasPassword: !!passwordHash,
++    whatsappOptIn: !!whatsappOptIn,
++    whatsappOptInAt: whatsappOptInAt ?? null,
+     createdAt,
+     updatedAt,
+   };
+@@ -500,7 +503,13 @@ export class UsersService {
+ 
+   async updateProfile(
+     userId: string,
+-    data: { primeiroNome?: string; ultimoNome?: string; email?: string; phoneNumber?: string | null },
++    data: {
++      primeiroNome?: string;
++      ultimoNome?: string;
++      email?: string;
++      phoneNumber?: string | null;
++      whatsappOptIn?: boolean;
++    },
+   ): Promise<UserPublic | null> {
+     const user = await this.findById(userId);
+     if (!user) {
+@@ -517,6 +526,27 @@ export class UsersService {
+       }
+       user.email = normalized;
+     }
++    // Consentimento de WhatsApp (Escuta). Ligar exige telefone — a checagem
++    // usa o valor JÁ atualizado acima, então "adicionar telefone + ligar" no
++    // mesmo request funciona (e "remover telefone + ligar" rejeita). Carimbo
++    // só na transição OFF→ON, preservando a data original do consentimento
++    // quando o frontend reenvia true; desligar limpa o carimbo.
++    if (data.whatsappOptIn !== undefined) {
++      if (data.whatsappOptIn) {
++        if (!user.phoneNumber) {
++          throw new BadRequestException(
++            'Adicione um telefone para receber mensagens no WhatsApp',
++          );
++        }
++        if (!user.whatsappOptIn || !user.whatsappOptInAt) {
++          user.whatsappOptInAt = new Date();
++        }
++        user.whatsappOptIn = true;
++      } else {
++        user.whatsappOptIn = false;
++        user.whatsappOptInAt = null;
++      }
++    }
+     await user.save();
+     return this.getMe(userId);
+   }
+diff --git a/src/users/users.service.updateProfile.spec.ts b/src/users/users.service.updateProfile.spec.ts
+new file mode 100644
+index 0000000..f66470e
+--- /dev/null
++++ b/src/users/users.service.updateProfile.spec.ts
+@@ -0,0 +1,189 @@
++/**
++ * Tests for UsersService.updateProfile — regras do consentimento de WhatsApp
++ * (Escuta / Central de Feedbacks), via PATCH /user/me.
++ *
++ * Regras:
++ *   - Ligar (whatsappOptIn: true) exige telefone preenchido → BadRequest sem.
++ *   - Ao ligar, carimba whatsappOptInAt = new Date() (só na transição OFF→ON;
++ *     reenviar true quando já ligado preserva o carimbo original do
++ *     consentimento).
++ *   - Ao desligar, whatsappOptIn = false e whatsappOptInAt = null.
++ *   - Telefone enviado no MESMO request conta para a regra (campos são
++ *     aplicados antes da checagem) — tanto para adicionar quanto remover.
++ *
++ * Mocks de estáticos de User/Subscription no padrão dos specs vizinhos
++ * (users.service.setPlan.spec.ts). Sem DB.
++ */
++import { BadRequestException } from '@nestjs/common';
++import { UsersService } from './users.service';
++import { User } from './user.model';
++import { Subscription } from '../payments/subscription.model';
++import type { PlanosService } from '../planos/planos.service';
++import type { CpfEncryptionService } from '../crypto/cpf-encryption.service';
++
++const PHONE = '+5524998365809';
++
++function makeFakeUserInstance(initial: Record<string, unknown> = {}) {
++  const state: Record<string, unknown> = {
++    id: 'user-1',
++    primeiroNome: 'Jair',
++    ultimoNome: 'E2E',
++    email: 'jair.e2e@escuta.test',
++    phoneNumber: null,
++    planoId: null,
++    pendingPlanoId: null,
++    role: 'CANDIDATE',
++    cpfEncrypted: null,
++    passwordHash: null,
++    whatsappOptIn: false,
++    whatsappOptInAt: null,
++    ...initial,
++  };
++  const save = jest.fn().mockResolvedValue(undefined);
++  const instance: Record<string, unknown> = {
++    get: (_opts?: unknown) => ({ ...state }),
++    save,
++  };
++  // Getters/setters espelhando `state` para que as atribuições do service
++  // (user.phoneNumber = ..., user.whatsappOptIn = ...) fiquem visíveis no
++  // `get({ plain: true })` usado pelo getMe/toUserPublic.
++  for (const key of Object.keys(state)) {
++    Object.defineProperty(instance, key, {
++      get: () => state[key],
++      set: (v: unknown) => {
++        state[key] = v;
++      },
++      enumerable: true,
++    });
++  }
++  return { instance, state, save };
++}
++
++function mockReads(instance: unknown) {
++  jest.spyOn(User, 'findByPk').mockResolvedValue(instance as never);
++  // getMe roundtrip pós-save
++  jest.spyOn(User, 'unscoped').mockReturnValue({
++    findByPk: jest.fn().mockResolvedValue(instance),
++  } as never);
++  jest.spyOn(Subscription, 'findOne').mockResolvedValue(null as never);
++}
++
++describe('UsersService.updateProfile — consentimento de WhatsApp', () => {
++  let service: UsersService;
++
++  beforeEach(() => {
++    service = new UsersService(
++      {} as PlanosService,
++      {} as CpfEncryptionService,
++    );
++  });
++
++  afterEach(() => {
++    jest.restoreAllMocks();
++  });
++
++  it('liga com telefone: ativa e carimba whatsappOptInAt', async () => {
++    const { instance, state, save } = makeFakeUserInstance({
++      phoneNumber: PHONE,
++    });
++    mockReads(instance);
++    const before = Date.now();
++
++    const result = await service.updateProfile('user-1', { whatsappOptIn: true });
++
++    expect(state.whatsappOptIn).toBe(true);
++    expect(state.whatsappOptInAt).toBeInstanceOf(Date);
++    expect((state.whatsappOptInAt as Date).getTime()).toBeGreaterThanOrEqual(before);
++    expect(save).toHaveBeenCalled();
++    // exposto no payload público (frontend lê o estado atual daqui)
++    expect(result!.whatsappOptIn).toBe(true);
++    expect(result!.whatsappOptInAt).toBeInstanceOf(Date);
++  });
++
++  it('liga sem telefone: rejeita com BadRequestException e não salva', async () => {
++    const { instance, state, save } = makeFakeUserInstance({
++      phoneNumber: null,
++    });
++    mockReads(instance);
++
++    await expect(
++      service.updateProfile('user-1', { whatsappOptIn: true }),
++    ).rejects.toBeInstanceOf(BadRequestException);
++
++    expect(state.whatsappOptIn).toBe(false);
++    expect(state.whatsappOptInAt).toBeNull();
++    expect(save).not.toHaveBeenCalled();
++  });
++
++  it('desliga: limpa o carimbo', async () => {
++    const { instance, state, save } = makeFakeUserInstance({
++      phoneNumber: PHONE,
++      whatsappOptIn: true,
++      whatsappOptInAt: new Date('2026-06-01T12:00:00Z'),
++    });
++    mockReads(instance);
++
++    const result = await service.updateProfile('user-1', { whatsappOptIn: false });
++
++    expect(state.whatsappOptIn).toBe(false);
++    expect(state.whatsappOptInAt).toBeNull();
++    expect(save).toHaveBeenCalled();
++    expect(result!.whatsappOptIn).toBe(false);
++    expect(result!.whatsappOptInAt).toBeNull();
++  });
++
++  it('liga junto com telefone novo no mesmo request: aceita', async () => {
++    const { instance, state } = makeFakeUserInstance({ phoneNumber: null });
++    mockReads(instance);
++
++    await service.updateProfile('user-1', {
++      phoneNumber: PHONE,
++      whatsappOptIn: true,
++    });
++
++    expect(state.phoneNumber).toBe(PHONE);
++    expect(state.whatsappOptIn).toBe(true);
++    expect(state.whatsappOptInAt).toBeInstanceOf(Date);
++  });
++
++  it('remover telefone e ligar no mesmo request: rejeita', async () => {
++    const { instance, save } = makeFakeUserInstance({ phoneNumber: PHONE });
++    mockReads(instance);
++
++    await expect(
++      service.updateProfile('user-1', { phoneNumber: null, whatsappOptIn: true }),
++    ).rejects.toBeInstanceOf(BadRequestException);
++    expect(save).not.toHaveBeenCalled();
++  });
++
++  it('reenviar true quando já ligado preserva o carimbo original', async () => {
++    const original = new Date('2026-06-01T12:00:00Z');
++    const { instance, state } = makeFakeUserInstance({
++      phoneNumber: PHONE,
++      whatsappOptIn: true,
++      whatsappOptInAt: original,
++    });
++    mockReads(instance);
++
++    await service.updateProfile('user-1', { whatsappOptIn: true });
++
++    expect(state.whatsappOptIn).toBe(true);
++    expect(state.whatsappOptInAt).toBe(original);
++  });
++
++  it('request sem whatsappOptIn não mexe no consentimento', async () => {
++    const original = new Date('2026-06-01T12:00:00Z');
++    const { instance, state } = makeFakeUserInstance({
++      phoneNumber: PHONE,
++      whatsappOptIn: true,
++      whatsappOptInAt: original,
++    });
++    mockReads(instance);
++
++    await service.updateProfile('user-1', { primeiroNome: 'NovoNome' });
++
++    expect(state.primeiroNome).toBe('NovoNome');
++    expect(state.whatsappOptIn).toBe(true);
++    expect(state.whatsappOptInAt).toBe(original);
++  });
++});

@@ -1,3 +1,85 @@
+diff --git a/src/pages/MinhaContaPage.jsx b/src/pages/MinhaContaPage.jsx
+index 5314c97..98d913b 100644
+--- a/src/pages/MinhaContaPage.jsx
++++ b/src/pages/MinhaContaPage.jsx
+@@ -121,6 +121,7 @@ export function DadosCadastraisSection() {
+     ultimoNome: '',
+     email: '',
+     phoneNumber: '',
++    whatsappOptIn: false,
+   })
+   const [isSubmitting, setIsSubmitting] = useState(false)
+   const [isLoading, setIsLoading] = useState(true)
+@@ -143,6 +144,7 @@ export function DadosCadastraisSection() {
+             ultimoNome: data.ultimoNome ?? '',
+             email: data.email ?? '',
+             phoneNumber: data.phoneNumber ?? '',
++            whatsappOptIn: data.whatsappOptIn ?? false,
+           })
+         }
+       })
+@@ -166,9 +168,17 @@ export function DadosCadastraisSection() {
+   }
+ 
+   const onPhoneChange = (value) => {
+-    setForm((prev) => ({ ...prev, phoneNumber: value || '' }))
++    setForm((prev) => ({
++      ...prev,
++      phoneNumber: value || '',
++      // Sem telefone não há como receber WhatsApp — desliga o opt-in junto
++      // (o backend rejeitaria ligar sem telefone).
++      whatsappOptIn: value ? prev.whatsappOptIn : false,
++    }))
+   }
+ 
++  const hasPhone = !!form.phoneNumber && phoneValid
++
+   const onSubmit = async (e) => {
+     e.preventDefault()
+     if (!isFormValid || isSubmitting) return
+@@ -189,6 +199,7 @@ export function DadosCadastraisSection() {
+           ultimoNome: form.ultimoNome.trim(),
+           email: form.email.trim(),
+           phoneNumber: form.phoneNumber || null,
++          whatsappOptIn: form.phoneNumber ? form.whatsappOptIn : false,
+         }),
+       })
+       if (!res.ok) {
+@@ -277,6 +288,34 @@ export function DadosCadastraisSection() {
+             <p className="mt-1 text-xs text-alert">Digite um número de telefone válido.</p>
+           )}
+         </div>
++        {/* Consentimento WhatsApp (Escuta) */}
++        <div>
++          <label
++            className={`flex items-start gap-2 ${
++              hasPhone && !isSubmitting
++                ? 'cursor-pointer'
++                : 'cursor-not-allowed opacity-60'
++            }`}
++          >
++            <input
++              type="checkbox"
++              checked={form.whatsappOptIn}
++              onChange={(e) =>
++                setForm((prev) => ({ ...prev, whatsappOptIn: e.target.checked }))
++              }
++              disabled={isSubmitting || !hasPhone}
++              className="mt-0.5 h-4 w-4 shrink-0 rounded border-charcoal bg-ink accent-[#6C5CE7]"
++            />
++            <span className="text-sm text-silver">
++              Receber pesquisas e avisos do Bizzu no WhatsApp
++            </span>
++          </label>
++          {!hasPhone && (
++            <p className="mt-1 text-xs text-muted">
++              Adicione um celular para ativar.
++            </p>
++          )}
++        </div>
+         {/* CPF */}
+         <div>
+           <label className="block text-sm font-medium text-silver mb-1">
 diff --git a/src/pages/Signup.jsx b/src/pages/Signup.jsx
 index b9fab57..8b7559b 100644
 --- a/src/pages/Signup.jsx

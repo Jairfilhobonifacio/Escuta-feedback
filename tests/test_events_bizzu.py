@@ -1,10 +1,10 @@
-"""Testes do POST /api/events/bizzu (gancho de churn da Bizzu).
+"""Testes do POST /api/events/bizzu (ganchos de evento da Bizzu).
 
 Cobrem autenticação HMAC (segredo ausente/assinatura/timestamp), o casamento
 evento→survey via trigger_event, opt-in, idempotência por event_id, cooldown
-de 7 dias e o fluxo completo: evento → exit survey no canal → resposta do
-contato fecha com answer_text (via SurveyContextResolver, mesmo caminho do
-webhook WAHA).
+de 7 dias e os fluxos completos: churn → exit survey → resposta fecha com
+answer_text; e 'topic_completed' → CSAT no motor NPS 0-10 (nota → motivo →
+closed), ambos via SurveyContextResolver (mesmo caminho do webhook WAHA).
 
 Mesma infra dos testes do admin: httpx ASGITransport + SQLite in-memory +
 FakeMessagingService. O segredo é injetado na dataclass frozen de settings
@@ -115,6 +115,35 @@ async def exit_survey(session, org):
         questions=[
             {"key": "reason", "kind": "open", "text": "O que pesou na decisão de cancelar?"},
             {"key": "thanks", "kind": "thanks", "text": "Obrigado pela sinceridade! 💙"},
+        ],
+    )
+    session.add(s)
+    await session.commit()
+    return s
+
+
+# Textos da survey CSAT (mesmos do scripts/seed_bizzu.py)
+CSAT_NPS_QUESTION = (
+    "acabou de concluir mais um tópico! 🎯 De 0 a 10, que nota "
+    "você dá pra qualidade do conteúdo (resumo e questões) desse tópico?"
+)
+CSAT_REASON_PROMPT = "Valeu! O que faria essa nota virar 10? (pode responder em texto)"
+CSAT_THANKS = "Anotado! 💙 Obrigado por ajudar a melhorar o Bizzu — bons estudos!"
+
+
+@pytest_asyncio.fixture
+async def csat_survey(session, org):
+    """CSAT de tópico: reusa o motor NPS 0-10 (escala única do produto)."""
+    s = Survey(
+        organization_id=org.id,
+        name="CSAT Tópico Bizzu",
+        type="nps",
+        status="active",
+        trigger_event="topic_completed",
+        questions=[
+            {"key": "nps", "kind": "nps", "text": CSAT_NPS_QUESTION},
+            {"key": "reason", "kind": "open", "text": CSAT_REASON_PROMPT},
+            {"key": "thanks", "kind": "thanks", "text": CSAT_THANKS},
         ],
     )
     session.add(s)
@@ -299,6 +328,94 @@ async def test_resposta_do_contato_fecha_com_motivo(client, session, org, exit_s
     assert resp.answer_text == "Achei caro e estou sem tempo de estudar"
     assert resp.answer_score is None  # exit não tem nota
     assert resp.closed_at is not None
+
+
+# --- CSAT 'topic_completed' (motor NPS 0-10 reusado) -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_topic_completed_dispara_csat_nps(client, session, org, csat_survey):
+    """Evento 'topic_completed' → survey CSAT disparada com a pergunta de NOTA
+    (kind='nps') e response nascendo 'sent' (fluxo NPS normal, ≠ exit)."""
+    body = _event_body(event="topic_completed", event_id="evt-topic-1")
+    r = await _post_event(client, body)
+    assert r.status_code == 202, r.text
+    data = r.json()
+    assert data["dispatched"] is True
+    assert data["survey"] == "CSAT Tópico Bizzu"
+    assert data["phone"] == JAIR_DIGITS
+
+    # mensagem enviada é a pergunta de nota (kind='nps'), não a aberta
+    assert len(client.fake_messaging.sent) == 1
+    sent = client.fake_messaging.sent[0]
+    assert sent["chat_id"] == JAIR_DIGITS
+    assert CSAT_NPS_QUESTION in sent["text"]
+
+    contact = (
+        await session.execute(select(Contact).where(Contact.phone == JAIR_DIGITS))
+    ).scalar_one()
+    resp = (
+        await session.execute(select(SurveyResponse).where(SurveyResponse.contact_id == contact.id))
+    ).scalar_one()
+    assert resp.status == "sent"  # NPS aguarda a nota (exit nasceria 'awaiting_reason')
+
+    run = await session.get(SurveyRun, resp.survey_run_id)
+    assert run.trigger == "bizzu:topic_completed:evt-topic-1"
+
+
+@pytest.mark.asyncio
+async def test_fluxo_csat_nota_e_motivo_fecha(client, session, org, csat_survey):
+    """Fluxo completo: evento → '8' vira awaiting_reason c/ answer_score=8 →
+    texto livre fecha (closed), via SurveyContextResolver (caminho do webhook)."""
+    r = await _post_event(client, _event_body(event="topic_completed", event_id="evt-topic-flow"))
+    assert r.json()["dispatched"] is True
+
+    contact = (
+        await session.execute(select(Contact).where(Contact.phone == JAIR_DIGITS))
+    ).scalar_one()
+    resolver = SurveyContextResolver(session, org.id)
+
+    # 1ª resposta: a nota
+    reply = await resolver.resolve(contact.id, "8")
+    await session.commit()
+    assert reply is not None
+    assert reply.closed is False
+    assert reply.text == CSAT_REASON_PROMPT  # pede o "por quê" custom da survey
+
+    resp = (
+        await session.execute(select(SurveyResponse).where(SurveyResponse.contact_id == contact.id))
+    ).scalar_one()
+    assert resp.status == "awaiting_reason"
+    assert resp.answer_score == 8
+    assert resp.nps_bucket == "passive"
+
+    # 2ª resposta: o motivo em texto → fecha
+    reply2 = await resolver.resolve(contact.id, "Mais questões comentadas no resumo")
+    await session.commit()
+    assert reply2 is not None
+    assert reply2.closed is True
+    assert reply2.text == CSAT_THANKS
+
+    resp = (
+        await session.execute(select(SurveyResponse).where(SurveyResponse.contact_id == contact.id))
+    ).scalar_one()
+    assert resp.status == "closed"
+    assert resp.answer_score == 8
+    assert resp.answer_text == "Mais questões comentadas no resumo"
+    assert resp.closed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_dois_topic_completed_seguidos_cooldown(client, org, csat_survey):
+    """Dois 'topic_completed' (event_ids distintos) em sequência → o 2º cai no
+    cooldown de 7 dias (não viram spam a cada tópico concluído)."""
+    r1 = await _post_event(client, _event_body(event="topic_completed", event_id="evt-topic-a"))
+    assert r1.json()["dispatched"] is True
+
+    r2 = await _post_event(client, _event_body(event="topic_completed", event_id="evt-topic-b"))
+    assert r2.status_code == 202
+    assert r2.json()["reason"] == "cooldown"
+    assert len(client.fake_messaging.sent) == 1  # só a 1ª pergunta foi enviada
 
 
 # --- Criação de survey exit via API do painel ------------------------------------

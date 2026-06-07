@@ -49,11 +49,23 @@ async def _get_org(session: AsyncSession) -> Organization:
 
 @router.get("/dashboard")
 async def dashboard(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Dashboard segmentado por tipo de survey.
+
+    - bloco `nps`: KPIs calculados APENAS sobre responses de surveys type='nps'
+      (`kpis` é mantido como alias retrocompatível do mesmo bloco).
+    - bloco `exit`: contadores + últimos motivos das exit surveys (churn) —
+      sem nota, `answer_score` fica NULL nesse tipo.
+    - `recent`: lista geral, cada item ganha `survey_type` e `survey_name`.
+    """
     org = await _get_org(session)
 
-    total = (
+    nps_sent = (
         await session.execute(
-            select(func.count()).select_from(SurveyResponse).where(SurveyResponse.organization_id == org.id)
+            select(func.count())
+            .select_from(SurveyResponse)
+            .join(SurveyRun, SurveyRun.id == SurveyResponse.survey_run_id)
+            .join(Survey, Survey.id == SurveyRun.survey_id)
+            .where(SurveyResponse.organization_id == org.id, Survey.type == "nps")
         )
     ).scalar_one()
 
@@ -61,7 +73,14 @@ async def dashboard(session: AsyncSession = Depends(get_session)) -> dict[str, A
         (
             await session.execute(
                 select(SurveyResponse.nps_bucket, func.count())
-                .where(SurveyResponse.organization_id == org.id, SurveyResponse.answer_score.is_not(None))
+                .select_from(SurveyResponse)
+                .join(SurveyRun, SurveyRun.id == SurveyResponse.survey_run_id)
+                .join(Survey, Survey.id == SurveyRun.survey_id)
+                .where(
+                    SurveyResponse.organization_id == org.id,
+                    SurveyResponse.answer_score.is_not(None),
+                    Survey.type == "nps",
+                )
                 .group_by(SurveyResponse.nps_bucket)
             )
         ).all()
@@ -71,37 +90,104 @@ async def dashboard(session: AsyncSession = Depends(get_session)) -> dict[str, A
     detractors = by_bucket.get("detractor", 0)
     answered = promoters + passives + detractors
 
-    closed = (
+    nps_closed = (
         await session.execute(
             select(func.count())
             .select_from(SurveyResponse)
-            .where(SurveyResponse.organization_id == org.id, SurveyResponse.status == "closed")
+            .join(SurveyRun, SurveyRun.id == SurveyResponse.survey_run_id)
+            .join(Survey, Survey.id == SurveyRun.survey_id)
+            .where(
+                SurveyResponse.organization_id == org.id,
+                SurveyResponse.status == "closed",
+                Survey.type == "nps",
+            )
         )
     ).scalar_one()
 
     nps = round(((promoters - detractors) / answered) * 100) if answered else None
 
-    recent_rows = (
+    # --- exit surveys (churn): sem nota; "respondida" = closed com motivo ----
+    exit_sent = (
+        await session.execute(
+            select(func.count())
+            .select_from(SurveyResponse)
+            .join(SurveyRun, SurveyRun.id == SurveyResponse.survey_run_id)
+            .join(Survey, Survey.id == SurveyRun.survey_id)
+            .where(SurveyResponse.organization_id == org.id, Survey.type == "exit")
+        )
+    ).scalar_one()
+
+    exit_answered = (
+        await session.execute(
+            select(func.count())
+            .select_from(SurveyResponse)
+            .join(SurveyRun, SurveyRun.id == SurveyResponse.survey_run_id)
+            .join(Survey, Survey.id == SurveyRun.survey_id)
+            .where(
+                SurveyResponse.organization_id == org.id,
+                Survey.type == "exit",
+                SurveyResponse.status == "closed",
+                SurveyResponse.answer_text.is_not(None),
+            )
+        )
+    ).scalar_one()
+
+    exit_recent_rows = (
         await session.execute(
             select(SurveyResponse, Contact)
             .join(Contact, Contact.id == SurveyResponse.contact_id)
+            .join(SurveyRun, SurveyRun.id == SurveyResponse.survey_run_id)
+            .join(Survey, Survey.id == SurveyRun.survey_id)
+            .where(
+                SurveyResponse.organization_id == org.id,
+                Survey.type == "exit",
+                SurveyResponse.status == "closed",
+                SurveyResponse.answer_text.is_not(None),
+            )
+            .order_by(SurveyResponse.closed_at.desc())
+            .limit(10)
+        )
+    ).all()
+
+    recent_rows = (
+        await session.execute(
+            select(SurveyResponse, Contact, Survey)
+            .join(Contact, Contact.id == SurveyResponse.contact_id)
+            .join(SurveyRun, SurveyRun.id == SurveyResponse.survey_run_id)
+            .join(Survey, Survey.id == SurveyRun.survey_id)
             .where(SurveyResponse.organization_id == org.id)
             .order_by(SurveyResponse.sent_at.desc())
             .limit(20)
         )
     ).all()
 
+    nps_kpis = {
+        "sent": nps_sent,
+        "answered": answered,
+        "closed": nps_closed,
+        "response_rate": round(answered / nps_sent * 100) if nps_sent else None,
+        "nps": nps,
+        "promoters": promoters,
+        "passives": passives,
+        "detractors": detractors,
+    }
+
     return {
         "org": {"slug": org.slug, "name": org.name},
-        "kpis": {
-            "sent": total,
-            "answered": answered,
-            "closed": closed,
-            "response_rate": round(answered / total * 100) if total else None,
-            "nps": nps,
-            "promoters": promoters,
-            "passives": passives,
-            "detractors": detractors,
+        # `kpis` = alias retrocompatível do bloco `nps` (mesmo conteúdo).
+        "kpis": nps_kpis,
+        "nps": nps_kpis,
+        "exit": {
+            "sent": exit_sent,
+            "answered": exit_answered,
+            "recent": [
+                {
+                    "contact_name": c.name,
+                    "text": r.answer_text,
+                    "closed_at": r.closed_at.isoformat() if r.closed_at else None,
+                }
+                for r, c in exit_recent_rows
+            ],
         },
         "recent": [
             {
@@ -112,10 +198,12 @@ async def dashboard(session: AsyncSession = Depends(get_session)) -> dict[str, A
                 "score": r.answer_score,
                 "bucket": r.nps_bucket,
                 "text": r.answer_text,
+                "survey_type": s.type,
+                "survey_name": s.name,
                 "sent_at": r.sent_at.isoformat() if r.sent_at else None,
                 "closed_at": r.closed_at.isoformat() if r.closed_at else None,
             }
-            for r, c in recent_rows
+            for r, c, s in recent_rows
         ],
     }
 

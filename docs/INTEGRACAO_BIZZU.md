@@ -131,15 +131,39 @@ binding `0.0.0.0` ficou IPv6-only após restart da machine → containers recria
   nome/`bizzu_user_id` sem sobrescrever. Idempotente, `--dry-run` disponível, não
   dispara mensagens. Env `BIZZU_DATABASE_URL` (default = dev local).
 
+## ✅ Rodada de 4 agentes paralelos (07/06/2026, noite — tudo verde)
+
+1. **Toggle opt-in na MinhaConta** (`PATCH /user/me` reusado; ligar exige telefone,
+   carimbo `whatsappOptInAt` só na transição OFF→ON p/ preservar a data original do
+   consentimento; checkbox com estado desabilitado + dica sem telefone). Users specs
+   58/58; validado ao vivo (desligou→religou→carimbo novo→estado restaurado).
+2. **Gancho `topic_completed`** em `plano-estudo-ia.service.ts` via helper único
+   `notifyEscutaOfTaskCompletion` nos **4 caminhos** onde task vira CONCLUIDA
+   (updateTaskStatus L344, updateTaskBlockStatus L376, completeReviewTopicQuestions
+   L1005, createExternalQuestionSession L2558) + **`goal_completed`** quando
+   `checkGoalCompletion` retorna allFinal. `event_id=task:<id>`/`goal:<id>`.
+   Properties: task_type, subject_name, topic, goal_progress, goal_completed.
+   Specs plano-estudo-ia 275/275.
+3. **Survey 'CSAT Tópico Bizzu'** no Escuta (type='nps' — escala 0-10 única do
+   produto; trigger_event='topic_completed'; 3 perguntas c/ thanks custom). Seedada
+   no Supabase (id b18a4736). Suíte 39→40 testes. **Smoke E2E real**: evento assinado
+   → `dispatched=true` → pergunta entregue no WhatsApp.
+4. **Dashboard segmentado por tipo**: KPIs NPS calculados SÓ sobre surveys type='nps'
+   (bloco `nps`, alias `kpis` retrocompat); bloco `exit` novo {sent, answered,
+   recent: últimos 10 motivos}; `recent` geral com `survey_type`/`survey_name` +
+   badges no painel; card "Motivos de cancelamento". Validado visualmente com dados
+   reais (screenshot `_painel_exit_check.png`).
+
 ## Próximos passos sugeridos (ordem)
 
-1. ~~PoC do gancho de churn~~ ✅ feito (acima).
-2. ~~Campo `whatsappOptIn` + checkbox no Signup~~ ✅ feito (acima).
-3. ~~Sync inicial de contatos~~ ✅ feito (`sync_bizzu_contacts.py`; agendar recorrência
-   quando sair do piloto — cron/BullMQ).
-4. Toggle de opt-in na MinhaContaPage (signup cobre só novos usuários; a base atual
-   precisa de um lugar pra consentir — melhor qualidade de opt-in).
-5. Gancho de tópico concluído (CSAT) com throttling (não perguntar toda hora).
-6. radar-editais → notificação de edital novo (canal de valor, não pesquisa).
-7. Apresentar os 2 patches ao time da Bizzu (PR nos repos deles) quando o piloto for aprovado.
-8. Infra: módulo Terraform `escuta-ec2` quando o piloto local validar.
+1. ~~PoC do gancho de churn~~ ✅ · 2. ~~whatsappOptIn + Signup~~ ✅ ·
+   3. ~~Sync de contatos~~ ✅ · 4. ~~Toggle MinhaConta~~ ✅ ·
+   5. ~~Gancho CSAT tópico/meta~~ ✅ · 6. ~~Painel exit vs NPS~~ ✅
+7. Espelho do NPS in-app (`nps.service.ts:101` → evento `nps_submitted`; exige
+   modo "ingest sem disparo" no Escuta — registrar resposta vinda de outro canal).
+8. radar-editais → notificação de edital novo (canal de valor, não pesquisa).
+9. Apresentar os 2 patches ao time da Bizzu (PR nos repos deles) quando o piloto
+   for aprovado — backend 1017 linhas, frontend 127 linhas, tudo com specs verdes.
+10. Backend: desligar opt-in automaticamente se telefone for removido em request
+    que não mencione whatsappOptIn (anotado pelo agente; sender já filtra por phone).
+11. Infra: módulo Terraform `escuta-ec2` quando o piloto local validar.
