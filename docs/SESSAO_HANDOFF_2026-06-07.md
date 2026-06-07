@@ -1,111 +1,90 @@
-# Handoff de Sessão — 07/06/2026 (madrugada)
+# Handoff de Sessão — 07/06/2026 (atualizado à noite)
 
-> Sessão Claude Code `21352788-4d04-488e-a73a-29faf92a27af` (retomar: `claude --resume 21352788-4d04-488e-a73a-29faf92a27af`).
-> Projeto: **Escuta** (`~/Documents/Projetos/escuta`) + stack local da **Bizzu** (`~/Documents/Projetos/bizzu-repos`).
+> Sessões Claude Code: madrugada `21352788-...` (E2E NPS + painel + exploração) e
+> tarde/noite `325c6b65-cd60-449e-813c-014659fd7bb3` (gancho de churn E2E + opt-in + sync).
+> Projeto: **Escuta** (`~/Documents/Projetos/escuta`) + stack local da **Bizzu**
+> (`~/Documents/Projetos/bizzu-repos`).
 
-## ✅ O que foi CONCLUÍDO nesta sessão
+## 🏆 Estado: PoC churn→WhatsApp COMPLETO E VALIDADO E2E (zero mock)
 
-### 1. Funil NPS validado E2E 100% REAL 🏆
-WhatsApp do Jair (self-chat) → WAHA (Podman) → webhook FastAPI → Supabase → resposta automática.
-Resultado no banco: `closed, score=9, bucket=promoter, text='cagada'`.
-**5 bugs de integração corrigidos no caminho** (nenhum aparecia com mock):
-1. uvicorn bindava `127.0.0.1` → `--host 0.0.0.0`
-2. `host.containers.internal` do Podman QUEBRADO → `WHATSAPP_HOOK_URL=http://172.31.176.1:8000/...` (IP do gateway WSL; ⚠️ **dinâmico** — se webhook falhar após reboot: `podman machine ssh "ip route"` e recriar container)
-3. WEBJS devolve `id` como dict → normalizado `_serialized` no dispatcher
-4. Self-chat usa **LID** (`from=...@c.us` / `to=...@lid`, MESMO número) → `resolve_lid` + `_LID_CACHE` + `self_check_to`
-5. **O vilão:** parser só aceitava `event=="message"`; o real é `message.any` → whitelist corrigida
-- Modo `SELF_CHAT_TEST=1` (supressão de eco; **NUNCA em prod**)
-- ⚠️ Pegadinha Windows: py.exe órfão + double-bind silencioso na 8000 → antes de subir: `netstat -ano | grep :8000` + `taskkill //F //PID`
-
-### 2. Política SEM MOCKS
-Banco limpo (`scripts/cleanup_mock_data.py`): contatos fictícios e response mock removidos; contato real renomeado "Jair Filho". `mock_waha.py` DELETADO. `seed_bizzu.py` exige `--phones`. Guard `--force` do dispatch mantido.
-
-### 3. Git inicializado — 3 commits
-`7b5cd4c` (Fase 0) → `f9f1ffb` (API painel) → `7366d54` (frontend+docs). `.gitignore` protege `.env`/`waha_qr.png`/`_painel_*.png`. **SEM remote ainda.**
-
-### 4. Painel web do Escuta NO AR
-- **API admin** (`app/api/admin.py`, 22 testes): `/api/dashboard`, `/api/surveys` (criação dinâmica), `/api/contacts`, `/api/surveys/{id}/dispatch` (real, opt-in, `get_messaging` injetável). CORS p/ 3001.
-- **Frontend Next.js 15** em `frontend/` (porta **3001**; 3000 é do WAHA): Dashboard (NPS/funil/distribuição/recentes, refresh 30s) + Pesquisas (criar/disparar) + Contatos. CSS tokens próprio (verde-floresta + acento WA), sem Tailwind, system fonts.
-- Validado visualmente (Edge headless `--virtual-time-budget=10000`) com dados reais.
-
-### 5. Bizzu explorada por 5 agentes (6 repos clonados)
-Clones em `~/Documents/Projetos/bizzu-repos/` (org GitHub `gabarita-ai`; **leitura pura, nada modificado/enviado**).
-- Consolidado: **`docs/INTEGRACAO_BIZZU.md`**
-- Relatórios íntegros: **`docs/analise-bizzu/{backend,frontend,radar-editais,infra,site-landing}.md`**
-- Descobertas-chave: NestJS+Sequelize+BullMQ na AWS (Terraform); `usuarios.telefone` JÁ existe; NPS in-app básico JÁ existe; SEM webhooks OUT; ganchos de ouro: churn `webhook.service.ts:193` 🥇, tópico `plano-estudo-ia.service.ts:327` 🥈, NPS `nps.service.ts:101` 🥉; **central de atendimentos** (módulo `atendimentos`, schema `suporte`): tickets por EMAIL via SendGrid Inbound Parse (`suporte.bizzu.ai` → `/webhooks/email-inbound`), equipe responde em `/gestao/atendimentos` — é help desk, NÃO CRM completo; sem WhatsApp em NADA.
-
-## 🟡 ONDE PAROU EXATAMENTE: subindo a stack da Bizzu local
-
-| Peça | Estado |
-|---|---|
-| `bizzu-postgres` (Podman, 5432, senha `bizzu_dev_2026`, db `plataforma`) | ✅ UP |
-| `bizzu-redis` (Podman, 6379) | ✅ UP |
-| Migrations Sequelize | ✅ aplicadas (até 20260605) |
-| `backend/.env` (criado por nós) | ✅ PORT=**3100** (3000=WAHA!), placeholders |
-| `frontend/.env.local` | ✅ `VITE_API_URL=http://localhost:3100` |
-| Frontend Vite | ✅ NO AR em **http://localhost:5173** |
-| **API NestJS (3100)** | 🟡 **4ª tentativa de boot em andamento** |
-
-### A novela do boot da API (cada erro = 1 env exigida; ia corrigindo e relançando)
-1. ❌ `NODE_ENV=x nest start` não roda no Windows/cmd → rodar via git-bash: `export NODE_ENV=development && node_modules/.bin/nest start --watch`
-2. ❌ Stripe exige key no construtor → `STRIPE_SECRET_KEY=sk_test_dev_local_placeholder`
-3. ❌ `ENCRYPTION_KEY must be a 64-char hex string` → hex 64 colocado
-4. ❌ `OAuth2Strategy requires a clientID` → GOOGLE_CLIENT_ID/FACEBOOK_APP_ID placeholders (callback ajustado p/ 3100)
-5. 🟡 4ª tentativa relançada — **conferir o log**; pode aparecer NOVA env obrigatória (mesmo padrão: ler erro → placeholder no `.env` → relançar)
-
-### Comandos para retomar (se a máquina reiniciou)
-```bash
-# containers (restart=unless-stopped, devem voltar sozinhos)
-podman start bizzu-postgres bizzu-redis waha
-
-# API Bizzu (3100)
-cd ~/Documents/Projetos/bizzu-repos/backend
-export NODE_ENV=development && export NODE_OPTIONS=--use-system-ca
-node_modules/.bin/nest start --watch
-
-# Frontend Bizzu (5173)
-cd ~/Documents/Projetos/bizzu-repos/frontend && NODE_OPTIONS=--use-system-ca npm run dev
-
-# --- Stack Escuta ---
-# API Escuta (8000) — ANTES: netstat -ano | grep :8000 e matar órfãos!
-cd ~/Documents/Projetos/escuta
-export PYTHONUTF8=1 && set -a && source .env && set +a && export SELF_CHAT_TEST=1
-py -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --log-level warning
-
-# Painel Escuta (3001)
-cd ~/Documents/Projetos/escuta/frontend && NODE_OPTIONS=--use-system-ca npm run dev
-
-# WAHA: container `waha` (sessão WhatsApp persiste no volume waha_sessions)
+```
+POST /user/subscription/cancel (API Bizzu 3100, JWT real)
+  → finishCancel → EscutaService.captureForUser('subscription_cancelled')
+  → POST /api/events/bizzu (HMAC-SHA256 ✓, idempotente, cooldown 7d, opt-in ✓)
+  → survey 'Exit Bizzu' → WAHA → WhatsApp real
+  → resposta do usuário ("Cagada ?") → closed no Supabase (21:20:47 → 21:26:54)
 ```
 
-### Validação pendente da stack Bizzu (assim que a API subir)
-1. `curl http://localhost:3100/health`
-2. Abrir http://localhost:5173 → criar conta de teste (signup) → login
-3. Explorar telas (inclusive `/gestao/atendimentos` exige role MANAGER — promover usuário no banco: `UPDATE usuarios SET role='MANAGER' WHERE email='...'`)
-4. Limitações conhecidas do dev local: IA OFF (sem chaves LLM), banco de questões VAZIO (seeds dependem de SQLite externo), pagamentos/OAuth/email não funcionam (placeholders)
+## ✅ Feito nesta sessão (noite)
 
-## 🗺️ Mapa de portas da máquina
-| Porta | Serviço |
-|---|---|
-| 3000 | WAHA (WhatsApp gateway — Escuta) |
-| 3001 | Painel Escuta (Next.js) |
-| 3100 | API Bizzu local (NestJS) |
-| 5173 | Frontend Bizzu local (Vite) |
-| 5432 | bizzu-postgres |
-| 6379 | bizzu-redis |
-| 8000 | API Escuta (FastAPI) |
+### 1. API Bizzu local NO AR (novela das envs ENCERRADA, 6ª tentativa)
+- `DATABASE_SYNCHRONIZE=false` no `.env` (true fazia o Sequelize tentar `ALTER` de
+  enum `enum_users_role→enum_usuarios_role` e crashar; migrations já aplicadas).
+- **Pegadinha Podman pós-reboot**: forward de portas publicadas como `0.0.0.0`
+  ficou IPv6-only (`[::1]` apenas) → `127.0.0.1` morto (ioredis ECONNREFUSED;
+  Sequelize só conectava porque `localhost` resolve `::1` primeiro no Node).
+  **Fix definitivo**: containers `bizzu-postgres`/`bizzu-redis` RECRIADOS com
+  `-p 127.0.0.1:<porta>:<porta>` reaproveitando os MESMOS volumes (dados intactos).
+- `GEMINI_API_KEY=dev-local-placeholder` (SDK lança com chave vazia no boot).
+
+### 2. Gancho de churn (Escuta) — commit `0953558`
+- `POST /api/events/bizzu` (`app/api/events.py`): HMAC do corpo cru
+  (`hmac(secret, f"{ts}.{body}")`, headers `X-Escuta-Timestamp/Signature`,
+  tolerância 5min), idempotência por event_id (`SurveyRun.trigger =
+  bizzu:<event>:<event_id>`), cooldown 7d por contato+survey, opt-in do emissor
+  (eleva, nunca rebaixa), respostas 202 `{dispatched, reason}`.
+- Survey type **'exit'**: 1ª pergunta `kind='open'`, nasce `awaiting_reason` →
+  resposta fecha (zero mudança na logic). `thanks` custom via `kind='thanks'`.
+- `surveys.trigger_event` (migration `20260607_trigger_event` APLICADA no Supabase).
+- Seed: survey 'Exit Bizzu' (`trigger_event='subscription_cancelled'`) criada.
+- `.env` ganhou `BIZZU_WEBHOOK_SECRET` (compartilhado com o lado Bizzu).
+- **Testes 36/36** (14 novos em `tests/test_events_bizzu.py`).
+
+### 3. Lado Bizzu (NÃO commitado lá — patches em `docs/patches/`)
+- `src/escuta/{escuta.module.ts,escuta.service.ts}`: @Global, espelho do
+  TrackingModule; `captureForUser` fire-and-forget, no-op sem envs.
+- Ganchos nos 3 cancelamentos: `webhook.service.ts`, `subscription.service.ts#finishCancel`,
+  `asaas-overdue-cancellation.service.ts`. `event_id = sub:<externalSubscriptionId|id>`.
+- **whatsappOptIn dedicado**: migration `20260607130000` (APLICADA local) +
+  model + SignupDto + auth.service (carimbo `whatsappOptInAt`; exige telefone) +
+  checkbox condicional no `Signup.jsx` (frontend) + EscutaService usa o campo.
+- Specs deles: payments 27/27 + auth 21/21 (construtores posicionais atualizados).
+- `.env` deles ganhou `ESCUTA_API_URL` + `ESCUTA_WEBHOOK_SECRET`.
+- Patches: `bizzu-backend-escuta-churn-hook.patch` (485 linhas) +
+  `bizzu-frontend-whatsapp-opt-in.patch` (45 linhas).
+
+### 4. Sync de contatos — `scripts/sync_bizzu_contacts.py`
+Upsert 1-sentido (Bizzu→Escuta) de usuários com telefone+whatsappOptIn:
+cria/eleva opt_in/preenche `bizzu_user_id`. Idempotente, `--dry-run`. Rodado:
+contato do Jair vinculado ao user da Bizzu.
+
+## 🗺️ Stack local (tudo NO AR ao fim da sessão)
+| Porta | Serviço | Como religar |
+|---|---|---|
+| 3000 | WAHA (`podman start waha`; sessão WhatsApp persiste) | start + `POST /api/sessions/default/start` se STOPPED |
+| 3001 | Painel Escuta | `cd escuta/frontend && NODE_OPTIONS=--use-system-ca npm run dev` |
+| 3100 | API Bizzu | `cd bizzu-repos/backend && export NODE_ENV=development NODE_OPTIONS=--use-system-ca && node_modules/.bin/nest start --watch` |
+| 5173 | Frontend Bizzu | `cd bizzu-repos/frontend && NODE_OPTIONS=--use-system-ca npm run dev` |
+| 5432/6379 | bizzu-postgres / bizzu-redis (binding 127.0.0.1 explícito) | `podman start bizzu-postgres bizzu-redis` |
+| 8000 | API Escuta (matar órfãos antes! `netstat -ano \| grep :8000`) | `set -a && source .env && set +a && export SELF_CHAT_TEST=1 && py -m uvicorn app.main:app --host 0.0.0.0 --port 8000` |
+
+Dados de teste no postgres Bizzu local: user `jair.e2e@escuta.test` (senha
+`SenhaForte!2026`, whatsappOptIn=t), plano 'Mensal Teste E2E Escuta', assinatura
+CANCELLED (a do E2E). Usuário fictício `optin.e2e` REMOVIDO (sem-mock).
 
 ## ⏭️ Próximos passos (ordem sugerida)
-1. **Terminar boot da API Bizzu** (novela das envs) + signup/login de teste
-2. **PoC do gancho de churn**: `EscutaService` no NestJS deles + `POST /api/events/bizzu` no Escuta → exit survey no WhatsApp
-3. Campo `whatsappOptIn` + checkbox no Signup deles (`Signup.jsx` ~L299)
-4. Sync de contatos Bizzu→Escuta (usuários com telefone + opt-in)
-5. Integração detrator→atendimento (criar ticket na central deles)
-6. Remote do git do Escuta (GitHub) + rotação das credenciais WAHA
+1. Toggle whatsappOptIn na MinhaContaPage (base existente consente por lá)
+2. Gancho 🥈 tópico concluído (CSAT c/ throttling) e espelho do NPS in-app 🥉
+3. radar-editais → aviso de edital novo (canal de valor)
+4. Painel: mostrar respostas de exit survey separadas do NPS (hoje aparecem juntas
+   no recent; exit não tem score)
+5. Remote do git do Escuta (GitHub) + **rotação das credenciais WAHA** (expostas em chats)
+6. Propor PR dos 2 patches ao time da Bizzu (org gabarita-ai)
 7. Fase 1 do produto: clusters/digest/agente IA
 
-## 🔑 Credenciais/refs rápidas (dev local)
-- WAHA: `localhost:3000`, API key `c08468a7d78b4ee1acaf9fb51d775786`, dashboard `admin`/`40107e99f4974e51ac8f0bbada89c8ee`
+## 🔑 Refs rápidas
+- WAHA: `localhost:3000`, key `c08468a7d78b4ee1acaf9fb51d775786` (⚠️ rotacionar)
 - Postgres Bizzu local: `postgres`/`bizzu_dev_2026` @ localhost:5432/plataforma
 - Supabase Escuta: ref `nlqeargxkidygbrahkbk` (PAT em `~\.secrets\supabase_pat_escuta.txt`)
-- Conta WhatsApp pareada: 5524998365809 (Jair) — pareamento persiste no volume `waha_sessions`
+- WhatsApp pareado: 5524998365809 (Jair), self-chat com `SELF_CHAT_TEST=1` (NUNCA em prod)
+- Segredo HMAC Bizzu↔Escuta: nos `.env` dos dois lados (`BIZZU_WEBHOOK_SECRET` / `ESCUTA_WEBHOOK_SECRET`)

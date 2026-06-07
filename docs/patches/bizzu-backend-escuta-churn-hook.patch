@@ -1,3 +1,45 @@
+diff --git a/migrations/20260607130000-add-whatsapp-opt-in-to-usuarios.js b/migrations/20260607130000-add-whatsapp-opt-in-to-usuarios.js
+new file mode 100644
+index 0000000..d3c6aec
+--- /dev/null
++++ b/migrations/20260607130000-add-whatsapp-opt-in-to-usuarios.js
+@@ -0,0 +1,36 @@
++'use strict';
++
++/**
++ * Escuta (Central de Feedbacks via WhatsApp) — opt-in dedicado de WhatsApp.
++ *
++ * Até aqui a integração usava `!marketingOptOut` como proxy de consentimento.
++ * WhatsApp é um canal mais invasivo que email: consentimento específico
++ * (LGPD art. 8º §4º — finalidades determinadas) e auditável.
++ *
++ * Espelha o par `marketingOptOut`/`marketingOptOutAt` já existente:
++ *  - usuarios.whatsappOptIn   — BOOLEAN NOT NULL DEFAULT false (ninguém é
++ *    inscrito retroativamente; só novos consentimentos explícitos).
++ *  - usuarios.whatsappOptInAt — TIMESTAMPTZ nullable, carimbo do consentimento
++ *    (auditoria; null quando nunca consentiu ou após revogação).
++ *
++ * Additive-column migration: segue o idioma do repo (sem transaction wrap
++ * explícito — ver 20260603120100-add-radar-tracking-columns.js).
++ */
++module.exports = {
++  async up(queryInterface, Sequelize) {
++    await queryInterface.addColumn('usuarios', 'whatsappOptIn', {
++      type: Sequelize.BOOLEAN,
++      allowNull: false,
++      defaultValue: false,
++    });
++    await queryInterface.addColumn('usuarios', 'whatsappOptInAt', {
++      type: Sequelize.DATE,
++      allowNull: true,
++    });
++  },
++
++  async down(queryInterface) {
++    await queryInterface.removeColumn('usuarios', 'whatsappOptInAt');
++    await queryInterface.removeColumn('usuarios', 'whatsappOptIn');
++  },
++};
 diff --git a/src/app.module.ts b/src/app.module.ts
 index 30bc86a..188dfec 100644
 --- a/src/app.module.ts
@@ -18,6 +60,50 @@ index 30bc86a..188dfec 100644
      RedisLockModule,
      SequelizeModule.forRootAsync({
        inject: [ConfigService],
+diff --git a/src/auth/auth.service.ts b/src/auth/auth.service.ts
+index b02672f..03626bd 100644
+--- a/src/auth/auth.service.ts
++++ b/src/auth/auth.service.ts
+@@ -26,6 +26,7 @@ export class AuthService {
+     ultimoNome: string;
+     email: string;
+     telefone?: string;
++    whatsappOptIn?: boolean;
+     password: string;
+   }): Promise<User> {
+     const passwordCheck = validatePassword(data.password);
+@@ -42,6 +43,9 @@ export class AuthService {
+     user.ultimoNome = data.ultimoNome;
+     user.email = data.email.toLowerCase();
+     user.phoneNumber = data.telefone ?? null;
++    // Opt-in de WhatsApp só vale com telefone informado; carimbo p/ auditoria.
++    user.whatsappOptIn = Boolean(data.whatsappOptIn && data.telefone);
++    user.whatsappOptInAt = user.whatsappOptIn ? new Date() : null;
+     user.passwordHash = passwordHash;
+     user.planoId = null;
+     user.role = UserRole.CANDIDATE;
+diff --git a/src/auth/dto/signup.dto.ts b/src/auth/dto/signup.dto.ts
+index ea619ba..9a8c937 100644
+--- a/src/auth/dto/signup.dto.ts
++++ b/src/auth/dto/signup.dto.ts
+@@ -1,4 +1,4 @@
+-import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
++import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+ 
+ export class SignupDto {
+   @IsString()
+@@ -16,6 +16,11 @@ export class SignupDto {
+   @IsString()
+   telefone?: string;
+ 
++  // Consentimento específico p/ receber pesquisas/avisos via WhatsApp (Escuta).
++  @IsOptional()
++  @IsBoolean()
++  whatsappOptIn?: boolean;
++
+   @IsString()
+   @IsNotEmpty()
+   password!: string;
 diff --git a/src/escuta/escuta.module.ts b/src/escuta/escuta.module.ts
 new file mode 100644
 index 0000000..0e5cc4e
@@ -43,10 +129,10 @@ index 0000000..0e5cc4e
 +export class EscutaModule {}
 diff --git a/src/escuta/escuta.service.ts b/src/escuta/escuta.service.ts
 new file mode 100644
-index 0000000..29026f4
+index 0000000..48f469e
 --- /dev/null
 +++ b/src/escuta/escuta.service.ts
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,124 @@
 +import { Injectable, Logger } from '@nestjs/common';
 +import { InjectModel } from '@nestjs/sequelize';
 +import { createHmac } from 'crypto';
@@ -133,9 +219,8 @@ index 0000000..29026f4
 +        id: user.id,
 +        name: `${user.primeiroNome} ${user.ultimoNome}`.trim(),
 +        phone: user.phoneNumber,
-+        // TODO(whatsappOptIn): trocar pelo campo dedicado quando existir no
-+        // signup; por ora o consentimento geral de marketing é o proxy.
-+        whatsapp_opt_in: !user.marketingOptOut,
++        // Consentimento específico de WhatsApp (capturado no signup/conta).
++        whatsapp_opt_in: user.whatsappOptIn,
 +      },
 +      properties,
 +    });
@@ -372,3 +457,29 @@ index ac1a7bf..db0392a 100644
        await this.subscriptionRecovery.enqueueWinback(sub.id);
      }
    }
+diff --git a/src/users/user.model.ts b/src/users/user.model.ts
+index 703b2db..595d844 100644
+--- a/src/users/user.model.ts
++++ b/src/users/user.model.ts
+@@ -130,6 +130,21 @@ export class User extends Model<User> {
+   })
+   marketingOptOutAt!: Date | null;
+ 
++  // Consentimento específico p/ WhatsApp (Escuta) — não confundir com o
++  // opt-out genérico de marketing acima. Default false: só entra quem marcar.
++  @Column({
++    type: DataType.BOOLEAN,
++    allowNull: false,
++    defaultValue: false,
++  })
++  whatsappOptIn!: boolean;
++
++  @Column({
++    type: DataType.DATE,
++    allowNull: true,
++  })
++  whatsappOptInAt!: Date | null;
++
+   @Column({
+     type: DataType.TEXT,
+     allowNull: true,

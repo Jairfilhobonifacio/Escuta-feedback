@@ -118,13 +118,28 @@ deve ser `false` (sync tenta ALTER de enum e crasha); forward de portas do Podma
 binding `0.0.0.0` ficou IPv6-only após restart da machine → containers recriados com
 `-p 127.0.0.1:<porta>:<porta>`; boot exige `GEMINI_API_KEY` não-vazia (placeholder).
 
+## ✅ Opt-in dedicado + sync de contatos (07/06/2026, mesma sessão)
+
+- **`usuarios.whatsappOptIn` + `whatsappOptInAt`** (migration `20260607130000`, aplicada
+  local): consentimento específico de WhatsApp com carimbo p/ auditoria LGPD; espelha o
+  par `marketingOptOut`/`At`. Signup só grava `true` se houver telefone. `EscutaService`
+  passou a usar o campo dedicado (proxy `!marketingOptOut` aposentado). Specs auth 21/21.
+- **Checkbox no Signup.jsx**: aparece quando o telefone digitado é válido; microcopy
+  honesta ("sem spam, dá pra sair quando quiser"). Patch: `bizzu-frontend-whatsapp-opt-in.patch`.
+- **`scripts/sync_bizzu_contacts.py`** (repo Escuta): upsert 1-sentido Bizzu→Escuta
+  (telefone + whatsappOptIn + não-deletados): cria com opt_in, eleva opt_in, preenche
+  nome/`bizzu_user_id` sem sobrescrever. Idempotente, `--dry-run` disponível, não
+  dispara mensagens. Env `BIZZU_DATABASE_URL` (default = dev local).
+
 ## Próximos passos sugeridos (ordem)
 
 1. ~~PoC do gancho de churn~~ ✅ feito (acima).
-2. Campo `whatsappOptIn` no model `usuarios` + checkbox no Signup (hoje o proxy é
-   `!marketingOptOut`).
-3. Sync inicial de contatos (usuários ativos c/ telefone + opt-in) → `contacts` do Escuta.
-4. Gancho de tópico concluído (CSAT) com throttling (não perguntar toda hora).
-5. radar-editais → notificação de edital novo (canal de valor, não pesquisa).
-6. Apresentar o patch ao time da Bizzu (PR no repo deles) quando o piloto for aprovado.
-7. Infra: módulo Terraform `escuta-ec2` quando o piloto local validar.
+2. ~~Campo `whatsappOptIn` + checkbox no Signup~~ ✅ feito (acima).
+3. ~~Sync inicial de contatos~~ ✅ feito (`sync_bizzu_contacts.py`; agendar recorrência
+   quando sair do piloto — cron/BullMQ).
+4. Toggle de opt-in na MinhaContaPage (signup cobre só novos usuários; a base atual
+   precisa de um lugar pra consentir — melhor qualidade de opt-in).
+5. Gancho de tópico concluído (CSAT) com throttling (não perguntar toda hora).
+6. radar-editais → notificação de edital novo (canal de valor, não pesquisa).
+7. Apresentar os 2 patches ao time da Bizzu (PR nos repos deles) quando o piloto for aprovado.
+8. Infra: módulo Terraform `escuta-ec2` quando o piloto local validar.

@@ -1,0 +1,45 @@
+diff --git a/src/pages/Signup.jsx b/src/pages/Signup.jsx
+index b9fab57..8b7559b 100644
+--- a/src/pages/Signup.jsx
++++ b/src/pages/Signup.jsx
+@@ -26,6 +26,7 @@ export function SignupPage() {
+     ultimoNome: '',
+     email: '',
+     phoneNumber: '',
++    whatsappOptIn: false,
+     password: '',
+   })
+   const [isSubmitting, setIsSubmitting] = useState(false)
+@@ -132,6 +133,8 @@ export function SignupPage() {
+         ultimoNome: form.ultimoNome.trim(),
+         email: form.email.trim(),
+         telefone: form.phoneNumber || undefined,
++        // consentimento só acompanha telefone informado
++        whatsappOptIn: form.phoneNumber ? form.whatsappOptIn : undefined,
+         password: form.password,
+       }
+       const res = await fetch(`${apiUrl}/auth/signup`, {
+@@ -296,6 +299,23 @@ export function SignupPage() {
+                   Digite um número de telefone válido.
+                 </p>
+               )}
++              {form.phoneNumber && phoneValid && (
++                <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-silver">
++                  <input
++                    type="checkbox"
++                    checked={form.whatsappOptIn}
++                    onChange={(e) =>
++                      setForm((prev) => ({ ...prev, whatsappOptIn: e.target.checked }))
++                    }
++                    disabled={isSubmitting}
++                    className="mt-0.5 shrink-0 accent-indigo"
++                  />
++                  <span>
++                    Topo receber pesquisas e avisos do Bizzu no WhatsApp.{' '}
++                    <span className="text-muted">Sem spam — dá pra sair quando quiser.</span>
++                  </span>
++                </label>
++              )}
+             </div>
+ 
+             <div>
