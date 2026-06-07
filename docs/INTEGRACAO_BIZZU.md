@@ -82,12 +82,49 @@ container na mesma instância. RDS deles ≠ nosso Supabase (mantemos separado; 
 - Fontes: Space Grotesk (títulos) + Inter/DM Sans (corpo) + JetBrains Mono (dados)
 - Gradiente assinatura: `#6C5CE7 → #A78BFA → #F5A623`
 
+## ✅ PoC do gancho de churn — IMPLEMENTADO E VALIDADO E2E (07/06/2026)
+
+Funil real comprovado em dev local: `POST /user/subscription/cancel` (API Bizzu 3100, JWT
+real) → `finishCancel` → `EscutaService.captureForUser('subscription_cancelled')` →
+`POST /api/events/bizzu` (HMAC ok) → survey "Exit Bizzu" → **mensagem entregue no
+WhatsApp real** (channel_msg_id `..._out`).
+
+**Lado Escuta** (commitado neste repo):
+- `POST /api/events/bizzu` (`app/api/events.py`): HMAC-SHA256 (`{ts}.{body}`, tolerância
+  5 min), get-or-create de contato (consentimento vem do emissor; nunca rebaixa),
+  idempotência por `event_id` (`SurveyRun.trigger = bizzu:<event>:<event_id>`),
+  cooldown 7 dias por contato+survey, respostas sempre 202 `{dispatched, reason}`.
+- Survey type **'exit'**: 1ª pergunta `kind='open'`, response nasce `awaiting_reason`
+  (resposta de texto fecha — zero mudança na máquina de estados). `surveys.trigger_event`
+  liga evento→survey (migration `20260607_trigger_event`). Agradecimento custom via
+  pergunta `kind='thanks'`.
+- Env nova: `BIZZU_WEBHOOK_SECRET` (compartilhada com o backend Bizzu).
+
+**Lado Bizzu** (NÃO commitado — clone é leitura; patch completo em
+`docs/patches/bizzu-backend-escuta-churn-hook.patch`):
+- `src/escuta/{escuta.module.ts,escuta.service.ts}` — módulo @Global espelhando o
+  TrackingModule; `captureForUser` fire-and-forget, no-op sem envs (safe em prod),
+  resolve telefone/nome via `User.findByPk`, `whatsapp_opt_in = !marketingOptOut`
+  (proxy até existir o campo dedicado).
+- Ganchos nos 3 cancelamentos: `webhook.service.ts` (PAYMENT_FAILED via provedor),
+  `subscription.service.ts#finishCancel` (USER_CANCEL/GUARANTEE_REFUND) e
+  `asaas-overdue-cancellation.service.ts` (cron de inadimplência). `event_id`
+  estável `sub:<externalSubscriptionId|id>` → dedupe entre fluxo manual e eco do webhook.
+- Specs atualizados (27/27 verdes): novo parâmetro posicional nos construtores.
+- Envs novas: `ESCUTA_API_URL` + `ESCUTA_WEBHOOK_SECRET`.
+
+Pegadinhas de dev local descobertas (detalhe no SESSAO_HANDOFF): `DATABASE_SYNCHRONIZE`
+deve ser `false` (sync tenta ALTER de enum e crasha); forward de portas do Podman p/
+binding `0.0.0.0` ficou IPv6-only após restart da machine → containers recriados com
+`-p 127.0.0.1:<porta>:<porta>`; boot exige `GEMINI_API_KEY` não-vazia (placeholder).
+
 ## Próximos passos sugeridos (ordem)
 
-1. **PoC do gancho de churn** (maior valor, menor esforço): EscutaService mínimo no NestJS +
-   `POST /api/events/bizzu` no Escuta + survey de exit.
-2. Campo `whatsappOptIn` no model `usuarios` + checkbox no Signup.
+1. ~~PoC do gancho de churn~~ ✅ feito (acima).
+2. Campo `whatsappOptIn` no model `usuarios` + checkbox no Signup (hoje o proxy é
+   `!marketingOptOut`).
 3. Sync inicial de contatos (usuários ativos c/ telefone + opt-in) → `contacts` do Escuta.
 4. Gancho de tópico concluído (CSAT) com throttling (não perguntar toda hora).
 5. radar-editais → notificação de edital novo (canal de valor, não pesquisa).
-6. Infra: módulo Terraform `escuta-ec2` quando o piloto local validar.
+6. Apresentar o patch ao time da Bizzu (PR no repo deles) quando o piloto for aprovado.
+7. Infra: módulo Terraform `escuta-ec2` quando o piloto local validar.

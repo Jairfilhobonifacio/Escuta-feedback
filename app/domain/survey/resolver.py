@@ -99,8 +99,12 @@ class SurveyContextResolver:
         run = await self.session.get(SurveyRun, survey_run_id)
         survey = await self.session.get(Survey, run.survey_id) if run else None
         reason_prompt = DEFAULT_REASON_PROMPT
+        thanks_msg = DEFAULT_THANKS_MSG
         if survey and survey.questions:
             reason_q = next((x for x in survey.questions if x.get("kind") == "open"), None)
             if reason_q and reason_q.get("text"):
                 reason_prompt = reason_q["text"]
-        return reason_prompt, DEFAULT_THANKS_MSG, DEFAULT_RETRY_MSG
+            thanks_q = next((x for x in survey.questions if x.get("kind") == "thanks"), None)
+            if thanks_q and thanks_q.get("text"):
+                thanks_msg = thanks_q["text"]
+        return reason_prompt, thanks_msg, DEFAULT_RETRY_MSG

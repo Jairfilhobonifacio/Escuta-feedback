@@ -15,17 +15,25 @@ from typing import Iterable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.interfaces.messaging_service import IMessagingService
-from app.domain.survey.constants import STATUS_SENT
+from app.domain.survey.constants import STATUS_SENT, STATUS_AWAITING_REASON
 from app.models.core import Contact
 from app.models.survey import Survey, SurveyRun, SurveyResponse
 
 
 def _first_question_text(survey: Survey) -> str:
+    # Survey 'exit' não tem etapa de nota: a 1ª (e única) pergunta é a aberta.
+    first_kind = "open" if survey.type == "exit" else "nps"
     for q in (survey.questions or []):
-        if q.get("kind") == "nps":
+        if q.get("kind") == first_kind:
             return q.get("text", "")
     # fallback
     return "De 0 a 10, o quanto você recomendaria a gente para um amigo?"
+
+
+def _initial_status(survey: Survey) -> str:
+    """Survey 'exit' nasce aguardando o texto: a resposta fecha direto
+    (reusa o ramo awaiting_reason de logic.decide_next, sem parse de nota)."""
+    return STATUS_AWAITING_REASON if survey.type == "exit" else STATUS_SENT
 
 
 def _render(template: str, contact: Contact) -> str:
@@ -49,26 +57,29 @@ class SurveyDispatcher:
         self.whatsapp_session = whatsapp_session
         self.delay_seconds = delay_seconds
 
-    async def dispatch(self, survey: Survey, contacts: Iterable[Contact]) -> SurveyRun:
+    async def dispatch(
+        self, survey: Survey, contacts: Iterable[Contact], trigger: str = "manual"
+    ) -> SurveyRun:
         now = datetime.now(timezone.utc)
 
         run = SurveyRun(
             survey_id=survey.id,
             organization_id=self.org_id,
-            trigger="manual",
+            trigger=trigger,
             status="running",
         )
         self.session.add(run)
         await self.session.flush()  # garante run.id
 
         question_text = _first_question_text(survey)
+        initial_status = _initial_status(survey)
 
         for contact in contacts:
             resp = SurveyResponse(
                 survey_run_id=run.id,
                 contact_id=contact.id,
                 organization_id=self.org_id,
-                status=STATUS_SENT,
+                status=initial_status,
                 sent_at=now,
             )
             self.session.add(resp)

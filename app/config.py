@@ -19,6 +19,9 @@ class Settings:
     waha_session: str = os.getenv("WAHA_SESSION", "default")
     # Org do piloto
     default_org_slug: str = os.getenv("DEFAULT_ORG_SLUG", "bizzu")
+    # Segredo compartilhado p/ eventos da Bizzu (HMAC-SHA256). Sem ele o endpoint
+    # /api/events/bizzu responde 503 (integração desligada).
+    bizzu_webhook_secret: str | None = os.getenv("BIZZU_WEBHOOK_SECRET")
     # Modo de teste: aceita mensagens do "chat consigo mesmo" (ver webhook.py).
     # NUNCA ligar em produção — existe só para o E2E com um único número.
     self_chat_test: bool = os.getenv("SELF_CHAT_TEST", "0") == "1"

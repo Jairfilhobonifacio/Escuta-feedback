@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -125,8 +125,15 @@ async def dashboard(session: AsyncSession = Depends(get_session)) -> dict[str, A
 
 class SurveyIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    nps_question: str = Field(min_length=1, max_length=500)
+    # 'nps': nota 0-10 + motivo. 'exit': só a pergunta aberta (ex.: exit survey
+    # de churn) — nps_question é ignorada nesse caso.
+    type: Literal["nps", "exit"] = "nps"
+    nps_question: str | None = Field(default=None, min_length=1, max_length=500)
     reason_prompt: str = Field(min_length=1, max_length=500)
+    thanks_message: str | None = Field(default=None, min_length=1, max_length=500)
+    # Evento que dispara a survey automaticamente via /api/events/* (ex.:
+    # 'subscription_cancelled'). None = apenas disparo manual.
+    trigger_event: str | None = Field(default=None, max_length=120)
 
 
 def _survey_out(s: Survey) -> dict[str, Any]:
@@ -139,6 +146,7 @@ def _survey_out(s: Survey) -> dict[str, Any]:
         "status": s.status,
         "nps_question": nps_q,
         "reason_prompt": reason_q,
+        "trigger_event": s.trigger_event,
         "created_at": s.created_at.isoformat() if s.created_at else None,
     }
 
@@ -169,15 +177,39 @@ async def create_survey(body: SurveyIn, session: AsyncSession = Depends(get_sess
     if exists is not None:
         raise HTTPException(status_code=409, detail=f"já existe uma pesquisa chamada '{body.name}'")
 
+    if body.type == "nps" and not body.nps_question:
+        raise HTTPException(status_code=422, detail="pesquisa NPS exige nps_question")
+
+    if body.trigger_event:
+        trigger_taken = (
+            await session.execute(
+                select(Survey).where(
+                    Survey.organization_id == org.id,
+                    Survey.trigger_event == body.trigger_event,
+                    Survey.status == "active",
+                )
+            )
+        ).scalar_one_or_none()
+        if trigger_taken is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"o evento '{body.trigger_event}' já dispara a pesquisa '{trigger_taken.name}'",
+            )
+
+    questions: list[dict[str, str]] = []
+    if body.type == "nps":
+        questions.append({"key": "nps", "kind": "nps", "text": body.nps_question})
+    questions.append({"key": "reason", "kind": "open", "text": body.reason_prompt})
+    if body.thanks_message:
+        questions.append({"key": "thanks", "kind": "thanks", "text": body.thanks_message})
+
     survey = Survey(
         organization_id=org.id,
         name=body.name,
-        type="nps",
+        type=body.type,
         status="active",
-        questions=[
-            {"key": "nps", "kind": "nps", "text": body.nps_question},
-            {"key": "reason", "kind": "open", "text": body.reason_prompt},
-        ],
+        questions=questions,
+        trigger_event=body.trigger_event,
     )
     session.add(survey)
     await session.commit()

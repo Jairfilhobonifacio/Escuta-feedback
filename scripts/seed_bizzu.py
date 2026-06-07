@@ -2,8 +2,10 @@
 
 Cria (ou reaproveita, se já existirem) os dados mínimos para tocar o piloto:
   - Organization(slug='bizzu', name='Bizzu')
-  - Survey(name='NPS Bizzu', type='nps', status='active') com 2 perguntas (nps + open)
-  - N contatos de teste com opt_in=True
+  - Survey 'NPS Bizzu' (type='nps', disparo manual) com perguntas nps + open
+  - Survey 'Exit Bizzu' (type='exit', trigger_event='subscription_cancelled' —
+    disparada automaticamente pelo POST /api/events/bizzu no churn)
+  - N contatos com opt_in=True (--phones)
 
 100% async (SQLAlchemy 2.0: AsyncSession + select()). Toda query filtra por chave
 única (slug / (org_id, name) / (org_id, phone)) ANTES de inserir, então rodar o
@@ -51,21 +53,49 @@ except Exception:  # python-dotenv ausente ou .env inexistente: seguimos com o a
 ORG_SLUG = "bizzu"
 ORG_NAME = "Bizzu"
 
-SURVEY_NAME = "NPS Bizzu"
-SURVEY_TYPE = "nps"
-SURVEY_STATUS = "active"
-SURVEY_QUESTIONS = [
+SURVEYS = [
     {
-        "key": "nps",
-        "kind": "nps",
-        "text": "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?",
+        "name": "NPS Bizzu",
+        "type": "nps",
+        "trigger_event": None,
+        "questions": [
+            {
+                "key": "nps",
+                "kind": "nps",
+                "text": "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?",
+            },
+            {
+                "key": "reason",
+                "kind": "open",
+                "text": "Massa! 🙌 Por quê? (pode mandar em texto)",
+            },
+        ],
     },
     {
-        "key": "reason",
-        "kind": "open",
-        "text": "Massa! 🙌 Por quê? (pode mandar em texto)",
+        # Exit survey de churn: disparada pelo POST /api/events/bizzu quando o
+        # backend da Bizzu emite 'subscription_cancelled' (EscutaService).
+        "name": "Exit Bizzu",
+        "type": "exit",
+        "trigger_event": "subscription_cancelled",
+        "questions": [
+            {
+                "key": "reason",
+                "kind": "open",
+                "text": (
+                    "vi aqui que você cancelou sua assinatura do Bizzu 😕 "
+                    "Pode me contar em uma frase o que pesou na decisão? "
+                    "Sua resposta vai direto pro time que constrói o produto."
+                ),
+            },
+            {
+                "key": "thanks",
+                "kind": "thanks",
+                "text": "Recebido — obrigado pela sinceridade! 💙 Se mudar de ideia, a porta tá sempre aberta.",
+            },
+        ],
     },
 ]
+SURVEY_STATUS = "active"
 
 # Política do projeto (07/06): SEM dados mockados. O seed não cria mais contatos
 # fictícios — telefones reais via --phones são obrigatórios (org+survey seguem ok).
@@ -128,8 +158,12 @@ async def _get_or_create_org(session, name: str, slug: str):
     return org, True
 
 
-async def _get_or_create_survey(session, organization_id):
-    """get-or-create por (organization_id, name) (unique)."""
+async def _get_or_create_survey(session, organization_id, spec: dict):
+    """get-or-create por (organization_id, name) (unique).
+
+    Se a survey já existe mas ainda não tem trigger_event e o spec define um,
+    atualiza só esse campo (idempotente p/ bases criadas antes da migration).
+    """
     from sqlalchemy import select
     from app.models.survey import Survey
 
@@ -137,19 +171,23 @@ async def _get_or_create_survey(session, organization_id):
         await session.execute(
             select(Survey).where(
                 Survey.organization_id == organization_id,
-                Survey.name == SURVEY_NAME,
+                Survey.name == spec["name"],
             )
         )
     ).scalar_one_or_none()
     if existing is not None:
+        if spec.get("trigger_event") and existing.trigger_event is None:
+            existing.trigger_event = spec["trigger_event"]
+            await session.flush()
         return existing, False
 
     survey = Survey(
         organization_id=organization_id,
-        name=SURVEY_NAME,
-        type=SURVEY_TYPE,
+        name=spec["name"],
+        type=spec["type"],
         status=SURVEY_STATUS,
-        questions=SURVEY_QUESTIONS,
+        questions=spec["questions"],
+        trigger_event=spec.get("trigger_event"),
     )
     session.add(survey)
     await session.flush()
@@ -205,7 +243,11 @@ async def seed(contacts_spec: list[dict[str, str | None]]) -> int:
 
     async with SessionLocal() as session:
         org, org_created = await _get_or_create_org(session, ORG_NAME, ORG_SLUG)
-        survey, survey_created = await _get_or_create_survey(session, org.id)
+
+        survey_results: list[tuple[object, bool]] = []
+        for survey_spec in SURVEYS:
+            survey, created = await _get_or_create_survey(session, org.id, survey_spec)
+            survey_results.append((survey, created))
 
         contact_results: list[tuple[object, bool]] = []
         for spec in contacts_spec:
@@ -222,11 +264,13 @@ async def seed(contacts_spec: list[dict[str, str | None]]) -> int:
         f"Organization: id={org.id} slug={org.slug!r} name={org.name!r} "
         f"[{'criada' if org_created else 'existente'}]"
     )
-    print(
-        f"Survey:       id={survey.id} name={survey.name!r} type={survey.type!r} "
-        f"status={survey.status!r} [{'criado' if survey_created else 'existente'}] "
-        f"({len(survey.questions)} perguntas)"
-    )
+    for survey, survey_created in survey_results:
+        print(
+            f"Survey:       id={survey.id} name={survey.name!r} type={survey.type!r} "
+            f"trigger_event={survey.trigger_event!r} status={survey.status!r} "
+            f"[{'criado' if survey_created else 'existente'}] "
+            f"({len(survey.questions)} perguntas)"
+        )
     print(f"Contatos ({len(contact_results)}):")
     for contact, created in contact_results:
         marca = "criado" if created else "existente"

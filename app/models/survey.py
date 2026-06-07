@@ -31,9 +31,13 @@ class Survey(Base):
         Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String)            # "NPS Bizzu"
-    type: Mapped[str] = mapped_column(String)            # 'nps' (Fase 0)
-    # [{key:'nps', kind:'nps', text:'...'}, {key:'reason', kind:'open', text:'...'}]
+    type: Mapped[str] = mapped_column(String)            # 'nps' | 'exit'
+    # [{key:'nps', kind:'nps', text:'...'}, {key:'reason', kind:'open', text:'...'},
+    #  {key:'thanks', kind:'thanks', text:'...'}]
     questions: Mapped[list] = mapped_column(JSONVariant, default=list)
+    # Evento de ciclo de vida que dispara esta survey automaticamente via
+    # /api/events/* (ex.: 'subscription_cancelled'). NULL = só disparo manual.
+    trigger_event: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="active")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
