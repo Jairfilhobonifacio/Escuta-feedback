@@ -72,14 +72,24 @@ Dados de teste no postgres Bizzu local: user `jair.e2e@escuta.test` (senha
 `SenhaForte!2026`, whatsappOptIn=t), plano 'Mensal Teste E2E Escuta', assinatura
 CANCELLED (a do E2E). Usuário fictício `optin.e2e` REMOVIDO (sem-mock).
 
+## ✅ Rodada de 4 agentes paralelos (noite, commit `47297b7`)
+1. **Toggle MinhaConta** — PATCH /user/me; carimbo só OFF→ON; 58/58; validado ao vivo
+2. **Gancho topic_completed** — 4 caminhos do plano-estudo-ia + goal_completed; 275/275
+3. **Survey CSAT Tópico** — NPS 0-10, trigger topic_completed, no Supabase; smoke
+   E2E real ENTREGUE no WhatsApp (vigia aguardando resposta do user)
+4. **Dashboard segmentado** — KPIs NPS puros + bloco exit c/ motivos + badges; 40/40
+
 ## ⏭️ Próximos passos (ordem sugerida)
-1. Toggle whatsappOptIn na MinhaContaPage (base existente consente por lá)
-2. Gancho 🥈 tópico concluído (CSAT c/ throttling) e espelho do NPS in-app 🥉
+1. **Rotação WAHA** (credenciais novas JÁ em `~/.secrets/waha_*.txt`; troca do
+   container precisa de OK explícito do user — receita: rm -f waha + run com
+   mesma config/volume e WAHA_API_KEY/WAHA_DASHBOARD_PASSWORD novos + atualizar
+   WAHA_API_KEY no .env do escuta + restart 8000 + smoke de envio)
+2. Espelho do NPS in-app 🥉 (`nps.service.ts:101` → `nps_submitted`; exige modo
+   "ingest sem disparo" no Escuta)
 3. radar-editais → aviso de edital novo (canal de valor)
-4. Painel: mostrar respostas de exit survey separadas do NPS (hoje aparecem juntas
-   no recent; exit não tem score)
-5. Remote do git do Escuta (GitHub) + **rotação das credenciais WAHA** (expostas em chats)
-6. Propor PR dos 2 patches ao time da Bizzu (org gabarita-ai)
+4. Remote do git do Escuta (gh CLI não instalado — decidir conta/nome/visibilidade)
+5. Propor PR dos 2 patches ao time da Bizzu (org gabarita-ai) — 1017+127 linhas
+6. Backend Bizzu: desligar optIn se telefone removido sem mencionar o campo (anotado)
 7. Fase 1 do produto: clusters/digest/agente IA
 
 ## 🔑 Refs rápidas
