@@ -19,3 +19,4 @@ frontend/next-env.d.ts
 .DS_Store
 Thumbs.db
 NUL
+_painel_*.png
