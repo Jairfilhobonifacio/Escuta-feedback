@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
+from app.domain.survey.brain import OPT_OUT_CONFIRM_MSG, SurveyBrain
 from app.domain.survey.resolver import (
     DEFAULT_REASON_PROMPT,
     DEFAULT_RETRY_MSG,
@@ -25,6 +26,7 @@ from app.domain.survey.resolver import (
     SurveyContextResolver,
 )
 from app.models.core import Contact, Organization
+from app.services.llm import GroqLLM
 from app.services.waha import WAHAService
 
 logger = logging.getLogger(__name__)
@@ -32,7 +34,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["webhook"])
 
 # Textos que o próprio sistema envia — usados para suprimir eco no modo self-chat.
-_SYSTEM_TEXTS = {DEFAULT_REASON_PROMPT, DEFAULT_THANKS_MSG, DEFAULT_RETRY_MSG}
+# (Respostas dinâmicas do brain são cobertas pelo filtro source=="api".)
+_SYSTEM_TEXTS = {DEFAULT_REASON_PROMPT, DEFAULT_THANKS_MSG, DEFAULT_RETRY_MSG, OPT_OUT_CONFIRM_MSG}
+
+
+def _make_brain() -> SurveyBrain | None:
+    """SurveyBrain quando o LLM está configurado; None = fluxo determinístico puro."""
+    if not settings.llm_enabled or not settings.groq_api_key:
+        return None
+    return SurveyBrain(GroqLLM(settings.groq_api_key, settings.groq_model))
 
 # Cache de processo LID -> telefone (mapeamento estável; evita 1 GET por mensagem).
 _LID_CACHE: dict[str, str] = {}
@@ -230,7 +240,7 @@ async def waha_webhook(request: Request, session: AsyncSession = Depends(get_ses
             await session.flush()  # materializa contact.id para o resolver.
 
         # --- resolução de pesquisa -----------------------------------------
-        resolver = SurveyContextResolver(session, org.id)
+        resolver = SurveyContextResolver(session, org.id, brain=_make_brain())
         reply = await resolver.resolve(contact.id, body)
 
         if reply is not None:

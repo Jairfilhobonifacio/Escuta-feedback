@@ -184,6 +184,8 @@ async def dashboard(session: AsyncSession = Depends(get_session)) -> dict[str, A
                 {
                     "contact_name": c.name,
                     "text": r.answer_text,
+                    "sentiment": r.sentiment,
+                    "themes": r.themes,
                     "closed_at": r.closed_at.isoformat() if r.closed_at else None,
                 }
                 for r, c in exit_recent_rows
@@ -200,6 +202,8 @@ async def dashboard(session: AsyncSession = Depends(get_session)) -> dict[str, A
                 "text": r.answer_text,
                 "survey_type": s.type,
                 "survey_name": s.name,
+                "sentiment": r.sentiment,
+                "themes": r.themes,
                 "sent_at": r.sent_at.isoformat() if r.sent_at else None,
                 "closed_at": r.closed_at.isoformat() if r.closed_at else None,
             }

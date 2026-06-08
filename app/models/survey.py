@@ -79,6 +79,11 @@ class SurveyResponse(Base):
     answer_score: Mapped[int | None] = mapped_column(Integer, nullable=True)   # 0..10
     nps_bucket: Mapped[str | None] = mapped_column(String, nullable=True)      # promoter/passive/detractor
     answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)       # motivo (follow-up)
+    # Enriquecimento por IA (SurveyBrain.classify_feedback) — tudo nullable:
+    # ausência = não classificado (LLM off/erro), nunca bloqueia o fluxo.
+    sentiment: Mapped[str | None] = mapped_column(String, nullable=True)       # positivo/neutro/negativo
+    themes: Mapped[list | None] = mapped_column(JSONVariant, nullable=True)    # ["preço", ...]
+    ai_meta: Mapped[dict | None] = mapped_column(JSONVariant, nullable=True)   # urgency, opt_out, modelo...
     channel_msg_id: Mapped[str | None] = mapped_column(String, nullable=True)  # waha id da pergunta
     sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
     answered_at: Mapped[datetime | None] = mapped_column(nullable=True)

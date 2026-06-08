@@ -1,6 +1,15 @@
 """App FastAPI do Escuta — coleta de feedback por WhatsApp (multi-tenant)."""
 from __future__ import annotations
 
+# Pegadinha desta máquina: antivírus intercepta TLS e o CA dele não está no
+# bundle do certifi → chamadas HTTPS externas (Groq) falham com
+# CERTIFICATE_VERIFY_FAILED. O truststore faz o SSL usar o repositório de
+# certificados do SO (que confia no CA do antivírus). Precisa rodar ANTES de
+# qualquer conexão TLS. Não afeta WAHA (http local) nem Supabase (asyncpg).
+import truststore
+
+truststore.inject_into_ssl()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
