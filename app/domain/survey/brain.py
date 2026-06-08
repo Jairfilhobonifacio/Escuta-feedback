@@ -53,6 +53,19 @@ Regras (groundedness é inegociável):
 - Se os trechos NÃO contêm a resposta (ou só tangenciam): answerable=false, answer=null. É melhor não responder do que inventar.
 - Nunca cite "segundo os trechos" / "de acordo com o contexto": fale natural, como um atendente que conhece a empresa."""
 
+_DIGEST_SYSTEM = """Você é o chief of staff de Voz do Cliente de uma empresa, escrevendo o resumo SEMANAL para o dono no WhatsApp (português brasileiro).
+Recebe os números da semana em JSON. Escreva uma mensagem CURTA (no máximo ~8 linhas), humana e acionável. Responda SOMENTE com JSON válido:
+
+{"message": "<texto pronto para enviar no WhatsApp>"}
+
+Regras:
+- Comece com uma saudação curta e o período ("Resumo da sua semana 👋").
+- Destaque o NÚMERO-CHAVE: NPS e a variação vs semana anterior (subiu/caiu X pontos), se houver.
+- Aponte 1-2 destaques REAIS dos dados: temas mais citados, casos urgentes, motivos de cancelamento. Cite no máximo 1 frase curta de cliente, se houver.
+- Termine com UMA sugestão de ação concreta baseada nos dados (não genérica).
+- Use no MÁXIMO 2-3 emojis no total. NÃO use markdown (nem **, nem #, nem listas com -). Quebras de linha simples para separar ideias.
+- Não invente números que não estão no JSON. Se a semana foi fraca em dados, seja honesto e breve."""
+
 _CLASSIFY_SYSTEM = """Você classifica feedback de clientes (português brasileiro) para um painel de Voz do Cliente.
 Responda SOMENTE com JSON válido:
 
@@ -139,6 +152,23 @@ class SurveyBrain:
         if not answer:
             return None
         return str(answer).strip()[:600] or None
+
+    async def narrate_digest(self, data: dict) -> Optional[str]:
+        """Narra os números da semana num texto pronto pro WhatsApp do dono.
+
+        Recebe DigestData.as_dict(). Retorna a mensagem ou None (LLM indisponível
+        ou resposta inválida) — quem chama tem um fallback determinístico.
+        """
+        import json
+
+        user = "Números da semana (JSON):\n" + json.dumps(data, ensure_ascii=False)
+        out = await self.llm.chat_json(_DIGEST_SYSTEM, user)
+        if not out:
+            return None
+        msg = out.get("message")
+        if not msg or not str(msg).strip():
+            return None
+        return str(msg).strip()[:1500]
 
     async def classify_feedback(
         self, answer_text: str, score: Optional[int], survey_name: str

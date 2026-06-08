@@ -20,3 +20,4 @@ frontend/next-env.d.ts
 Thumbs.db
 NUL
 _painel_*.png
+scripts/_watch_run.py
