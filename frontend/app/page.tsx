@@ -25,6 +25,43 @@ function typeBadge(type: string) {
   return <span className="badge type t-nps">NPS</span>;
 }
 
+const SENT_META: Record<string, { cls: string; label: string }> = {
+  positivo: { cls: "s-pos", label: "positivo" },
+  neutro: { cls: "s-neu", label: "neutro" },
+  negativo: { cls: "s-neg", label: "negativo" },
+};
+
+/** Badge de sentimento da IA. Retorna null se ausente/desconhecido (não polui). */
+function sentimentBadge(sentiment?: string | null) {
+  if (!sentiment) return null;
+  const m = SENT_META[sentiment];
+  if (!m) return null;
+  return <span className={`badge sent ${m.cls}`}>{m.label}</span>;
+}
+
+/** Chips de tema da IA. Retorna null se a lista estiver vazia/ausente. */
+function themeChips(themes?: string[] | null) {
+  if (!themes || themes.length === 0) return null;
+  return (
+    <div className="theme-chips">
+      {themes.map((t, i) => (
+        <span key={`${t}-${i}`} className="chip">{t}</span>
+      ))}
+    </div>
+  );
+}
+
+/** Conta os temas de todas as respostas e devolve os mais citados (desc). */
+function topThemes(rows: { themes?: string[] | null }[], limit = 5): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    for (const t of r.themes ?? []) {
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -69,6 +106,7 @@ export default function DashboardPage() {
   const exit = data.exit ?? { sent: 0, answered: 0, recent: [] };
   const total = k.promoters + k.passives + k.detractors;
   const pct = (n: number) => (total ? (n / total) * 100 : 0);
+  const themesTop = topThemes(data.recent);
 
   return (
     <div>
@@ -142,7 +180,9 @@ export default function DashboardPage() {
                 <div className="exit-quote">“{m.text}”</div>
                 <div className="exit-meta">
                   {m.contact_name || "sem nome"} · {fmtDate(m.closed_at)}
+                  {sentimentBadge(m.sentiment) && <> · {sentimentBadge(m.sentiment)}</>}
                 </div>
+                {themeChips(m.themes)}
               </li>
             ))}
           </ul>
@@ -153,6 +193,18 @@ export default function DashboardPage() {
         <div className="card-head">
           <div className="section-title">Respostas recentes</div>
         </div>
+        {themesTop.length > 0 && (
+          <div className="themes-summary">
+            <span className="themes-summary-label">Temas mais citados</span>
+            <div className="theme-chips">
+              {themesTop.map(([t, n]) => (
+                <span key={t} className="chip">
+                  {t}<span className="chip-count">{n}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="table-wrap">
           <table>
             <thead>
@@ -161,14 +213,15 @@ export default function DashboardPage() {
                 <th>Pesquisa</th>
                 <th>Nota</th>
                 <th>Classificação</th>
-                <th style={{ width: "34%" }}>Motivo</th>
+                <th>Sentimento</th>
+                <th style={{ width: "30%" }}>Motivo</th>
                 <th>Enviada</th>
               </tr>
             </thead>
             <tbody>
               {data.recent.length === 0 && (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={7}>
                     <div className="empty">
                       <div className="big">📭</div>
                       Nenhuma pesquisa enviada ainda. Crie uma em <b>Pesquisas</b> e dispare.
@@ -190,7 +243,11 @@ export default function DashboardPage() {
                     <span className={`score-pill ${r.bucket ?? "none"}`}>{r.score ?? "·"}</span>
                   </td>
                   <td>{bucketBadge(r.bucket, r.status)}</td>
-                  <td>{r.text ? r.text : <span className="faint">—</span>}</td>
+                  <td>{sentimentBadge(r.sentiment) ?? <span className="faint">—</span>}</td>
+                  <td>
+                    {r.text ? r.text : <span className="faint">—</span>}
+                    {themeChips(r.themes)}
+                  </td>
                   <td className="dim">{fmtDate(r.sent_at)}</td>
                 </tr>
               ))}

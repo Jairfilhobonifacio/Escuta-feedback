@@ -26,6 +26,7 @@ from app.domain.survey.resolver import (
     SurveyContextResolver,
 )
 from app.models.core import Contact, Organization
+from app.services.embeddings import EmbeddingService, get_embedder
 from app.services.llm import GroqLLM
 from app.services.waha import WAHAService
 
@@ -43,6 +44,13 @@ def _make_brain() -> SurveyBrain | None:
     if not settings.llm_enabled or not settings.groq_api_key:
         return None
     return SurveyBrain(GroqLLM(settings.groq_api_key, settings.groq_model))
+
+
+def _make_embedder() -> EmbeddingService | None:
+    """Embedder (RAG) quando o LLM está ligado; singleton lazy de processo."""
+    if not settings.llm_enabled:
+        return None
+    return get_embedder()
 
 # Cache de processo LID -> telefone (mapeamento estável; evita 1 GET por mensagem).
 _LID_CACHE: dict[str, str] = {}
@@ -240,7 +248,9 @@ async def waha_webhook(request: Request, session: AsyncSession = Depends(get_ses
             await session.flush()  # materializa contact.id para o resolver.
 
         # --- resolução de pesquisa -----------------------------------------
-        resolver = SurveyContextResolver(session, org.id, brain=_make_brain())
+        resolver = SurveyContextResolver(
+            session, org.id, brain=_make_brain(), embedder=_make_embedder()
+        )
         reply = await resolver.resolve(contact.id, body)
 
         if reply is not None:

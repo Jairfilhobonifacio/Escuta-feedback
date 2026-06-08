@@ -28,6 +28,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.knowledge.retriever import KnowledgeBase
 from app.domain.survey.brain import OPT_OUT_CONFIRM_MSG, SurveyBrain
 from app.domain.survey.constants import (
     STATUS_SENT,
@@ -39,6 +40,7 @@ from app.domain.survey.logic import decide_next
 from app.domain.survey.parsers import nps_bucket
 from app.models.core import Contact
 from app.models.survey import Survey, SurveyRun, SurveyResponse
+from app.services.embeddings import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +67,15 @@ class SurveyContextResolver:
         organization_id: uuid.UUID,
         window: timedelta = DEFAULT_WINDOW,
         brain: SurveyBrain | None = None,
+        embedder: EmbeddingService | None = None,
     ):
         self.session = session
         self.org_id = organization_id
         self.window = window
         self.brain = brain
+        # embedder presente ⇒ o intent "question" tenta RAG (corpus da org) antes
+        # de cair na resposta genérica. Sem ele, comportamento atual preservado.
+        self.embedder = embedder
 
     async def resolve(self, contact_id: uuid.UUID, message: str) -> Optional[SurveyReply]:
         """Retorna o que responder, ou None se o contato não tem pesquisa pendente."""
@@ -179,9 +185,14 @@ class SurveyContextResolver:
                 closed=True,  # nada mais pendente p/ este contato
             )
 
-        if intent.kind == "question" and intent.reply:
-            # Responde a dúvida e MANTÉM a pesquisa pendente (status intacto).
-            text = f"{intent.reply}\n\nQuando puder, me manda a notinha de 0 a 10 🙂"
+        if intent.kind == "question":
+            # RAG: tenta responder com fatos do corpus da org (grounded). Se o
+            # corpus não cobre, cai na resposta genérica do brain; sem nenhuma
+            # das duas, vira retry determinístico (nunca inventa).
+            answer = await self._answer_question(message) or intent.reply
+            if not answer:
+                return None
+            text = f"{answer}\n\nQuando puder, me manda a notinha de 0 a 10 🙂"
             return SurveyReply(
                 text=text,
                 survey_response_id=str(pending.id),
@@ -189,6 +200,18 @@ class SurveyContextResolver:
             )
 
         return None  # unclear → retry determinístico
+
+    async def _answer_question(self, message: str) -> Optional[str]:
+        """Resposta grounded via RAG, ou None (sem embedder/corpus/match)."""
+        if self.embedder is None or self.brain is None:
+            return None
+        try:
+            kb = KnowledgeBase(self.session, self.org_id, self.embedder)
+            chunks = await kb.search(message)
+            return await self.brain.answer_from_context(message, chunks)
+        except Exception:  # noqa: BLE001 — RAG é best-effort; nunca derruba o webhook.
+            logger.warning("RAG: busca/resposta falhou — caindo no genérico", exc_info=True)
+            return None
 
     async def _classify(self, pending: SurveyResponse) -> None:
         """Classificação multi-eixo do feedback no fechamento (best-effort)."""

@@ -42,6 +42,17 @@ Regras:
 - "unclear": qualquer outra coisa (emoji solto, "ok", assunto aleatório sem pergunta). reply=null.
 - Sarcasmo/ironia ("nota mil", "menos mil") NÃO é nota válida 0-10: trate como "unclear", score=null."""
 
+_ANSWER_SYSTEM = """Você é o assistente de uma empresa no WhatsApp (português brasileiro), respondendo uma dúvida de um cliente.
+Você recebe TRECHOS DE CONHECIMENTO da empresa e a PERGUNTA do cliente. Responda SOMENTE com JSON válido:
+
+{"answerable": true | false, "answer": "<string ou null>"}
+
+Regras (groundedness é inegociável):
+- Use APENAS informação contida nos trechos. NÃO use conhecimento geral seu, NÃO invente preços, prazos, políticas ou números.
+- Se os trechos respondem a pergunta: answerable=true e "answer" = resposta curta (1-3 frases), calorosa, em português, SEM markdown, parafraseando os trechos.
+- Se os trechos NÃO contêm a resposta (ou só tangenciam): answerable=false, answer=null. É melhor não responder do que inventar.
+- Nunca cite "segundo os trechos" / "de acordo com o contexto": fale natural, como um atendente que conhece a empresa."""
+
 _CLASSIFY_SYSTEM = """Você classifica feedback de clientes (português brasileiro) para um painel de Voz do Cliente.
 Responda SOMENTE com JSON válido:
 
@@ -110,6 +121,24 @@ class SurveyBrain:
             reply = None
 
         return BrainIntent(kind=kind, score=score, reply=reply)
+
+    async def answer_from_context(self, question: str, chunks: list) -> Optional[str]:
+        """Resposta grounded a uma dúvida, usando SÓ os trechos recuperados.
+
+        chunks: itens com .title e .content (RetrievedChunk). Sem chunks ou
+        LLM julgando não-respondível ⇒ None (quem chama cai no fallback honesto).
+        """
+        if not chunks:
+            return None
+        context = "\n\n".join(f"[{getattr(c, 'title', '')}]\n{getattr(c, 'content', '')}" for c in chunks)
+        user = f"TRECHOS DE CONHECIMENTO:\n{context}\n\nPERGUNTA DO CLIENTE: {question!r}"
+        data = await self.llm.chat_json(_ANSWER_SYSTEM, user)
+        if not data or not data.get("answerable"):
+            return None
+        answer = data.get("answer")
+        if not answer:
+            return None
+        return str(answer).strip()[:600] or None
 
     async def classify_feedback(
         self, answer_text: str, score: Optional[int], survey_name: str

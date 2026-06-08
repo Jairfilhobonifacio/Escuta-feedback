@@ -59,6 +59,9 @@ export interface ResponseRow {
   /** 'nps' | 'exit' — opcionais enquanto a API antiga (sem o dashboard v2) estiver no ar. */
   survey_type?: string;
   survey_name?: string;
+  /** Enriquecimento por IA (SurveyBrain) — null/ausente = feedback antigo ou não classificado. */
+  sentiment?: string | null;
+  themes?: string[] | null;
   sent_at: string | null;
   closed_at: string | null;
 }
@@ -67,6 +70,9 @@ export interface ResponseRow {
 export interface ExitReason {
   contact_name: string | null;
   text: string;
+  /** Enriquecimento por IA (SurveyBrain) — null/ausente = feedback antigo ou não classificado. */
+  sentiment?: string | null;
+  themes?: string[] | null;
   closed_at: string | null;
 }
 
