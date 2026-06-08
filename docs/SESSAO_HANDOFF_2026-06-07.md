@@ -79,18 +79,29 @@ CANCELLED (a do E2E). Usuário fictício `optin.e2e` REMOVIDO (sem-mock).
    E2E real ENTREGUE no WhatsApp (vigia aguardando resposta do user)
 4. **Dashboard segmentado** — KPIs NPS puros + bloco exit c/ motivos + badges; 40/40
 
+## 🧠🔎 Camadas de IA NO AR (08/06, commits `acacbbe` + `2fe982b`)
+- **SurveyBrain (Groq)**: resposta natural vira nota; opt-out desliga o contato;
+  pergunta é respondida; feedback classificado (sentiment/themes/urgency). Chave
+  reusada do voz-control; `truststore` no main.py (TLS Avast).
+- **RAG**: intent "question" busca o corpus da org (pgvector + embeddings locais
+  MiniLM, offline) e responde grounded com gating duplo. Corpus `docs/corpus_bizzu/`
+  (33 chunks). Re-ingerir: `py scripts/ingest_knowledge.py`.
+- Fallback total: IA off / LLM erro / sem corpus = Fase 0 byte-a-byte. 59/59 testes.
+
 ## ⏭️ Próximos passos (ordem sugerida)
 1. **Rotação WAHA** (credenciais novas JÁ em `~/.secrets/waha_*.txt`; troca do
    container precisa de OK explícito do user — receita: rm -f waha + run com
    mesma config/volume e WAHA_API_KEY/WAHA_DASHBOARD_PASSWORD novos + atualizar
    WAHA_API_KEY no .env do escuta + restart 8000 + smoke de envio)
-2. Espelho do NPS in-app 🥉 (`nps.service.ts:101` → `nps_submitted`; exige modo
-   "ingest sem disparo" no Escuta)
-3. radar-editais → aviso de edital novo (canal de valor)
-4. Remote do git do Escuta (gh CLI não instalado — decidir conta/nome/visibilidade)
-5. Propor PR dos 2 patches ao time da Bizzu (org gabarita-ai) — 1017+127 linhas
-6. Backend Bizzu: desligar optIn se telefone removido sem mencionar o campo (anotado)
-7. Fase 1 do produto: clusters/digest/agente IA
+2. **Digest semanal (camada 4)**: SQL conta (NPS/temas/urgências da semana) + LLM
+   narra → WhatsApp do dono. Anti-churn proativo (o "aha" do produto).
+3. `scripts/backfill_ai_tags.py`: reclassificar responses históricas sem sentiment.
+4. Espelho do NPS in-app 🥉 (`nps.service.ts:101` → `nps_submitted`; modo ingest-sem-disparo)
+5. radar-editais → aviso de edital novo (canal de valor)
+6. Remote do git do Escuta (gh CLI não instalado — decidir conta/nome/visibilidade)
+7. Propor PR dos 3 patches ao time da Bizzu (org gabarita-ai)
+8. Backend Bizzu: desligar optIn se telefone removido sem mencionar o campo (anotado)
+9. Fase 1: clusters de temas (já temos `themes` por response → agrupar)
 
 ## 🔑 Refs rápidas
 - WAHA: `localhost:3000`, key `c08468a7d78b4ee1acaf9fb51d775786` (⚠️ rotacionar)
