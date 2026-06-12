@@ -1,0 +1,148 @@
+Subject: [PATCH] atendimentos: emitir ticket_created / ticket_resolved ao Escuta
+
+Conecta o helpdesk à mega central. Em AtendimentosService.create() emite 'ticket_created'
+e em updateStatus() (quando o ticket passa a 'resolvido') emite 'ticket_resolved'.
+Tickets podem ser de contato PÚBLICO (sem userId) → usa um novo EscutaService.captureForTicket
+que manda o TELEFONE direto (sem resolver o User). No Escuta:
+  - ticket_created  → FeedbackItem(source=bizzu_support, type=ticket)
+  - ticket_resolved → dispara a survey "CSAT Atendimento" via WhatsApp (se houver opt-in)
+
+EscutaModule é @Global → NÃO editar atendimentos.module.ts (EscutaService injeta direto).
+
+Aplicar a partir da RAIZ do repo backend (bizzu-repos/backend é só leitura aqui):
+    git apply --recount docs/patches/bizzu-backend-atendimentos-escuta.patch
+  (ou)  patch -p1 < docs/patches/bizzu-backend-atendimentos-escuta.patch
+
+--- a/src/escuta/escuta.service.ts
++++ b/src/escuta/escuta.service.ts
+@@
+     this.logger.log(
+       `[escuta] '${event}' user=${userId} dispatched=${result?.dispatched ?? '?'}${
+         result?.reason ? ` reason=${result.reason}` : ''
+       }`,
+     );
+   }
++
++  /**
++   * Captura evento de TICKET / contato público (pode não ter userId): manda o
++   * telefone direto, sem resolver o User. Mesmo HMAC + fire-and-forget.
++   */
++  captureForTicket(
++    phone: string | null,
++    event: string,
++    eventId: string | null,
++    properties: EscutaCaptureProperties = {},
++  ): void {
++    if (!this.baseUrl || !this.secret) {
++      return;
++    }
++    if (!phone) {
++      this.logger.log(`[escuta] ticket event '${event}' sem telefone — pulando`);
++      return;
++    }
++    void this.sendForTicket(phone, event, eventId, properties).catch((err) => {
++      this.logger.warn(
++        `Failed to send '${event}' to Escuta: ${err instanceof Error ? err.message : String(err)}`,
++      );
++    });
++  }
++
++  private async sendForTicket(
++    phone: string,
++    event: string,
++    eventId: string | null,
++    properties: EscutaCaptureProperties,
++  ): Promise<void> {
++    const body = JSON.stringify({
++      event,
++      event_id: eventId,
++      user: {
++        id: null,
++        name: typeof properties.nome === 'string' ? properties.nome : null,
++        phone,
++        whatsapp_opt_in: false,
++      },
++      properties,
++    });
++    const timestamp = Math.floor(Date.now() / 1000).toString();
++    const signature = createHmac('sha256', this.secret as string)
++      .update(`${timestamp}.${body}`)
++      .digest('hex');
++    const response = await fetch(`${this.baseUrl}/api/events/bizzu`, {
++      method: 'POST',
++      headers: {
++        'Content-Type': 'application/json',
++        'X-Escuta-Timestamp': timestamp,
++        'X-Escuta-Signature': signature,
++      },
++      body,
++      signal: AbortSignal.timeout(5000),
++    });
++    if (!response.ok) {
++      const detail = await response.text().catch(() => '');
++      throw new Error(`Escuta responded ${response.status}: ${detail.slice(0, 200)}`);
++    }
++    this.logger.log(`[escuta] '${event}' phone=${phone} sent`);
++  }
+ }
+
+--- a/src/atendimentos/atendimentos.service.ts
++++ b/src/atendimentos/atendimentos.service.ts
+@@
+ import { S3UploadService } from '../migration-etl/s3-upload.service';
+ import { RedisLockService } from '../redis-lock/redis-lock.service';
++import { EscutaService } from '../escuta/escuta.service';
+@@
+     private readonly s3Upload: S3UploadService,
+     private readonly lock: RedisLockService,
++    private readonly escuta: EscutaService,
+   ) {}
+@@
+       viaEmail: false,
+     } as any);
+
++    // Mega central: registra o ticket (FeedbackItem). Fire-and-forget.
++    this.escuta.captureForTicket(
++      atendimento.telefone,
++      'ticket_created',
++      `ticket:${atendimento.ticketNumber}:created`,
++      {
++        ticket_id: atendimento.id,
++        ticket_number: atendimento.ticketNumber,
++        tipo: atendimento.tipo,
++        assunto: atendimento.assunto,
++        user_id: atendimento.userId,
++        nome: atendimento.nome,
++      },
++    );
++
+     this.logger.log(`Atendimento #${atendimento.ticketNumber} criado para ${input.email}`);
+     return atendimento;
+   }
+@@
+     const atendimento = await this.atendimentoModel.findByPk(id);
+     if (!atendimento) throw new NotFoundException(`Atendimento ${id} não encontrado.`);
+
++    const statusAnterior = atendimento.status;
+     if (dto.status) atendimento.status = dto.status;
+     if (dto.prioridade) atendimento.prioridade = dto.prioridade;
+     if (dto.notasInternas !== undefined) atendimento.notasInternas = dto.notasInternas;
+     await atendimento.save();
++
++    // CSAT pós-atendimento: ao RESOLVER, dispara a survey "CSAT Atendimento" no Escuta.
++    if (statusAnterior !== 'resolvido' && atendimento.status === 'resolvido') {
++      this.escuta.captureForTicket(
++        atendimento.telefone,
++        'ticket_resolved',
++        `ticket:${atendimento.ticketNumber}:resolved`,
++        {
++          ticket_id: atendimento.id,
++          ticket_number: atendimento.ticketNumber,
++          tipo: atendimento.tipo,
++          assunto: atendimento.assunto,
++        },
++      );
++    }
++
+     return atendimento;
+   }

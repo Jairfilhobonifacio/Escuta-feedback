@@ -1,0 +1,66 @@
+Subject: [PATCH] nps: espelhar NPS in-app no Escuta (evento nps_submitted, modo ingest)
+
+Após salvar a resposta em NpsService.submit(), emite o evento 'nps_submitted'
+para o Escuta via EscutaService.captureForUser (fire-and-forget, HMAC). O Escuta
+registra + classifica a resposta em modo "ingest" (sem disparar WhatsApp) —
+evita double-touch com quem já respondeu o NPS dentro do app.
+
+event_id estável = `nps:${npsResponse.id}` (idempotência: submit() é upsert, o id
+da NpsResponse não muda). EscutaModule é @Global, então NÃO é preciso editar
+nps.module.ts (o EscutaService é injetável direto no construtor).
+
+Aplicar a partir da RAIZ do repo backend (bizzu-repos/backend é só leitura aqui):
+    git apply --recount docs/patches/bizzu-backend-nps-escuta-ingest.patch
+  (ou)  patch -p1 < docs/patches/bizzu-backend-nps-escuta-ingest.patch
+
+ src/nps/nps.service.ts | 18 +++++++++++++++---
+ 1 file changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/src/nps/nps.service.ts b/src/nps/nps.service.ts
+--- a/src/nps/nps.service.ts
++++ b/src/nps/nps.service.ts
+@@ -2,6 +2,7 @@
+ import { InjectModel } from '@nestjs/sequelize';
+ import { Op } from 'sequelize';
+ import type { CreationAttributes } from 'sequelize';
+ import { NpsResponse } from './nps-response.model';
++import { EscutaService } from '../escuta/escuta.service';
+ import { ExternalQuestionSession } from '../plano-estudo-ia/models/external-question-session.model';
+ import { StudyPlanSnapshotTask } from '../plano-estudo-ia/models/study-plan-snapshot-task.model';
+ import { StudyPlanSnapshotGoal } from '../plano-estudo-ia/models/study-plan-snapshot-goal.model';
+@@ -29,6 +30,7 @@
+     @InjectModel(PlanoEstudoQuestao)
+     private readonly planoEstudoQuestaoModel: typeof PlanoEstudoQuestao,
++    private readonly escuta: EscutaService,
+   ) {}
+
+   async check(userId: string): Promise<{ trigger: string } | null> {
+@@ -91,12 +93,22 @@
+   async submit(
+     userId: string,
+     trigger: string,
+     score: number | null,
+     comment: string | null,
+   ): Promise<void> {
+     const existing = await this.npsResponseModel.findOne({ where: { userId, trigger } });
++    let responseId: string;
+     if (existing) {
+       await existing.update({ score, comment });
++      responseId = existing.id;
+     } else {
+-      await this.npsResponseModel.create({ userId, trigger, score, comment } as CreationAttributes<NpsResponse>);
++      const created = await this.npsResponseModel.create(
++        { userId, trigger, score, comment } as CreationAttributes<NpsResponse>,
++      );
++      responseId = created.id;
+     }
++
++    // Espelha o NPS in-app no Escuta (modo ingest — sem disparo de WhatsApp).
++    // Fire-and-forget: nunca bloqueia nem quebra o submit do NPS.
++    this.escuta.captureForUser(userId, 'nps_submitted', `nps:${responseId}`, {
++      trigger,
++      score,
++      comment,
++    });
+   }
+ }

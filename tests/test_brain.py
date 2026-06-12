@@ -33,7 +33,12 @@ from tests.fakes import FakeMessagingService  # noqa: E402
 
 
 class FakeLLM:
-    """Dublê de GroqLLM: devolve a sequência de JSONs configurada."""
+    """Dublê de GroqLLM: devolve a sequência de JSONs configurada.
+
+    A pergunta de motivo adaptada à nota (compose_reason_prompt) NÃO faz parte da
+    sequência testada aqui: é ignorada (None ⇒ fallback no texto fixo) sem consumir
+    a fila, para não desalinhar os testes que assumem a ordem das chamadas.
+    """
 
     def __init__(self, *responses):
         self.responses = list(responses)
@@ -41,6 +46,8 @@ class FakeLLM:
 
     async def chat_json(self, system: str, user: str):
         self.calls.append((system, user))
+        if "MOTIVO da nota" in system:
+            return None
         if not self.responses:
             return None
         return self.responses.pop(0)
@@ -141,9 +148,11 @@ async def test_score_em_linguagem_natural_avanca_fluxo(session):
     reply = await resolver.resolve(contact.id, "cara, gostei demais — recomendo com certeza!")
     await session.commit()
 
-    assert len(fake.calls) == 1  # o brain foi de fato consultado
+    # 2 consultas ao brain: interpreta a nota semântica + compõe o follow-up adaptativo.
+    assert len(fake.calls) == 2
+    assert "INTENÇÃO" in fake.calls[0][0]  # a 1ª foi a interpretação da nota
     assert reply is not None and reply.closed is False
-    assert reply.text == "Por quê?"  # avançou pro follow-up, não pro retry
+    assert reply.text == "Por quê?"  # fallback (FakeLLM não dá 'message' p/ o compose)
     await session.refresh(resp)
     assert resp.status == STATUS_AWAITING_REASON
     assert resp.answer_score == 9
@@ -250,3 +259,181 @@ async def test_sem_brain_comportamento_fase0_intacto(session):
     await session.refresh(resp)
     assert resp.status == STATUS_CLOSED
     assert resp.sentiment is None and resp.themes is None and resp.ai_meta is None
+
+
+# --- conversa conduzida e sensível à nota ------------------------------------------
+#
+# Os três problemas que o dono apontou: (1) follow-up FIXO/cego à nota; (2) fecha
+# sem aprofundar resposta vaga; (3) não reconcilia nota×texto. Os testes abaixo
+# travam o comportamento NOVO no nível do brain (contrato) e na integração
+# determinística (resolver), sem tocar a Groq real.
+
+
+class RoutingLLM:
+    """Dublê que roteia por trecho do system prompt e GUARDA o user payload.
+
+    Diferente do FakeLLM (fila por ordem), aqui cada "rota" devolve um JSON fixo —
+    o que deixa asseverar que o brain recebeu o contexto certo (nota/sentimento)
+    no `user`, provando que o follow-up NÃO é cego à nota.
+    """
+
+    def __init__(self, *, reason_prompt=None, followup=None, classify=None):
+        self._reason_prompt = reason_prompt
+        self._followup = followup
+        self._classify = classify
+        self.seen: dict[str, str] = {}  # rota -> último user payload
+
+    async def chat_json(self, system: str, user: str, **kwargs):
+        if "MOTIVO da nota" in system:
+            self.seen["reason_prompt"] = user
+            return self._reason_prompt
+        if "pergunta de aprofundamento" in system:
+            self.seen["followup"] = user
+            return self._followup
+        if "classifica feedback" in system:
+            self.seen["classify"] = user
+            return self._classify
+        return None
+
+
+# (1) follow-up por FAIXA DE NOTA — compose_reason_prompt (contrato do brain)
+
+
+@pytest.mark.asyncio
+async def test_reason_prompt_detrator_passa_a_nota_e_devolve_tom_acolhedor():
+    llm = RoutingLLM(reason_prompt={"message": "poxa, sinto muito 😕 me conta o que aconteceu?"})
+    brain = SurveyBrain(llm)
+    msg = await brain.compose_reason_prompt(2, "NPS Bizzu", question_text="De 0 a 10?")
+    assert msg == "poxa, sinto muito 😕 me conta o que aconteceu?"
+    # a NOTA chegou ao LLM: é isso que torna o follow-up sensível à faixa.
+    assert "2" in llm.seen["reason_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_reason_prompt_promotor_devolve_tom_comemorativo():
+    llm = RoutingLLM(reason_prompt={"message": "que demais, obrigado! 🎉 o que mais te ajudou?"})
+    msg = await SurveyBrain(llm).compose_reason_prompt(10, "NPS Bizzu")
+    assert "ajudou" in msg
+    assert "10" in llm.seen["reason_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_reason_prompt_sem_nota_nao_chama_llm():
+    llm = RoutingLLM(reason_prompt={"message": "nunca deveria sair"})
+    assert await SurveyBrain(llm).compose_reason_prompt(None, "NPS") is None
+    assert "reason_prompt" not in llm.seen  # score None ⇒ nem consulta o LLM
+
+
+# (2) aprofundar RESPOSTA VAGA + (3) reconciliar NOTA×TEXTO — decide_followup
+
+
+@pytest.mark.asyncio
+async def test_followup_aprofunda_resposta_vaga_de_detrator():
+    llm = RoutingLLM(followup={"should_followup": True, "question": "o que mais te incomodou?"})
+    brain = SurveyBrain(llm)
+    q = await brain.decide_followup("sei lá", 3, "NPS Bizzu", sentiment="negativo")
+    assert q == "o que mais te incomodou?"
+    # nota + sentimento foram ao LLM (base p/ decidir aprofundar e reconciliar).
+    assert "3" in llm.seen["followup"] and "negativo" in llm.seen["followup"]
+
+
+@pytest.mark.asyncio
+async def test_followup_reconcilia_contradicao_nota_alta_texto_negativo():
+    llm = RoutingLLM(followup={
+        "should_followup": True,
+        "question": "você deu 9 mas comentou que não gostou — me ajuda a entender o que pesou?",
+    })
+    q = await SurveyBrain(llm).decide_followup(
+        "detestei o suporte", 9, "NPS Bizzu", sentiment="negativo"
+    )
+    assert q is not None and "entender" in q
+
+
+@pytest.mark.asyncio
+async def test_followup_promotor_satisfeito_nao_aprofunda():
+    llm = RoutingLLM(followup={"should_followup": False, "question": None})
+    assert await SurveyBrain(llm).decide_followup(
+        "amei, o app é ótimo", 10, "NPS", sentiment="positivo"
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_followup_questao_vazia_vira_none():
+    llm = RoutingLLM(followup={"should_followup": True, "question": "  "})
+    assert await SurveyBrain(llm).decide_followup("x", 4, "NPS", sentiment="neutro") is None
+
+
+# --- integração determinística (survey_agent OFF): follow-up adaptativo + reconciliação
+
+
+@pytest.mark.asyncio
+async def test_resolver_followup_adaptativo_usa_tom_da_nota(session):
+    """No caminho determinístico (sem agente), ao receber a nota o resolver NÃO
+    manda o 'Massa! 🙌' fixo: chama compose_reason_prompt com a nota e usa o tom
+    que voltou (aqui, detrator → acolhimento)."""
+    org, contact, resp = await _setup_pending_nps(session)
+    llm = RoutingLLM(reason_prompt={"message": "poxa, que pena 😕 me conta o que rolou?"})
+    resolver = SurveyContextResolver(session, org.id, brain=SurveyBrain(llm))
+
+    reply = await resolver.resolve(contact.id, "2")  # nota baixa pelo parser
+    await session.commit()
+
+    assert reply.text == "poxa, que pena 😕 me conta o que rolou?"  # NÃO é o texto fixo
+    assert "2" in llm.seen["reason_prompt"]
+    await session.refresh(resp)
+    assert resp.answer_score == 2 and resp.nps_bucket == "detractor"
+    assert resp.status == STATUS_AWAITING_REASON
+
+
+@pytest.mark.asyncio
+async def test_resolver_reconcilia_nota_alta_com_texto_negativo_antes_de_fechar(session):
+    """Promotor (10) cujo MOTIVO é negativo: o classify marca sentiment=negativo,
+    então _maybe_followup NÃO fecha direto — faz UMA pergunta de reconciliação."""
+    org, contact, resp = await _setup_pending_nps(session)
+    llm = RoutingLLM(
+        classify={"sentiment": "negativo", "themes": ["suporte"], "urgency": "media"},
+        followup={
+            "should_followup": True,
+            "question": "você deu 10 mas falou do suporte — me conta o que pesou?",
+        },
+    )
+    resolver = SurveyContextResolver(session, org.id, brain=SurveyBrain(llm))
+
+    await resolver.resolve(contact.id, "10")                 # nota (parser)
+    reply = await resolver.resolve(contact.id, "o suporte some quando preciso")
+    await session.commit()
+
+    # NÃO fechou: reabriu p/ a repergunta de reconciliação.
+    assert reply.closed is False
+    assert "pesou" in reply.text
+    # o sentimento (negativo) chegou ao decide_followup — base da reconciliação.
+    assert "negativo" in llm.seen["followup"]
+    await session.refresh(resp)
+    assert resp.status == STATUS_AWAITING_REASON
+    assert (resp.ai_meta or {}).get("follow_up_count") == 1
+
+
+@pytest.mark.asyncio
+async def test_resolver_respeita_limite_de_aprofundamento(session):
+    """Anti-loop do caminho determinístico: com follow_up_count já em MAX_FOLLOWUPS,
+    o motivo seguinte FECHA (não dispara mais reperguntas), mesmo que o LLM queira."""
+    from app.domain.survey.resolver import MAX_FOLLOWUPS
+
+    org, contact, resp = await _setup_pending_nps(session)
+    llm = RoutingLLM(
+        classify={"sentiment": "negativo", "themes": ["preço"], "urgency": "media"},
+        followup={"should_followup": True, "question": "me conta mais?"},
+    )
+    resolver = SurveyContextResolver(session, org.id, brain=SurveyBrain(llm))
+
+    await resolver.resolve(contact.id, "3")
+    # já estourou o limite de aprofundamento neste response
+    resp.ai_meta = {**(resp.ai_meta or {}), "follow_up_count": MAX_FOLLOWUPS}
+    await session.flush()
+
+    reply = await resolver.resolve(contact.id, "tá caro demais")
+    await session.commit()
+
+    assert reply.closed is True   # fechou em vez de reperguntar (respeitou o teto)
+    await session.refresh(resp)
+    assert resp.status == STATUS_CLOSED

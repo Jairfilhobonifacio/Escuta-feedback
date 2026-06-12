@@ -1,0 +1,44 @@
+Subject: [PATCH] edital-solicitacoes: emitir evento edital_requested ao Escuta
+
+Após criar uma solicitação de edital em EditalSolicitacoesService.create(), emite
+'edital_requested' ao Escuta via EscutaService.captureForUser (fire-and-forget, HMAC).
+O Escuta registra como FeedbackItem(source=bizzu_platform, type=edital_request) na mega
+central — sinal de demanda (agregável por volume p/ priorização).
+
+event_id estável = `edital_req:${created.id}` (idempotente por solicitação).
+EscutaModule é @Global → NÃO editar edital-solicitacoes.module.ts.
+
+Aplicar a partir da RAIZ do repo backend (bizzu-repos/backend é só leitura aqui):
+    git apply --recount docs/patches/bizzu-backend-edital-requested-escuta.patch
+  (ou)  patch -p1 < docs/patches/bizzu-backend-edital-requested-escuta.patch
+
+diff --git a/src/edital-solicitacoes/edital-solicitacoes.service.ts b/src/edital-solicitacoes/edital-solicitacoes.service.ts
+--- a/src/edital-solicitacoes/edital-solicitacoes.service.ts
++++ b/src/edital-solicitacoes/edital-solicitacoes.service.ts
+@@ -5,6 +5,7 @@
+ import { EditalSolicitacao } from './edital-solicitacao.model';
+ import { EditalCargoService } from '../edital-cargo/edital-cargo.service';
+ import { EmailService } from '../email/email.service';
++import { EscutaService } from '../escuta/escuta.service';
+ import { CreateEditalSolicitacaoDto } from './dto/create-edital-solicitacao.dto';
+@@ -19,6 +20,7 @@
+     private readonly editalSolicitacaoModel: typeof EditalSolicitacao,
+     private readonly editalCargoService: EditalCargoService,
+     private readonly emailService: EmailService,
++    private readonly escuta: EscutaService,
+   ) {}
+@@ -554,6 +556,14 @@
+         status: 'PENDENTE',
+       } as CreationAttributes<EditalSolicitacao>);
+
++    // Emite a solicitação de edital ao Escuta (mega central, sinal de demanda).
++    // Fire-and-forget: nunca bloqueia o fluxo de criação.
++    this.escuta.captureForUser(user.userId, 'edital_requested', `edital_req:${created.id}`, {
++      edital_nome: editalNome,
++      cargo_nome: cargoNome,
++      banca: bancaNome,
++    });
++
+     this.emailService
+       .sendEditalSolicitacaoAlert({ userEmail: user.email, editalNome, cargoNome, bancaNome })
+       .catch(() => {});

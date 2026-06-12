@@ -37,5 +37,9 @@ class Contact(Base):
     name: Mapped[str | None] = mapped_column(String, nullable=True)
     profile_data: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     opt_in: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Hand-off humano: quando True, o bot PARA de automatizar este contato
+    # (um humano assume a conversa pelo WhatsApp). Limpar p/ devolver ao bot.
+    needs_human_handoff: Mapped[bool] = mapped_column(Boolean, default=False)
+    handoff_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())

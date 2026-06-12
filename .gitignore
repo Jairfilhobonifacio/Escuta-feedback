@@ -8,6 +8,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
+venv/
+
+# Bancos locais (SQLite de demo/teste) — não versionar
+*.db
 
 # Node / Next.js
 node_modules/
@@ -21,3 +25,8 @@ Thumbs.db
 NUL
 _painel_*.png
 scripts/_watch_run.py
+
+# Campanha abordagem anuais — HTML gerado tem PII (nome/whatsapp). NÃO commitar.
+docs/campanhas/abordagem-anuais.html
+docs/campanhas/_preview_demo.png
+docs/campanhas/_anuais_ativos.json

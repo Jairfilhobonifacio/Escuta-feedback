@@ -9,3 +9,4 @@ STATUS_SENT = "sent"                          # pergunta enviada, aguardando o N
 STATUS_AWAITING_REASON = "awaiting_reason"    # NPS recebido, aguardando o "por quê"
 STATUS_CLOSED = "closed"                      # encerrada
 STATUS_EXPIRED = "expired"                    # passou da janela sem resposta
+STATUS_INGESTED = "ingested"                  # resposta já dada externamente (ex.: NPS in-app), sem disparo WA

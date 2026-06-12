@@ -1,0 +1,49 @@
+Subject: [PATCH] questoes: espelhar report de questão no Escuta (evento question_reported)
+
+Após salvar o report em QuestoesService.createReport(), emite 'question_reported' ao
+Escuta via EscutaService.captureForUser (fire-and-forget, HMAC). O Escuta registra como
+FeedbackItem(source=bizzu_app, type=report) na mega central — sem disparar WhatsApp.
+
+event_id estável = `report:${userId}:${questaoId}` (idempotente por usuário+questão).
+EscutaModule é @Global → NÃO editar questoes.module.ts (EscutaService injeta direto).
+
+Aplicar a partir da RAIZ do repo backend (bizzu-repos/backend é só leitura aqui):
+    git apply --recount docs/patches/bizzu-backend-question-report-escuta.patch
+  (ou)  patch -p1 < docs/patches/bizzu-backend-question-report-escuta.patch
+
+diff --git a/src/questoes/questoes.service.ts b/src/questoes/questoes.service.ts
+--- a/src/questoes/questoes.service.ts
++++ b/src/questoes/questoes.service.ts
+@@ -1,6 +1,7 @@
+ import { Injectable, NotFoundException } from '@nestjs/common';
+ import { InjectModel } from '@nestjs/sequelize';
+ import type { CreationAttributes } from 'sequelize';
+ import { Questao } from './questao.model';
++import { EscutaService } from '../escuta/escuta.service';
+ import { QuestaoImagem } from './questao-imagem.model';
+ import { QuestionReport, type QuestionReportTipo } from './question-report.model';
+@@ -26,6 +27,7 @@ export class QuestoesService {
+     @InjectModel(UserEdital)
+     private readonly userEditalModel: typeof UserEdital,
+     private readonly emailService: EmailService,
++    private readonly escuta: EscutaService,
+   ) {}
+@@ -149,6 +151,17 @@
+       cargoNome,
+     } as CreationAttributes<QuestionReport>);
+
++    // Espelha o report de questão no Escuta (mega central — sem disparo de WhatsApp).
++    // Fire-and-forget: nunca bloqueia nem quebra o createReport.
++    if (userId) {
++      this.escuta.captureForUser(userId, 'question_reported', `report:${userId}:${questaoId}`, {
++        tipo,
++        observacao: observacao ?? null,
++        materia_nome: materiaNome,
++        topico_nome: topicoNome,
++      });
++    }
++
+     await this.emailService.sendQuestionReportAlert({
+       questaoId,
+       tipo,
+       observacao,

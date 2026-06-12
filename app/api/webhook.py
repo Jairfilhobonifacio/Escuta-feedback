@@ -10,6 +10,7 @@ logada e devolvemos 200 — o gateway não deve reenviar nem entrar em retry/bac
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -26,6 +27,7 @@ from app.domain.survey.resolver import (
     SurveyContextResolver,
 )
 from app.models.core import Contact, Organization
+from app.models.survey import Message
 from app.services.embeddings import EmbeddingService, get_embedder
 from app.services.llm import GroqLLM
 from app.services.waha import WAHAService
@@ -43,7 +45,13 @@ def _make_brain() -> SurveyBrain | None:
     """SurveyBrain quando o LLM está configurado; None = fluxo determinístico puro."""
     if not settings.llm_enabled or not settings.groq_api_key:
         return None
-    return SurveyBrain(GroqLLM(settings.groq_api_key, settings.groq_model))
+    return SurveyBrain(
+        GroqLLM(
+            settings.groq_api_key,
+            settings.groq_model,
+            fallback_model=settings.groq_fallback_model or None,
+        )
+    )
 
 
 def _make_embedder() -> EmbeddingService | None:
@@ -247,19 +255,46 @@ async def waha_webhook(request: Request, session: AsyncSession = Depends(get_ses
             session.add(contact)
             await session.flush()  # materializa contact.id para o resolver.
 
+        # --- memória da conversa: grava a mensagem inbound (transcript) -----
+        session.add(
+            Message(
+                organization_id=org.id,
+                contact_id=contact.id,
+                direction="inbound",
+                body=body,
+                channel_msg_id=str(message_id) if message_id is not None else None,
+            )
+        )
+        await session.flush()
+
+        # --- hand-off: contato em atendimento humano → o bot PAUSA ----------
+        if contact.needs_human_handoff:
+            await session.commit()  # guarda a mensagem; um humano responde manualmente
+            return {"status": "human_handoff"}
+
         # --- resolução de pesquisa -----------------------------------------
+        waha = WAHAService(
+            settings.waha_base_url, settings.waha_api_key, settings.waha_session
+        )
         resolver = SurveyContextResolver(
-            session, org.id, brain=_make_brain(), embedder=_make_embedder()
+            session, org.id,
+            brain=_make_brain(), embedder=_make_embedder(),
+            messaging=waha, waha_session=settings.waha_session,
         )
         reply = await resolver.resolve(contact.id, body)
 
         if reply is not None:
-            waha = WAHAService(
-                settings.waha_base_url,
-                settings.waha_api_key,
-                settings.waha_session,
-            )
             await waha.send_text(chat_id=phone, text=reply.text)
+            # memória da conversa: grava a resposta outbound do bot.
+            session.add(
+                Message(
+                    organization_id=org.id,
+                    contact_id=contact.id,
+                    survey_response_id=uuid.UUID(reply.survey_response_id),
+                    direction="outbound",
+                    body=reply.text,
+                )
+            )
             await session.commit()
             return {"status": "survey_reply", "closed": reply.closed}
 

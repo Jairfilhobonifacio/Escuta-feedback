@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { api, type Contact } from "@/lib/api";
 
 export default function ContatosPage() {
@@ -75,7 +76,11 @@ export default function ContatosPage() {
                 )}
                 {contacts.map((c) => (
                   <tr key={c.id}>
-                    <td>{c.name || <span className="faint">sem nome</span>}</td>
+                    <td>
+                      <Link href={`/contatos/${c.id}`} className="row-link">
+                        {c.name || "sem nome"}
+                      </Link>
+                    </td>
                     <td className="mono">{c.phone}</td>
                     <td>
                       {c.opt_in ? (

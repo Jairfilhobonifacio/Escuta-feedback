@@ -34,6 +34,7 @@ from app.db import get_session  # noqa: E402
 from app.domain.survey.resolver import SurveyContextResolver  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.core import Contact, Organization  # noqa: E402
+from app.models.feedback import FeedbackItem  # noqa: E402
 from app.models.survey import Survey, SurveyResponse, SurveyRun  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 from tests.fakes import FakeMessagingService  # noqa: E402
@@ -462,3 +463,271 @@ async def test_criar_survey_exit_via_admin_e_disparar(client, session, org):
     r = await _post_event(client, _event_body(event_id="evt-api"))
     assert r.json()["dispatched"] is True
     assert r.json()["survey"] == "Exit churn"
+
+
+# --- NPS in-app espelhado (ingest_mode: registra SEM disparar WhatsApp) ----------
+
+
+@pytest_asyncio.fixture
+async def nps_ingest_survey(session, org):
+    """NPS in-app espelhado: ingest_mode=True — registra a resposta já dada no app
+    (sem disparo WA). Disparada pelo evento 'nps_submitted'."""
+    s = Survey(
+        organization_id=org.id,
+        name="NPS Bizzu (ingest)",
+        type="nps",
+        status="active",
+        trigger_event="nps_submitted",
+        ingest_mode=True,
+        questions=[
+            {"key": "nps", "kind": "nps", "text": "De 0 a 10, recomendaria o Bizzu?"},
+            {"key": "reason", "kind": "open", "text": "Por quê?"},
+        ],
+    )
+    session.add(s)
+    await session.commit()
+    return s
+
+
+@pytest.mark.asyncio
+async def test_nps_ingest_registra_sem_disparar(client, session, org, nps_ingest_survey):
+    body = _event_body(
+        event="nps_submitted",
+        event_id="nps:resp-1",
+        trigger="FIRST_SESSION",
+        score=9,
+        comment="Conteúdo excelente, gabaritos certeiros",
+    )
+    r = await _post_event(client, body)
+    assert r.status_code == 202, r.text
+    data = r.json()
+    assert data["dispatched"] is False
+    assert data["ingested"] is True
+    assert data["survey"] == "NPS Bizzu (ingest)"
+    assert data["phone"] == JAIR_DIGITS
+
+    # NADA enviado pro WhatsApp — a marca registrada do modo ingest
+    assert client.fake_messaging.sent == []
+
+    contact = (
+        await session.execute(select(Contact).where(Contact.phone == JAIR_DIGITS))
+    ).scalar_one()
+    resp = (
+        await session.execute(select(SurveyResponse).where(SurveyResponse.contact_id == contact.id))
+    ).scalar_one()
+    assert resp.status == "ingested"
+    assert resp.answer_score == 9
+    assert resp.nps_bucket == "promoter"
+    assert resp.answer_text == "Conteúdo excelente, gabaritos certeiros"
+    assert resp.source == "in_app"
+    assert resp.closed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_nps_ingest_sem_opt_in_registra_mesmo_assim(client, session, org, nps_ingest_survey):
+    """Ingest não envia WA → não exige opt-in: registra um detrator sem opt-in."""
+    user = dict(JAIR, whatsapp_opt_in=False, phone="+5531977776666")
+    r = await _post_event(client, _event_body(
+        event="nps_submitted", event_id="nps:resp-2", user=user,
+        trigger="GOAL_HALF:g1", score=3, comment="achei caro",
+    ))
+    assert r.status_code == 202
+    assert r.json()["ingested"] is True
+    assert client.fake_messaging.sent == []
+
+    contact = (
+        await session.execute(select(Contact).where(Contact.phone == "5531977776666"))
+    ).scalar_one()
+    assert contact.opt_in is False  # não exigido nem elevado
+    resp = (
+        await session.execute(select(SurveyResponse).where(SurveyResponse.contact_id == contact.id))
+    ).scalar_one()
+    assert resp.status == "ingested"
+    assert resp.nps_bucket == "detractor"
+
+
+@pytest.mark.asyncio
+async def test_nps_ingest_sem_comment(client, session, org, nps_ingest_survey):
+    r = await _post_event(client, _event_body(
+        event="nps_submitted", event_id="nps:resp-3",
+        trigger="GOAL_COMPLETE:g2", score=10,
+    ))
+    assert r.json()["ingested"] is True
+    contact = (
+        await session.execute(select(Contact).where(Contact.phone == JAIR_DIGITS))
+    ).scalar_one()
+    resp = (
+        await session.execute(select(SurveyResponse).where(SurveyResponse.contact_id == contact.id))
+    ).scalar_one()
+    assert resp.answer_text is None
+    assert resp.answer_score == 10
+    assert resp.nps_bucket == "promoter"
+
+
+@pytest.mark.asyncio
+async def test_nps_ingest_event_id_repetido_duplicate(client, nps_ingest_survey):
+    body = _event_body(event="nps_submitted", event_id="nps:dup", trigger="FIRST_SESSION", score=8)
+    r1 = await _post_event(client, body)
+    assert r1.json()["ingested"] is True
+    r2 = await _post_event(client, body)
+    assert r2.status_code == 202
+    assert r2.json()["reason"] == "duplicate"
+
+
+@pytest.mark.asyncio
+async def test_nps_ingest_nao_aparece_como_pendente(client, session, org, nps_ingest_survey):
+    """Uma response 'ingested' nunca é tratada como pendente pelo resolver: o bot
+    não tenta 'resolver' algo que já veio respondido do app."""
+    r = await _post_event(client, _event_body(
+        event="nps_submitted", event_id="nps:resp-5",
+        trigger="FIRST_SESSION", score=7, comment="ok",
+    ))
+    assert r.json()["ingested"] is True
+    contact = (
+        await session.execute(select(Contact).where(Contact.phone == JAIR_DIGITS))
+    ).scalar_one()
+    resolver = SurveyContextResolver(session, org.id)
+    reply = await resolver.resolve(contact.id, "qualquer mensagem depois")
+    assert reply is None
+
+
+# --- Eventos genéricos → FeedbackItem na mega central (report/edital/ticket) -----
+
+
+@pytest.mark.asyncio
+async def test_question_reported_vira_feedback_item(client, session, org):
+    body = _event_body(
+        event="question_reported",
+        event_id="report:u1:q1",
+        tipo="GABARITO_ERRADO",
+        observacao="A alternativa C está errada, o certo é D.",
+        materia_nome="Direito Administrativo",
+        topico_nome="Atos administrativos",
+    )
+    r = await _post_event(client, body)
+    assert r.status_code == 202, r.text
+    data = r.json()
+    assert data["ingested"] is True
+    assert data["source"] == "bizzu_app"
+    assert data["type"] == "report"
+    assert client.fake_messaging.sent == []  # NUNCA dispara WhatsApp
+
+    item = (
+        await session.execute(select(FeedbackItem).where(FeedbackItem.organization_id == org.id))
+    ).scalar_one()
+    assert item.type == "report"
+    assert item.text == "A alternativa C está errada, o certo é D."
+    assert item.extra["tipo"] == "GABARITO_ERRADO"
+    assert item.extra["materia_nome"] == "Direito Administrativo"
+    assert item.external_id == "bizzu:question_reported:report:u1:q1"
+
+
+@pytest.mark.asyncio
+async def test_edital_requested_vira_feedback_item(client, session, org):
+    body = _event_body(
+        event="edital_requested",
+        event_id="edital_req:42",
+        edital_nome="TRT 1 2026",
+        cargo_nome="Analista Judiciário",
+        banca="FCC",
+    )
+    r = await _post_event(client, body)
+    assert r.status_code == 202, r.text
+    assert r.json()["type"] == "edital_request"
+    item = (
+        await session.execute(select(FeedbackItem).where(FeedbackItem.organization_id == org.id))
+    ).scalar_one()
+    assert item.source == "bizzu_platform"
+    assert item.extra["edital_nome"] == "TRT 1 2026"
+    assert item.extra["banca"] == "FCC"
+
+
+@pytest.mark.asyncio
+async def test_generic_event_dedup(client, org):
+    body = _event_body(event="question_reported", event_id="report:dup", tipo="OUTRO", observacao="x")
+    r1 = await _post_event(client, body)
+    assert r1.json()["ingested"] is True
+    r2 = await _post_event(client, body)
+    assert r2.status_code == 202
+    assert r2.json()["reason"] == "duplicate"
+
+
+@pytest.mark.asyncio
+async def test_generic_event_sem_opt_in_registra(client, session, org):
+    """Evento genérico não envia WhatsApp → não exige opt-in: registra mesmo assim."""
+    user = dict(JAIR, whatsapp_opt_in=False, phone="+5531977770000")
+    body = _event_body(
+        event="question_reported", event_id="report:noopt", user=user,
+        tipo="OUTRO", observacao="sem opt-in",
+    )
+    r = await _post_event(client, body)
+    assert r.json()["ingested"] is True
+    assert client.fake_messaging.sent == []
+    item = (
+        await session.execute(
+            select(FeedbackItem).where(FeedbackItem.external_id == "bizzu:question_reported:report:noopt")
+        )
+    ).scalar_one()
+    assert item.type == "report"
+
+
+# --- Atendimentos: ticket_created → FeedbackItem; ticket_resolved → CSAT survey ----
+
+
+@pytest_asyncio.fixture
+async def csat_atendimento_survey(session, org):
+    s = Survey(
+        organization_id=org.id,
+        name="CSAT Atendimento Bizzu",
+        type="nps",
+        status="active",
+        trigger_event="ticket_resolved",
+        questions=[
+            {"key": "nps", "kind": "nps", "text": "De 0 a 10, satisfeito com o atendimento?"},
+            {"key": "reason", "kind": "open", "text": "Por quê?"},
+        ],
+    )
+    session.add(s)
+    await session.commit()
+    return s
+
+
+@pytest.mark.asyncio
+async def test_ticket_created_sem_userid_vira_feedback_item(client, session, org):
+    """Ticket de contato PÚBLICO (sem userId) → FeedbackItem, sem disparo WhatsApp."""
+    user = {"name": "Cliente Público", "phone": "+5531966660000", "whatsapp_opt_in": False}
+    body = _event_body(
+        event="ticket_created", event_id="ticket:abc:created", user=user,
+        tipo="erro", assunto="Não consigo logar na plataforma",
+    )
+    r = await _post_event(client, body)
+    assert r.status_code == 202, r.text
+    data = r.json()
+    assert data["ingested"] is True
+    assert data["type"] == "ticket"
+    assert client.fake_messaging.sent == []
+
+    item = (
+        await session.execute(
+            select(FeedbackItem).where(FeedbackItem.external_id == "bizzu:ticket_created:ticket:abc:created")
+        )
+    ).scalar_one()
+    assert item.source == "bizzu_support"
+    assert item.contact_id is not None  # contato criado pelo telefone
+    assert item.extra["assunto"] == "Não consigo logar na plataforma"
+    assert item.extra["tipo"] == "erro"
+
+
+@pytest.mark.asyncio
+async def test_ticket_resolved_dispara_csat(client, session, org, csat_atendimento_survey):
+    """ticket_resolved NÃO vira FeedbackItem: dispara a survey CSAT por WhatsApp."""
+    body = _event_body(
+        event="ticket_resolved", event_id="ticket:xyz:resolved",
+        tipo="erro", assunto="resolvido",
+    )
+    r = await _post_event(client, body)
+    assert r.status_code == 202, r.text
+    data = r.json()
+    assert data["dispatched"] is True
+    assert data["survey"] == "CSAT Atendimento Bizzu"
+    assert len(client.fake_messaging.sent) == 1  # CSAT enviado no WhatsApp (JAIR tem opt-in)

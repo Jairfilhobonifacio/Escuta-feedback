@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Integer, Text, ForeignKey, UniqueConstraint, Index, Uuid, func
+from sqlalchemy import String, Integer, Text, Boolean, ForeignKey, UniqueConstraint, Index, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, JSONVariant
@@ -19,6 +19,7 @@ from app.domain.survey.constants import (  # noqa: F401
     STATUS_AWAITING_REASON,
     STATUS_CLOSED,
     STATUS_EXPIRED,
+    STATUS_INGESTED,
 )
 
 
@@ -39,6 +40,9 @@ class Survey(Base):
     # /api/events/* (ex.: 'subscription_cancelled'). NULL = só disparo manual.
     trigger_event: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="active")
+    # ingest_mode=True: a survey RECEBE respostas já dadas (ex.: NPS in-app do app
+    # Bizzu) via /api/events/*; o handler registra+classifica e NÃO dispara WhatsApp.
+    ingest_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -88,3 +92,35 @@ class SurveyResponse(Base):
     sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
     answered_at: Mapped[datetime | None] = mapped_column(nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Origem da resposta: 'whatsapp' (disparada+respondida no WA) ou 'in_app'
+    # (ingerida já respondida — ex.: NPS in-app do Bizzu, sem disparo).
+    source: Mapped[str] = mapped_column(String, default="whatsapp")
+
+
+class Message(Base):
+    """Transcript da conversa (append-only) — base do chatbot e do hand-off humano.
+
+    Complementar ao SurveyResponse: a response é o estado/resultado; a Message é
+    cada turno trocado (inbound do contato, outbound do bot). Dá histórico para o
+    aprofundamento ter contexto e para o humano assumir sabendo o que já foi dito.
+    """
+    __tablename__ = "messages"
+    __table_args__ = (
+        Index("ix_message_org_contact_time", "organization_id", "contact_id", "created_at"),
+        Index("ix_message_contact_time", "contact_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("contacts.id", ondelete="CASCADE"), index=True
+    )
+    survey_response_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("survey_responses.id", ondelete="SET NULL"), nullable=True
+    )
+    direction: Mapped[str] = mapped_column(String)            # 'inbound' | 'outbound'
+    body: Mapped[str] = mapped_column(Text)
+    channel_msg_id: Mapped[str | None] = mapped_column(String, nullable=True)  # id da msg no WAHA
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

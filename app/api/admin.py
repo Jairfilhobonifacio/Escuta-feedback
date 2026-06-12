@@ -19,9 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
+from app.domain.digest.aggregator import aggregate_themes
 from app.domain.interfaces.messaging_service import IMessagingService
 from app.domain.survey.dispatcher import SurveyDispatcher
 from app.models.core import Contact, Organization
+from app.models.feedback import FeedbackItem
 from app.models.survey import Survey, SurveyResponse, SurveyRun
 from app.services.waha import WAHAService
 
@@ -365,6 +367,122 @@ async def create_contact(body: ContactIn, session: AsyncSession = Depends(get_se
     session.add(contact)
     await session.commit()
     return {"id": str(contact.id), "phone": contact.phone, "name": contact.name, "opt_in": contact.opt_in}
+
+
+# --- Visão 360 (Mega Central de Dados) ---------------------------------------
+
+
+@router.get("/contacts/{contact_id}/360")
+async def contact_360(contact_id: str, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Visão 360 do cliente: junta o snapshot da API de Clientes (profile_data),
+    os sinais ingeridos de fontes externas (FeedbackItem) e as respostas coletadas
+    pelo Escuta no WhatsApp (SurveyResponse) numa única timeline por contato."""
+    org = await _get_org(session)
+    try:
+        cid = uuid.UUID(contact_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="id inválido")
+
+    contact = (
+        await session.execute(
+            select(Contact).where(Contact.id == cid, Contact.organization_id == org.id)
+        )
+    ).scalar_one_or_none()
+    if contact is None:
+        raise HTTPException(status_code=404, detail="contato não encontrado")
+
+    partner = (contact.profile_data or {}).get("partner")
+
+    fitems = (
+        (
+            await session.execute(
+                select(FeedbackItem)
+                .where(FeedbackItem.organization_id == org.id, FeedbackItem.contact_id == cid)
+                .order_by(FeedbackItem.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    sresp = (
+        await session.execute(
+            select(SurveyResponse, Survey)
+            .join(SurveyRun, SurveyRun.id == SurveyResponse.survey_run_id)
+            .join(Survey, Survey.id == SurveyRun.survey_id)
+            .where(SurveyResponse.organization_id == org.id, SurveyResponse.contact_id == cid)
+            .order_by(SurveyResponse.sent_at.desc())
+        )
+    ).all()
+
+    timeline: list[dict[str, Any]] = []
+    for f in fitems:
+        when = f.occurred_at or f.created_at
+        timeline.append(
+            {
+                "kind": "feedback_item",
+                "source": f.source,
+                "type": f.type,
+                "score": f.score,
+                "bucket": f.nps_bucket,
+                "text": f.text,
+                "sentiment": f.sentiment,
+                "themes": f.themes,
+                "at": when.isoformat() if when else None,
+            }
+        )
+    for r, s in sresp:
+        when = r.closed_at or r.answered_at or r.sent_at
+        timeline.append(
+            {
+                "kind": "survey",
+                "source": "whatsapp",
+                "type": s.type,
+                "survey_name": s.name,
+                "score": r.answer_score,
+                "bucket": r.nps_bucket,
+                "text": r.answer_text,
+                "status": r.status,
+                "sentiment": r.sentiment,
+                "themes": r.themes,
+                "at": when.isoformat() if when else None,
+            }
+        )
+    timeline.sort(key=lambda x: x["at"] or "", reverse=True)
+
+    return {
+        "contact": {
+            "id": str(contact.id),
+            "name": contact.name,
+            "phone": contact.phone,
+            "opt_in": contact.opt_in,
+        },
+        "partner": partner,
+        "summary": {
+            "total": len(fitems) + len(sresp),
+            "feedback_items": len(fitems),
+            "survey_responses": len(sresp),
+        },
+        "timeline": timeline,
+    }
+
+
+# --- Clustering de temas (Fase 2) --------------------------------------------
+
+
+@router.get("/themes/aggregate")
+async def themes_aggregate(days: int = 7, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Temas mais citados no período (survey + feedback), com sentimento — clustering v1."""
+    org = await _get_org(session)
+    themes = await aggregate_themes(session, org.id, days=days)
+    return {
+        "period_days": days,
+        "total": sum(t.count for t in themes),
+        "themes": [
+            {"name": t.theme, "count": t.count, "sentiment": t.sentiment_breakdown}
+            for t in themes
+        ],
+    }
 
 
 # --- Disparo ------------------------------------------------------------------

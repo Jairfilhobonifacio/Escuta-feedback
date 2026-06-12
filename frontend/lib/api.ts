@@ -116,3 +116,28 @@ export interface DispatchResult {
   dispatched_to: { phone: string; name: string | null }[];
   count: number;
 }
+
+// --- Visão 360 (Mega Central de Dados) --------------------------------------
+
+export interface Timeline360Item {
+  /** 'feedback_item' = sinal ingerido de fonte externa; 'survey' = coletado no WhatsApp. */
+  kind: "feedback_item" | "survey";
+  source: string;
+  type: string;
+  survey_name?: string;
+  score: number | null;
+  bucket: string | null;
+  text: string | null;
+  status?: string;
+  sentiment?: string | null;
+  themes?: string[] | null;
+  at: string | null;
+}
+
+export interface Contact360 {
+  contact: { id: string; name: string | null; phone: string; opt_in: boolean };
+  /** Snapshot da API de Clientes (assinatura/perfil/nps). null = ainda não sincronizado. */
+  partner: Record<string, unknown> | null;
+  summary: { total: number; feedback_items: number; survey_responses: number };
+  timeline: Timeline360Item[];
+}

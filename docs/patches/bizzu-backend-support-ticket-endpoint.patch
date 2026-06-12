@@ -1,0 +1,103 @@
+Subject: [PATCH] leads-api: endpoint server-to-server p/ o Escuta abrir ticket de Atendimento
+
+Adiciona POST /leads/partner/support-ticket (protegido pelo ApiKeyGuard já existente do
+leads-api, header X-API-Key) que cria um Atendimento via AtendimentosService. É o que o
+Escuta chama no HAND-OFF humano (abrir ticket no Atendimentos — a 3ª opção do hand-off).
+
+Aplicar a partir da RAIZ do repo backend (bizzu-repos/backend é só leitura aqui):
+    git apply --recount docs/patches/bizzu-backend-support-ticket-endpoint.patch
+  (ou)  patch -p1 < docs/patches/bizzu-backend-support-ticket-endpoint.patch
+
+No Escuta, configurar (best-effort, opcional): BIZZU_SUPPORT_TICKET_URL=https://api.bizzu.ai/leads/partner/support-ticket
+e BIZZU_SUPPORT_API_KEY=<a mesma X-API-Key do leads-api>.
+
+--- a/src/leads-api/dto/create-support-ticket.dto.ts
++++ b/src/leads-api/dto/create-support-ticket.dto.ts
+@@ -0,0 +1,17 @@
++import { IsNotEmpty, IsString, IsEmail, IsOptional } from 'class-validator';
++
++export class CreateSupportTicketDto {
++  @IsNotEmpty()
++  @IsString()
++  nome!: string;
++
++  @IsNotEmpty()
++  @IsEmail()
++  email!: string;
++
++  @IsOptional()
++  @IsString()
++  telefone?: string;
++
++  @IsNotEmpty()
++  @IsString()
++  assunto!: string;
++
++  @IsNotEmpty()
++  @IsString()
++  mensagem!: string;
++
++  @IsOptional()
++  @IsString()
++  tipo?: 'duvida' | 'erro' | 'reclamacao' | 'sugestao' | 'outro';
++}
+--- a/src/leads-api/leads-api.controller.ts
++++ b/src/leads-api/leads-api.controller.ts
+@@ -1,4 +1,5 @@
+ import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
++import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
+ import { ApiKeyGuard } from './api-key.guard';
+ import { LeadsApiService } from './leads-api.service';
++import { AtendimentosService } from '../atendimentos/atendimentos.service';
+
+ @Controller('leads')
+ @UseGuards(ApiKeyGuard)
+-export class LeadsApiController {
+-  constructor(private readonly leadsApiService: LeadsApiService) {}
++export class LeadsApiController {
++  constructor(
++    private readonly leadsApiService: LeadsApiService,
++    private readonly atendimentosService: AtendimentosService,
++  ) {}
+
+   @Get('bancas')
+   getAllBancas() {
+@@ -61,4 +62,18 @@ export class LeadsApiController {
+   @Post('exemplo-email')
+   async captureExemploEmail(@Body() body: { email: string; source?: string }) {
+     return this.leadsApiService.captureExemploEmail(body.email, body.source ?? 'exemplo_raio_x');
+   }
++
++  @Post('partner/support-ticket')
++  async createSupportTicket(@Body() dto: CreateSupportTicketDto) {
++    return this.atendimentosService.create({
++      nome: dto.nome,
++      email: dto.email,
++      telefone: dto.telefone ?? null,
++      assunto: dto.assunto,
++      mensagem: dto.mensagem,
++      tipo: dto.tipo,
++      userId: null,
++      ip: null,
++    });
++  }
+ }
+--- a/src/leads-api/leads-api.module.ts
++++ b/src/leads-api/leads-api.module.ts
+@@ -1,14 +1,15 @@
+ import { Module } from '@nestjs/common';
+ import { ConfigModule } from '@nestjs/config';
+ import { LeadsApiController } from './leads-api.controller';
+ import { LeadsApiService } from './leads-api.service';
+ import { ApiKeyGuard } from './api-key.guard';
+ import { SiteContentModule } from '../site-content/site-content.module';
++import { AtendimentosModule } from '../atendimentos/atendimentos.module';
+
+ @Module({
+-  imports: [ConfigModule, SiteContentModule],
++  imports: [ConfigModule, SiteContentModule, AtendimentosModule],
+   controllers: [LeadsApiController],
+   providers: [LeadsApiService, ApiKeyGuard],
+   exports: [LeadsApiService],
+ })
+ export class LeadsApiModule {}

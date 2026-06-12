@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --indigo:#6C5CE7; --indigo-d:#4b3fc0; --gold:#F5A623; --ink:#16161d;
+    --muted:#6b6b78; --line:#e7e7f0; --soft:#f6f6fb; --soft2:#eef0fb;
+    --green:#15a34a; --green-bg:#e8f7ee; --amber:#c2780a; --amber-bg:#fdf3e3;
+    --red:#dc2626; --gray:#9aa0ad;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif; color:var(--ink); -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  .page{width:210mm; min-height:296mm; padding:14mm 14mm 12mm; position:relative; page-break-after:always; background:#fff;}
+  .page:last-child{page-break-after:auto;}
+  h1{font-size:25pt; font-weight:800; letter-spacing:-.4px; line-height:1.05;}
+  h1 .dot{color:var(--gold);}
+  .sub{color:var(--muted); font-size:10.5pt; margin-top:4px;}
+  .eyebrow{font-size:8pt; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--indigo);}
+  .sec-title{font-size:12pt; font-weight:800; margin:0 0 7px; display:flex; align-items:center; gap:7px;}
+  .sec-title .bar{width:4px; height:15px; background:var(--gold); border-radius:2px; display:inline-block;}
+  .header{display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid var(--ink); padding-bottom:10px; margin-bottom:14px;}
+  .logo{display:flex; align-items:center; gap:9px;}
+  .logo .mark{width:34px; height:34px; border-radius:9px; background:var(--indigo); color:#fff; font-weight:800; font-size:17pt; display:flex; align-items:center; justify-content:center;}
+  .logo .mark b{color:var(--gold);}
+  .logo .nm{font-weight:800; font-size:14pt;}
+  .logo .tg{font-size:8pt; color:var(--muted);}
+  .tag-right{text-align:right; font-size:8pt; color:var(--muted); line-height:1.5;}
+  .pill{display:inline-block; font-size:7.5pt; font-weight:700; padding:2px 7px; border-radius:20px;}
+  .pill.g{background:var(--green-bg); color:var(--green);}
+  .pill.a{background:var(--amber-bg); color:var(--amber);}
+  .pill.p{background:var(--soft2); color:var(--indigo-d);}
+  .grid5{display:grid; grid-template-columns:repeat(5,1fr); gap:8px;}
+  .grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:10px;}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .card{border:1px solid var(--line); border-radius:10px; padding:10px 11px; background:#fff;}
+  .card .ct{font-weight:800; font-size:9.5pt;}
+  .card .cd{font-size:8pt; color:var(--muted); margin-top:3px; line-height:1.35;}
+  .card .cf{font-size:7.5pt; color:var(--red); margin-top:5px; font-weight:600;}
+  .block{margin-bottom:14px;}
+  .holes{display:grid; grid-template-columns:repeat(3,1fr); gap:10px;}
+  .hole{border-left:3px solid var(--gold); background:var(--soft); border-radius:0 8px 8px 0; padding:9px 11px;}
+  .hole .hn{font-weight:800; font-size:9.5pt;}
+  .hole .hd{font-size:8pt; color:var(--muted); margin-top:2px; line-height:1.35;}
+  /* fluxo */
+  .flow{display:flex; align-items:stretch; gap:8px; margin-top:4px;}
+  .flow-col{display:flex; flex-direction:column; gap:6px; justify-content:center;}
+  .chip{border:1px solid var(--line); border-radius:9px; padding:7px 9px; font-size:8pt; background:#fff;}
+  .chip b{font-size:9pt;}
+  .chip small{color:var(--muted); display:block; font-size:7pt; margin-top:1px;}
+  .chip.g{border-color:#bfe8cd; background:var(--green-bg);}
+  .chip.a{border-color:#f3d9a8; background:var(--amber-bg);}
+  .arrow{align-self:center; color:var(--indigo); font-size:16pt; font-weight:800;}
+  .escuta{flex:0 0 150px; background:linear-gradient(160deg,var(--indigo),var(--indigo-d)); color:#fff; border-radius:12px; padding:12px; display:flex; flex-direction:column; justify-content:center; align-self:center;}
+  .escuta .et{font-weight:800; font-size:13pt;}
+  .escuta .ed{font-size:7.5pt; opacity:.92; margin-top:5px; line-height:1.5;}
+  .escuta .ed b{color:var(--gold);}
+  .nativo{margin-top:10px; border:1px dashed var(--gray); border-radius:9px; padding:8px 11px; font-size:8pt; color:var(--muted);}
+  .nativo b{color:var(--ink);}
+  /* listas */
+  ul.done{list-style:none; font-size:8.7pt; line-height:1.7;}
+  ul.done li{padding-left:18px; position:relative; margin-bottom:1px;}
+  ul.done li:before{content:"✓"; position:absolute; left:0; color:var(--green); font-weight:800;}
+  ul.done li.todo:before{content:"○"; color:var(--amber);}
+  /* fases */
+  .phases{display:grid; grid-template-columns:repeat(3,1fr); gap:10px;}
+  .phase{border:1px solid var(--line); border-radius:11px; overflow:hidden;}
+  .phase .ph-h{padding:8px 11px; font-weight:800; font-size:10pt; color:#fff; display:flex; justify-content:space-between; align-items:center;}
+  .phase.f0 .ph-h{background:var(--green);}
+  .phase.f1 .ph-h{background:var(--indigo);}
+  .phase.f2 .ph-h{background:var(--ink);}
+  .phase .ph-h .st{font-size:7.5pt; font-weight:700; background:rgba(255,255,255,.22); padding:2px 7px; border-radius:20px;}
+  .phase .ph-b{padding:9px 11px; font-size:8pt; color:var(--muted); line-height:1.5;}
+  .phase .ph-b .line{color:var(--ink); font-weight:600;}
+  .f2detail{background:var(--soft); border-radius:11px; padding:11px 13px;}
+  .f2detail .row{display:flex; gap:9px; margin-bottom:7px; align-items:flex-start;}
+  .f2detail .row:last-child{margin-bottom:0;}
+  .f2detail .ic{flex:0 0 26px; height:26px; border-radius:7px; background:var(--indigo); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:9pt;}
+  .f2detail .tx b{font-size:9pt;} .f2detail .tx div{font-size:8pt; color:var(--muted); line-height:1.35; margin-top:1px;}
+  .next{border:1.5px solid var(--indigo); border-radius:11px; padding:11px 13px; background:var(--soft2);}
+  .next .nt{font-weight:800; font-size:10pt; color:var(--indigo-d); margin-bottom:5px;}
+  .next ol{margin-left:16px; font-size:8.5pt; line-height:1.65;}
+  .proof{margin-top:11px;}
+  .proof img{width:100%; border:1px solid var(--line); border-radius:9px; display:block;}
+  .proof .cap{font-size:7.5pt; color:var(--muted); margin-top:4px; text-align:center;}
+  .foot{position:absolute; bottom:7mm; left:14mm; right:14mm; display:flex; justify-content:space-between; font-size:7.5pt; color:var(--gray); border-top:1px solid var(--line); padding-top:5px;}
+  .lead{font-size:9pt; color:var(--ink); background:var(--soft); border-radius:9px; padding:9px 12px; line-height:1.45; margin-bottom:13px;}
+  .lead b{color:var(--indigo-d);}
+</style>
+</head>
+<body>
+
+<!-- ============ PÁGINA 1 ============ -->
+<section class="page">
+  <div class="header">
+    <div class="logo">
+      <div class="mark">E<b>.</b></div>
+      <div><div class="nm">Escuta</div><div class="tg">Central de Voz do Cliente · WhatsApp + IA</div></div>
+    </div>
+    <div class="tag-right">Cliente-piloto: <b>Bizzu</b><br>Resumo para alinhamento técnico<br>10/06/2026</div>
+  </div>
+
+  <div class="lead">
+    A Bizzu já coletava feedback em <b>5 frentes</b>, mas <b>cru e sem WhatsApp</b>. O Escuta encaixa nos
+    eventos de maior valor (churn + tópico), puxou a base de <b>233 clientes</b> para segmentar em
+    <b>13 perfis</b> e agora <b>espelha o NPS do app</b> — tudo classificado por IA num painel único.
+  </div>
+
+  <div class="block">
+    <div class="sec-title"><span class="bar"></span>Antes: a central de feedback que a Bizzu já tinha</div>
+    <div class="grid5">
+      <div class="card"><div class="ct">NPS in-app</div><div class="cd">Nota 1–10 + comentário em 3 gatilhos. Painel /gestao/nps.</div><div class="cf">só guarda, sem IA</div></div>
+      <div class="card"><div class="ct">Atendimentos</div><div class="cd">Helpdesk por e-mail (SendGrid), anexos S3, status.</div><div class="cf">sem CSAT · sem zap</div></div>
+      <div class="card"><div class="ct">Report de questão</div><div class="cd">Erro de gabarito, validado por IA no painel.</div><div class="cf">é conteúdo, não voz</div></div>
+      <div class="card"><div class="ct">Churn</div><div class="cd">cancellationReason automático (4 categorias).</div><div class="cf">nunca pergunta o porquê</div></div>
+      <div class="card"><div class="ct">Solicitação de edital</div><div class="cd">Fila + aviso por e-mail quando o edital sai.</div><div class="cf">sem priorização</div></div>
+    </div>
+  </div>
+
+  <div class="block">
+    <div class="sec-title"><span class="bar"></span>O furo — e onde o Escuta entra</div>
+    <div class="holes">
+      <div class="hole"><div class="hn">1. Sem canal conversacional</div><div class="hd">A Bizzu não tem nenhum ponto de WhatsApp. O Escuta É esse canal.</div></div>
+      <div class="hole"><div class="hn">2. Sem inteligência</div><div class="hd">Ninguém classifica sentimento/tema. O Escuta faz cérebro + classificação + digest.</div></div>
+      <div class="hole"><div class="hn">3. Sem o "porquê" do churn</div><div class="hd">A Bizzu categoriza sozinha, mas não pergunta. O exit survey captura o motivo real.</div></div>
+    </div>
+  </div>
+
+  <div class="block">
+    <div class="sec-title"><span class="bar"></span>Agora: o fluxo de feedback com o Escuta</div>
+    <div class="flow">
+      <div class="flow-col">
+        <div class="chip g"><b>Cancelamento</b><small>subscription_cancelled · no ar</small></div>
+        <div class="chip g"><b>Tópico concluído</b><small>topic_completed · no ar</small></div>
+        <div class="chip a"><b>NPS no app</b><small>nps_submitted · NOVO (ingest)</small></div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="escuta">
+        <div class="et">Escuta</div>
+        <div class="ed">Recebe por <b>HMAC</b> (fire-and-forget).<br>Dispara survey no WhatsApp,<br>classifica <b>sentimento/tema</b>,<br>RAG + <b>digest semanal</b>.</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="flow-col">
+        <div class="chip"><b>Cliente no WhatsApp</b><small>recebe exit / CSAT</small></div>
+        <div class="chip"><b>Você (dono)</b><small>painel + digest semanal</small></div>
+      </div>
+    </div>
+    <div class="nativo"><b>Continua nativo na Bizzu — o Escuta não duplica:</b> atendimentos por e-mail · report de questão · solicitação de edital.</div>
+  </div>
+
+  <div class="foot"><span>Escuta × Bizzu</span><span>Voz do Cliente WhatsApp · FastAPI + Supabase + WAHA + Groq</span></div>
+</section>
+
+<!-- ============ PÁGINA 2 ============ -->
+<section class="page">
+  <div class="header">
+    <div class="logo">
+      <div class="mark">E<b>.</b></div>
+      <div><div class="nm">O que já fizemos · e as fases</div><div class="tg">Estado do projeto</div></div>
+    </div>
+    <div class="tag-right"><span class="pill g">Fase 0 completa</span> <span class="pill a">Fase 1 em andamento</span></div>
+  </div>
+
+  <div class="block">
+    <div class="sec-title"><span class="bar"></span>O que já entregamos</div>
+    <div class="grid2">
+      <ul class="done">
+        <li>Raio-x do feedback nativo (5 fontes, com arquivo:linha)</li>
+        <li>Auditoria de código (achou: churn voluntário não vai ao PostHog)</li>
+        <li>Exit survey de churn — <b>no ar</b> (HMAC, 3 caminhos)</li>
+        <li>CSAT de tópico concluído — <b>no ar</b></li>
+      </ul>
+      <ul class="done">
+        <li>Segmentação da base: 233 clientes → <b>13 perfis</b></li>
+        <li>Espelho de NPS (ingest, sem disparo) — <b>117 testes verdes</b></li>
+        <li>Painel Next.js: dashboard, pesquisas, contatos</li>
+        <li class="todo">Falta: ligar em prod (migration + seed + patch + deploy)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="block">
+    <div class="sec-title"><span class="bar"></span>As três fases</div>
+    <div class="phases">
+      <div class="phase f0"><div class="ph-h">Fase 0 <span class="st">✓ COMPLETA</span></div>
+        <div class="ph-b"><span class="line">Tracer bullet.</span> O caminho inteiro funcionando: evento → survey no WhatsApp → resposta interpretada → classificada → dashboard. Validado de ponta a ponta.</div></div>
+      <div class="phase f1"><div class="ph-h">Fase 1 <span class="st">◐ AGORA</span></div>
+        <div class="ph-b"><span class="line">Inteligência + automação.</span> Disparo por evento, sentimento/tema (Groq), digest, 13 perfis, espelho de NPS. Falta: clusters de tema, tickets, ligar em prod.</div></div>
+      <div class="phase f2"><div class="ph-h">Fase 2 <span class="st">○ PLANEJADA</span></div>
+        <div class="ph-b"><span class="line">Escala.</span> Clustering de temas, painel multi-tenant com login, WhatsApp Cloud API oficial, novos canais de captura.</div></div>
+    </div>
+  </div>
+
+  <div class="block">
+    <div class="sec-title"><span class="bar"></span>Fase 2 em detalhe — de piloto a produto</div>
+    <div class="f2detail">
+      <div class="row"><div class="ic">1</div><div class="tx"><b>Clustering de temas</b><div>Hoje classificamos resposta a resposta. Na Fase 2 agrupamos os temas da base inteira (pgvector/embeddings 384-dim) → "23 pessoas citaram preço esta semana", padrões e tendências em vez de itens soltos.</div></div></div>
+      <div class="row"><div class="ic">2</div><div class="tx"><b>WhatsApp Cloud API oficial (sair do WAHA)</b><div>O WAHA é não-oficial (viola ToS, risco de ban) — serve só pro piloto. Fase 2 migra para a Cloud API/BSP com templates aprovados. A interface de mensageria já é trocável sem reescrever o resto.</div></div></div>
+      <div class="row"><div class="ic">3</div><div class="tx"><b>Painel multi-tenant com login</b><div>Hoje é single-org, sem auth. Fase 2 vira um painel multi-cliente com autenticação — o passo para o Escuta virar produto vendável além da Bizzu.</div></div></div>
+      <div class="row"><div class="ic">4</div><div class="tx"><b>Novos canais de captura + autopilot</b><div>Radar "saiu seu edital" no WhatsApp, captura de WhatsApp na captação (site/landing), tickets a partir de detratores e mais eventos de ativação (signup, plano gerado).</div></div></div>
+    </div>
+  </div>
+
+  <div class="grid2" style="align-items:start;">
+    <div class="next">
+      <div class="nt">Próximo passo — o que preciso do Felipe</div>
+      <ol>
+        <li>Aplicar migration + seed no Supabase do Escuta</li>
+        <li>Aplicar o patch do NPS no backend + envs ESCUTA_*</li>
+        <li>Deploy</li>
+        <li>Alinhar o <b>double-touch</b> de churn (e-mail winback × survey WhatsApp)</li>
+      </ol>
+    </div>
+    <div class="proof">
+      <img src="__DASHBOARD_B64__" alt="Painel do Escuta">
+      <div class="cap">Painel do Escuta — já validado de ponta a ponta no WhatsApp</div>
+    </div>
+  </div>
+
+  <div class="foot"><span>Escuta × Bizzu — resumo de alinhamento</span><span>Jair · growth/retenção · 10/06/2026</span></div>
+</section>
+
+</body>
+</html>

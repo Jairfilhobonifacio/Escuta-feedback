@@ -11,8 +11,11 @@ import re
 from typing import Optional
 
 # Palavras-número pt-BR de 0 a 10 (fallback quando não há dígito).
+# "um/uma" foram REMOVIDOS de propósito: são artigos comuns ("quero falar com uma
+# pessoa") e capturá-los como nota 1 gera falso-positivo que mascara hand-off/dúvida.
+# Quem dá nota 1 escreve o dígito. O brain cobre os casos por extenso ambíguos.
 _WORDS = {
-    "zero": 0, "um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "três": 3,
+    "zero": 0, "dois": 2, "duas": 2, "tres": 3, "três": 3,
     "quatro": 4, "cinco": 5, "seis": 6, "sete": 7, "oito": 8, "nove": 9, "dez": 10,
 }
 

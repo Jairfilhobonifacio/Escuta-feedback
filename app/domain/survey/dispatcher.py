@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.interfaces.messaging_service import IMessagingService
 from app.domain.survey.constants import STATUS_SENT, STATUS_AWAITING_REASON
 from app.models.core import Contact
-from app.models.survey import Survey, SurveyRun, SurveyResponse
+from app.models.survey import Message, Survey, SurveyRun, SurveyResponse
 
 
 def _first_question_text(survey: Survey) -> str:
@@ -100,6 +100,18 @@ class SurveyDispatcher:
             if isinstance(msg_id, dict):
                 msg_id = msg_id.get("_serialized") or msg_id.get("id")
             resp.channel_msg_id = str(msg_id) if msg_id is not None else None
+
+            # memória da conversa: grava a pergunta enviada (outbound).
+            self.session.add(
+                Message(
+                    organization_id=self.org_id,
+                    contact_id=contact.id,
+                    survey_response_id=resp.id,
+                    direction="outbound",
+                    body=_render(question_text, contact),
+                    channel_msg_id=resp.channel_msg_id,
+                )
+            )
 
             if self.delay_seconds:
                 await asyncio.sleep(self.delay_seconds)

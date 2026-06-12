@@ -24,6 +24,7 @@ from app.models.base import Base  # noqa: E402
 # Importa os models para registrar as tabelas no Base.metadata antes do create_all.
 import app.models.core  # noqa: E402,F401
 import app.models.survey  # noqa: E402,F401
+import app.models.feedback  # noqa: E402,F401
 
 
 @pytest_asyncio.fixture

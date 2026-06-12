@@ -1,0 +1,321 @@
+{
+  "_meta": {
+    "produto": "Escuta — Central de Voz do Cliente no WhatsApp",
+    "pesquisa": "NPS Bizzu",
+    "pergunta_nps": "De 0 a 10, o quanto você recomendaria o Bizzu (plataforma de estudos pra concurso) a um amigo?",
+    "idioma": "pt-BR (cliente real: curto, gíria, erro de digitação, sem pontuação, zoeira)",
+    "uso": "Banco de conversas difíceis para (1) testes determinísticos e (2) avaliação com LLM real do agente NPS.",
+    "convencao_mensagens": "mensagens_cliente = SÓ as mensagens do cliente, em ordem. O bot responde ENTRE cada uma. nota_esperada = a nota que deveria ficar registrada (answer_score) no fim, ou null.",
+    "buckets": "0-6 detrator · 7-8 passivo · 9-10 promotor",
+    "total_cenarios": 14
+  },
+  "personas": [
+    {
+      "id": "corrige-nota",
+      "titulo": "Detrator que digitou a nota errada e corrige no meio da conversa",
+      "descricao": "O cliente manda '10' por engano (dedo gordo / mandou o número errado), o bot já tratou como promotor e pediu o motivo comemorando, e na sequência o cliente manda '1' querendo CORRIGIR a nota — não dar um motivo. É o bug atual: a máquina de estados grava o '1' como texto-motivo e fecha com nota 10.",
+      "mensagens_cliente": [
+        "10",
+        "1",
+        "errei, é 1 mesmo, app vive caindo na hora da prova"
+      ],
+      "nota_esperada": 1,
+      "comportamento_esperado_do_bot": [
+        "Ao receber '10': registra nota 10 e pergunta o motivo com tom de promotor (sem exagerar).",
+        "Ao receber '1' logo depois (uma resposta que é só um número 0-10 onde se esperava texto-motivo): ENTENDER como CORREÇÃO da nota → atualizar answer_score para 1, mudar bucket para detrator, e re-perguntar o motivo agora com EMPATIA (não comemorar).",
+        "Não tratar o '1' como o motivo textual da nota 10.",
+        "Fechar registrando nota 1 + motivo 'app cai na hora da prova', com tom de quem leva o problema a sério."
+      ],
+      "armadilhas": [
+        "Máquina de estados em awaiting_reason grava QUALQUER texto como motivo → salva answer_text='1' e fecha com answer_score=10 (nota errada, é o bug).",
+        "Comemorar a nota baixa por inércia ('Que demais, obrigado!') porque o estado ainda pensa que é 10.",
+        "Tratar a 3ª mensagem ('errei, é 1...') como nova conversa em vez de confirmação da correção."
+      ]
+    },
+    {
+      "id": "zoeiro",
+      "titulo": "Cliente irônico que dá nota impossível na zoeira",
+      "descricao": "Responde tudo na ironia: 'nota mil', 'menos infinito', 'massa? kkk'. Nenhuma dessas é nota válida 0-10. O bot precisa não engolir sarcasmo como nota e ainda extrair sinal real (a ironia esconde insatisfação).",
+      "mensagens_cliente": [
+        "nota mil kkkkk",
+        "brincadeira, manda ai vai",
+        "0 entao, suporte nunca responde",
+        "massa? kkk so vc achando"
+      ],
+      "nota_esperada": 0,
+      "comportamento_esperado_do_bot": [
+        "Tratar 'nota mil' como ironia, NÃO como nota válida (não existe nota 1000, nem 'mil' = 0-10) → não registrar nota, seguir pedindo o número com leveza.",
+        "Quando vier '0' de verdade ('0 entao...'), registrar nota 0 e bucket detrator.",
+        "Ler a ironia 'massa? kkk so vc achando' como reforço NEGATIVO sobre o suporte, não como elogio — não fechar agradecendo como se fosse promotor.",
+        "Fechar reconhecendo o problema de suporte com tom sério, sem entrar na zoeira de volta de forma que pareça deboche."
+      ],
+      "armadilhas": [
+        "Parser ingênuo casar 'mil' ou um dígito perdido e registrar nota errada.",
+        "Bot interpretar 'massa?' como positivo e fechar comemorando (sentimento invertido).",
+        "Não captar o '0' real porque ficou preso no loop de 'me manda um número'."
+      ]
+    },
+    {
+      "id": "divagador",
+      "titulo": "Divagador despeja 3 reclamações numa mensagem só",
+      "descricao": "Dá a nota e na mesma resposta joga três problemas distintos (preço, conteúdo desatualizado, app travando) num textão sem pontuação. O bot não pode pedir cada coisa de novo nem repetir pergunta — já tem motivo de sobra, precisa reconhecer os 3 temas e fechar.",
+      "mensagens_cliente": [
+        "5",
+        "cara to pagando caro demais pra um app que trava direto e as questoes ta tudo desatualizada do edital velho, paguei plano anual e me arrependi"
+      ],
+      "nota_esperada": 5,
+      "comportamento_esperado_do_bot": [
+        "Registrar nota 5 (detrator) e pedir o motivo com empatia.",
+        "Reconhecer que a resposta já traz MÚLTIPLOS motivos acionáveis (preço, estabilidade do app, conteúdo desatualizado) → NÃO pedir o motivo de novo nem fragmentar em perguntas repetidas.",
+        "Classificar temas múltiplos (preço, usabilidade/estabilidade, qualidade do conteúdo) e fechar reconhecendo o conjunto.",
+        "Fechar com mensagem natural que mostra que ENTENDEU os 3 pontos, não uma frase fixa genérica."
+      ],
+      "armadilhas": [
+        "Bot achar o comentário 'vago' e fazer follow-up redundante perguntando 'o que aconteceu?' depois de o cliente já ter explicado tudo.",
+        "Capturar só o primeiro tema e perder os outros dois.",
+        "Repetir 'Por quê?' como se não tivesse recebido motivo."
+      ]
+    },
+    {
+      "id": "promotor-coerente",
+      "titulo": "Promotor real (10 + elogio concreto) — fechar rápido sem encher",
+      "descricao": "Nota 10 com motivo coerente e específico já na resposta do motivo. O agente bom NÃO insiste, não faz follow-up: agradece e fecha curto. Testa se o bot sabe parar quando já está bom.",
+      "mensagens_cliente": [
+        "10!",
+        "passei na PF estudando só por aqui, os simulados são idênticos à prova real"
+      ],
+      "nota_esperada": 10,
+      "comportamento_esperado_do_bot": [
+        "Registrar nota 10 (promotor) e comemorar de leve perguntando o que mais ajudou.",
+        "Reconhecer o motivo como JÁ informativo e positivo (aprovação + simulados realistas) → NÃO fazer pergunta de aprofundamento.",
+        "Fechar rápido, agradecendo de forma calorosa e específica (citando que ele passou / os simulados), sem frase robótica fixa.",
+        "Não inventar pedido de indicação nem puxar assunto extra — promotor satisfeito fecha em 2 turnos."
+      ],
+      "armadilhas": [
+        "Fazer follow-up desnecessário e cansar um cliente feliz (excesso de perguntas).",
+        "Fechar com a MESMA frase fixa de todos os outros casos, sem refletir que ele foi aprovado.",
+        "Tratar 'PF' ou números do texto como se fossem nova nota."
+      ]
+    },
+    {
+      "id": "nota-por-extenso",
+      "titulo": "Nota em linguagem natural / por extenso",
+      "descricao": "Não manda dígito: fala 'uns oito', depois 'nota máxima'. O parser determinístico de dígitos falha; o brain precisa extrair o inteiro 0-10 de linguagem natural. Inclui mudança da própria nota expressa em palavras.",
+      "mensagens_cliente": [
+        "ah sei la, uns oito eu acho",
+        "na vdd pode botar nota maxima, lembrei que to amando os flashcards"
+      ],
+      "nota_esperada": 10,
+      "comportamento_esperado_do_bot": [
+        "Interpretar 'uns oito' como nota 8 (passivo) via inteligência, já que não há dígito.",
+        "Entender 'nota máxima' como 10 e como CORREÇÃO/atualização da nota anterior (8 → 10), não como motivo.",
+        "Após virar 10 com elogio (flashcards), reconhecer como promotor coerente e fechar sem aprofundar demais.",
+        "Fechar de forma natural mencionando que ele ama os flashcards."
+      ],
+      "armadilhas": [
+        "Parser de dígito não casar 'oito'/'máxima' e cair em loop de 'me manda um número'.",
+        "Tratar 'nota máxima' (2ª msg) como o texto-motivo da nota 8 em vez de nova nota.",
+        "Não reconhecer 'oito' por extenso (a lista de palavras existe, mas 'um/uma' foi removida de propósito — 'oito' tem que casar)."
+      ]
+    },
+    {
+      "id": "contradicao-nota-texto",
+      "titulo": "Contradição: nota alta + 'detestei'",
+      "descricao": "Dá 9 (promotor pela nota) mas o texto é claramente negativo ('detestei o último update'). Nota e sentimento brigam. O bot precisa apontar a incoerência com gentileza e entender o que pesou, sem assumir cegamente que 9 = tudo ótimo.",
+      "mensagens_cliente": [
+        "9",
+        "detestei o ultimo update, sumiu meu progresso e ninguem resolve"
+      ],
+      "nota_esperada": 9,
+      "comportamento_esperado_do_bot": [
+        "Registrar a nota 9 como o cliente deu (não rebaixar a nota por conta própria).",
+        "Detectar a CONTRADIÇÃO nota 9 × comentário negativo → fazer UMA pergunta apontando a incoerência com gentileza ('você deu 9 mas comentou que detestou o update — me ajuda a entender o que pesou?').",
+        "Não comemorar como promotor padrão ignorando a reclamação séria (perda de progresso).",
+        "Fechar registrando o problema (perda de progresso pós-update + suporte que não resolve), sinalizando urgência, mesmo com nota alta."
+      ],
+      "armadilhas": [
+        "Bot tratar 9 como promotor feliz e fechar agradecendo, ignorando 'detestei'.",
+        "Reescrever/baixar a nota para bater com o texto (não é função do bot mudar a nota dada).",
+        "Não acionar o sinal de detrator/urgência porque a nota numérica é alta."
+      ]
+    },
+    {
+      "id": "pergunta-antes-da-nota",
+      "titulo": "Cliente faz uma pergunta antes de dar a nota",
+      "descricao": "Em vez de responder a nota, o cliente pergunta 'quem é vc?' e depois 'e como eu cancelo meu plano?'. O bot tem que responder de forma honesta (sem inventar política de cancelamento) e RETOMAR pedindo a nota — sem perder a pesquisa pendente.",
+      "mensagens_cliente": [
+        "quem é vc? robô?",
+        "ah blz. e como faço pra cancelar meu plano?",
+        "saquei. pode por 7 entao",
+        "podia ser mais barato o anual"
+      ],
+      "nota_esperada": 7,
+      "comportamento_esperado_do_bot": [
+        "Responder 'quem é você' com honestidade (assistente de pesquisa do Bizzu) e retomar pedindo a notinha, mantendo a pesquisa pendente.",
+        "Para 'como cancelo': NÃO inventar passo de cancelamento; responder grounded se houver base, senão dizer que encaminha ao time — e ainda assim retomar a nota.",
+        "Ao receber '7', registrar nota 7 (passivo) e perguntar o que faltou para ser 10.",
+        "Fechar registrando o motivo (preço do anual), com tom natural."
+      ],
+      "armadilhas": [
+        "Bot ignorar a pergunta e só repetir 'me manda a nota' (rude, robótico).",
+        "Inventar política de cancelamento (alucina fato sobre a empresa).",
+        "Perder o estado da pesquisa ao desviar para responder a dúvida.",
+        "Capturar '7' mas esquecer de coletar o motivo, fechando cedo demais."
+      ]
+    },
+    {
+      "id": "opt-out",
+      "titulo": "Cliente pede para parar de receber as mensagens",
+      "descricao": "Não quer responder nada: 'para de me mandar isso', 'sai da minha cola'. O bot tem que reconhecer o opt-out, confirmar com educação, desligar o contato e encerrar — sem insistir na nota.",
+      "mensagens_cliente": [
+        "para de me mandar isso pelo amor",
+        "nao quero responder pesquisa nenhuma, sai da minha cola"
+      ],
+      "nota_esperada": null,
+      "comportamento_esperado_do_bot": [
+        "Reconhecer o primeiro 'para de me mandar isso' como pedido de opt-out (ou no máximo confirmar 1x com gentileza antes de desligar).",
+        "Ao confirmar o opt-out: marcar o contato como opt-out (não receberá mais pesquisas) e encerrar a pendência SEM registrar nota.",
+        "Responder com a confirmação calorosa e estável ('não vou mais te mandar pesquisas, se mudar de ideia é só avisar').",
+        "Não insistir pedindo a nota depois do opt-out claro."
+      ],
+      "armadilhas": [
+        "Bot tentar 'só uma notinha rapidinha' depois do pedido de parada (péssima experiência, viola opt-out).",
+        "Não desligar o opt_in do contato → ele recebe a próxima campanha mesmo tendo pedido para sair.",
+        "Registrar nota 0 ou tratar a frase como motivo."
+      ]
+    },
+    {
+      "id": "furioso-handoff",
+      "titulo": "Cliente furioso com problema grave → escalar para humano",
+      "descricao": "Cliente revoltado: foi cobrado duas vezes, app não abre na véspera da prova, ameaça Procon. Não é caso de pesquisa — é incêndio. O bot tem que parar de pesquisar e ESCALAR para um humano, pausando o bot.",
+      "mensagens_cliente": [
+        "vcs me cobraram DUAS VEZES no cartao e o app nem abre",
+        "minha prova é amanhã e perdi acesso, isso é um absurdo",
+        "quero falar com uma PESSOA agora ou vou no procon"
+      ],
+      "nota_esperada": null,
+      "comportamento_esperado_do_bot": [
+        "Reconhecer cobrança em duplicidade + perda de acesso às vésperas da prova como problema GRAVE/bloqueante → não insistir na nota.",
+        "Ao pedido explícito de 'falar com uma pessoa' + ameaça de Procon: acionar HANDOFF — pausar o bot para esse contato e alertar o dono/abrir ticket.",
+        "Responder com acolhimento dizendo que vai conectar com uma pessoa do time, sem prometer reembolso/fato que não pode garantir.",
+        "Não fechar como pesquisa concluída nem registrar nota; registrar o caso como hand-off urgente."
+      ],
+      "armadilhas": [
+        "Bot seguir o script ('e de 0 a 10...') no meio da fúria — tom surdo, agrava a raiva.",
+        "Parser capturar 'DUAS' como nota 2 (por isso 'duas' é ambíguo) e registrar nota errada.",
+        "Não escalar para humano apesar do pedido explícito + Procon (falha crítica de segurança/CX).",
+        "Prometer resolução/reembolso que o bot não pode garantir."
+      ]
+    },
+    {
+      "id": "so-emoji-vazio",
+      "titulo": "Responde só com emoji / 'ok' / vazio de conteúdo",
+      "descricao": "Respostas sem substância: um emoji, depois 'ok', depois um '👍'. O bot precisa não travar nem fechar com lixo: insistir com leveza para tirar a nota e, no motivo, lidar com resposta vazia sem inventar conteúdo.",
+      "mensagens_cliente": [
+        "🙄",
+        "ok",
+        "8",
+        "👍"
+      ],
+      "nota_esperada": 8,
+      "comportamento_esperado_do_bot": [
+        "Para emoji solto e 'ok' (sem nota): não tratar como nota; pedir o número de 0 a 10 de forma leve, sem repetir a mesma frase robótica idêntica.",
+        "Ao receber '8', registrar nota 8 (passivo) e perguntar o que faltou para ser 10.",
+        "Para o motivo '👍' (vazio de conteúdo): aceitar e fechar com naturalidade OU tentar UMA vez puxar o que faltaria, sem insistir em loop.",
+        "Fechar sem registrar o emoji como se fosse um motivo textual rico; não inventar um motivo que o cliente não deu."
+      ],
+      "armadilhas": [
+        "Loop infinito repetindo 'me manda um número' palavra por palavra a cada emoji.",
+        "Registrar '👍' como motivo textual e classificar tema fantasioso.",
+        "Tratar 'ok' como confirmação de uma nota inexistente e fechar sem nota."
+      ]
+    },
+    {
+      "id": "muda-de-ideia-motivo",
+      "titulo": "Cliente muda de ideia sobre o motivo no meio",
+      "descricao": "Dá a nota, começa um motivo, e na mensagem seguinte se corrige ('na verdade não é isso, o problema é outro'). O bot não pode misturar os dois nem ignorar a retificação: o motivo final é o corrigido.",
+      "mensagens_cliente": [
+        "6",
+        "é que o preço subiu",
+        "mentira, preço tá ok, o que me irrita mesmo é que o app desloga sozinho toda hora"
+      ],
+      "nota_esperada": 6,
+      "comportamento_esperado_do_bot": [
+        "Registrar nota 6 (detrator) e pedir o motivo com empatia.",
+        "Receber o primeiro motivo (preço) e, na correção, entender que o cliente RETIFICOU → o motivo real é o logout automático, não o preço.",
+        "Refletir o motivo CORRIGIDO no fechamento (estabilidade/logout), sem manter 'preço' como reclamação principal.",
+        "Fechar de forma natural mostrando que pegou a correção ('entendi, o problema é o app deslogando')."
+      ],
+      "armadilhas": [
+        "Bot somar/empilhar os dois motivos como se ambos valessem igual ('preço subiu E desloga'), distorcendo o feedback.",
+        "Fechar com o motivo ANTIGO (preço) ignorando o 'mentira, preço tá ok'.",
+        "Tratar 'mentira' como insulto/handoff em vez de retificação do próprio cliente."
+      ]
+    },
+    {
+      "id": "fora-de-escopo",
+      "titulo": "Resposta totalmente fora do escopo",
+      "descricao": "Em vez de nota, o cliente fala de outro assunto ('vc viu o jogo ontem?', 'manda o cardápio'). Não é pergunta sobre o Bizzu nem nota. O bot precisa redirecionar com bom humor leve para a pesquisa, sem entrar no assunto aleatório e sem travar.",
+      "mensagens_cliente": [
+        "vc viu o jogo do galo ontem?",
+        "kkk manda o cardapio do almoço ai",
+        "9 vai, tava de boa o app"
+      ],
+      "nota_esperada": 9,
+      "comportamento_esperado_do_bot": [
+        "Não responder o assunto aleatório (futebol/cardápio) como se fosse o tema; redirecionar gentilmente para a pesquisa pedindo a notinha.",
+        "Manter a pesquisa pendente sem fechar nem registrar nota durante o off-topic.",
+        "Ao receber '9', registrar nota 9 (promotor) e perguntar o que mais ajudou / o que pesou.",
+        "Fechar de forma leve e natural, coerente com o tom descontraído do cliente, sem entrar no off-topic."
+      ],
+      "armadilhas": [
+        "Bot 'puxar papo' sobre o jogo e perder o controle do fluxo da pesquisa.",
+        "Tratar o off-topic como dúvida e tentar responder via base de conhecimento (alucina).",
+        "Não captar o '9' real no fim por estar 'distraído' com o desvio."
+      ]
+    },
+    {
+      "id": "detrator-vago-empatia-2a",
+      "titulo": "Detrator vago que só abre na 2ª pergunta, com empatia",
+      "descricao": "Dá nota baixa e o motivo é genérico ('sei lá, não curti'). Na primeira pergunta de aprofundamento não diz nada útil; só a SEGUNDA, feita com empatia real, faz ele revelar o problema concreto. Testa probing adaptativo (até 2 follow-ups) sem repetir a mesma pergunta.",
+      "mensagens_cliente": [
+        "4",
+        "sei la, nao curti muito não",
+        "ai complicado né",
+        "tá, é que comprei achando que tinha as questões da banca FGV e não tem quase nada, me senti enganado"
+      ],
+      "nota_esperada": 4,
+      "comportamento_esperado_do_bot": [
+        "Registrar nota 4 (detrator) e pedir o motivo com empatia.",
+        "Diante do motivo vago ('sei lá, não curti'): fazer UMA pergunta de aprofundamento empática e específica (não repetir a frase anterior).",
+        "Se ainda vago ('ai complicado né'), tentar a 2ª pergunta de aprofundamento (dentro do limite de 2), com tom acolhedor — é isso que destrava o cliente.",
+        "Quando ele revelar o motivo real (faltam questões da banca FGV / sensação de propaganda enganosa), fechar reconhecendo o ponto concreto e a frustração."
+      ],
+      "armadilhas": [
+        "Fechar cedo na 1ª resposta vaga, perdendo o motivo real (detrator é justamente quem mais importa entender).",
+        "Repetir a MESMA pergunta nas duas rodadas ('me conta o que aconteceu?' duas vezes) — robótico.",
+        "Estourar o limite e ficar perguntando indefinidamente (deve parar em 2 follow-ups)."
+      ]
+    },
+    {
+      "id": "nota-e-motivo-juntos",
+      "titulo": "Dá nota e motivo TUDO de uma vez na 1ª mensagem",
+      "descricao": "Na primeira resposta já vem nota + motivo na mesma frase ('nota 7, podia ter mais questões'). O bot não pode pedir o motivo de novo como se não tivesse recebido — deve registrar a nota, reconhecer o motivo já dado e fechar (ou um único follow-up se fizer sentido), sem repetir.",
+      "mensagens_cliente": [
+        "nota 7, podia ter mais questões comentadas de direito constitucional"
+      ],
+      "nota_esperada": 7,
+      "comportamento_esperado_do_bot": [
+        "Extrair a nota 7 (passivo) da frase mesmo com o motivo grudado (parser pega o primeiro inteiro 0-10).",
+        "Reconhecer que o MOTIVO já veio junto (faltam questões comentadas de direito constitucional) → NÃO perguntar 'qual o motivo?' do zero.",
+        "No máximo UM follow-up curto e específico se agregar (ex.: confirmar a área), mas idealmente já fechar reconhecendo o pedido.",
+        "Fechar de forma natural citando o ponto dado (mais questões comentadas de constitucional), sem frase fixa."
+      ],
+      "armadilhas": [
+        "Bot registrar 7 e mesmo assim disparar 'O que faltou pra ser 10?' ignorando que o cliente JÁ disse o que faltou.",
+        "Tratar a frase inteira como motivo e não extrair a nota (perde answer_score).",
+        "Fechar com a thanks fixa sem refletir o conteúdo específico (constitucional)."
+      ]
+    }
+  ]
+}

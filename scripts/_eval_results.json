@@ -1,0 +1,566 @@
+[
+  {
+    "id": "corrige-nota",
+    "titulo": "Detrator que digitou a nota errada e corrige no meio da conversa",
+    "score_final": 1,
+    "bucket_final": "detrator",
+    "reason_final": null,
+    "topics": [],
+    "turns": 2,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "10"
+      ],
+      [
+        "BOT",
+        "Muito obrigado por essa nota alta! O que você gostou tanto no Bizzu que o fez dar nota máxima?"
+      ],
+      [
+        "CLIENTE",
+        "1"
+      ],
+      [
+        "BOT",
+        "Parece que houve uma mudança de nota! Você começou com uma nota 10, mas agora disse 1. O que aconteceu que fez você mudar de ideia?"
+      ],
+      [
+        "CLIENTE",
+        "errei, é 1 mesmo, app vive caindo na hora da prova"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 1,
+    "descricao": "O cliente manda '10' por engano (dedo gordo / mandou o número errado), o bot já tratou como promotor e pediu o motivo comemorando, e na sequência o cliente manda '1' querendo CORRIGIR a nota — não dar um motivo. É o bug atual: a máquina de estados grava o '1' como texto-motivo e fecha com nota 10.",
+    "num_msgs_cliente": 3,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "zoeiro",
+    "titulo": "Cliente irônico que dá nota impossível na zoeira",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "nota mil kkkkk"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 0,
+    "descricao": "Responde tudo na ironia: 'nota mil', 'menos infinito', 'massa? kkk'. Nenhuma dessas é nota válida 0-10. O bot precisa não engolir sarcasmo como nota e ainda extrair sinal real (a ironia esconde insatisfação).",
+    "num_msgs_cliente": 4,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "divagador",
+    "titulo": "Divagador despeja 3 reclamações numa mensagem só",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "5"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 5,
+    "descricao": "Dá a nota e na mesma resposta joga três problemas distintos (preço, conteúdo desatualizado, app travando) num textão sem pontuação. O bot não pode pedir cada coisa de novo nem repetir pergunta — já tem motivo de sobra, precisa reconhecer os 3 temas e fechar.",
+    "num_msgs_cliente": 2,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "promotor-coerente",
+    "titulo": "Promotor real (10 + elogio concreto) — fechar rápido sem encher",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "10!"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 10,
+    "descricao": "Nota 10 com motivo coerente e específico já na resposta do motivo. O agente bom NÃO insiste, não faz follow-up: agradece e fecha curto. Testa se o bot sabe parar quando já está bom.",
+    "num_msgs_cliente": 2,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "nota-por-extenso",
+    "titulo": "Nota em linguagem natural / por extenso",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "ah sei la, uns oito eu acho"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 10,
+    "descricao": "Não manda dígito: fala 'uns oito', depois 'nota máxima'. O parser determinístico de dígitos falha; o brain precisa extrair o inteiro 0-10 de linguagem natural. Inclui mudança da própria nota expressa em palavras.",
+    "num_msgs_cliente": 2,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "contradicao-nota-texto",
+    "titulo": "Contradição: nota alta + 'detestei'",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "9"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 9,
+    "descricao": "Dá 9 (promotor pela nota) mas o texto é claramente negativo ('detestei o último update'). Nota e sentimento brigam. O bot precisa apontar a incoerência com gentileza e entender o que pesou, sem assumir cegamente que 9 = tudo ótimo.",
+    "num_msgs_cliente": 2,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "pergunta-antes-da-nota",
+    "titulo": "Cliente faz uma pergunta antes de dar a nota",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "quem é vc? robô?"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 7,
+    "descricao": "Em vez de responder a nota, o cliente pergunta 'quem é vc?' e depois 'e como eu cancelo meu plano?'. O bot tem que responder de forma honesta (sem inventar política de cancelamento) e RETOMAR pedindo a nota — sem perder a pesquisa pendente.",
+    "num_msgs_cliente": 4,
+    "judge": {
+      "nota_inteligencia": 1,
+      "nota_capturada_correta": false,
+      "repetiu_pergunta": false,
+      "fechou_na_hora_certa": false,
+      "tom_adequado": false,
+      "problemas": [
+        "Não respondeu a pergunta do cliente sobre quem é",
+        "Não retomou a pesquisa após a pergunta do cliente",
+        "FALLBACK sem resposta útil"
+      ],
+      "veredito": "Desempenho extremamente ruim, não respondeu às perguntas do cliente e não retomou a pesquisa."
+    }
+  },
+  {
+    "id": "opt-out",
+    "titulo": "Cliente pede para parar de receber as mensagens",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "para de me mandar isso pelo amor"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": null,
+    "descricao": "Não quer responder nada: 'para de me mandar isso', 'sai da minha cola'. O bot tem que reconhecer o opt-out, confirmar com educação, desligar o contato e encerrar — sem insistir na nota.",
+    "num_msgs_cliente": 2,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "furioso-handoff",
+    "titulo": "Cliente furioso com problema grave → escalar para humano",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "vcs me cobraram DUAS VEZES no cartao e o app nem abre"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": null,
+    "descricao": "Cliente revoltado: foi cobrado duas vezes, app não abre na véspera da prova, ameaça Procon. Não é caso de pesquisa — é incêndio. O bot tem que parar de pesquisar e ESCALAR para um humano, pausando o bot.",
+    "num_msgs_cliente": 3,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "so-emoji-vazio",
+    "titulo": "Responde só com emoji / 'ok' / vazio de conteúdo",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "🙄"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 8,
+    "descricao": "Respostas sem substância: um emoji, depois 'ok', depois um '👍'. O bot precisa não travar nem fechar com lixo: insistir com leveza para tirar a nota e, no motivo, lidar com resposta vazia sem inventar conteúdo.",
+    "num_msgs_cliente": 4,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "muda-de-ideia-motivo",
+    "titulo": "Cliente muda de ideia sobre o motivo no meio",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "6"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 6,
+    "descricao": "Dá a nota, começa um motivo, e na mensagem seguinte se corrige ('na verdade não é isso, o problema é outro'). O bot não pode misturar os dois nem ignorar a retificação: o motivo final é o corrigido.",
+    "num_msgs_cliente": 3,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "fora-de-escopo",
+    "titulo": "Resposta totalmente fora do escopo",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "vc viu o jogo do galo ontem?"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 9,
+    "descricao": "Em vez de nota, o cliente fala de outro assunto ('vc viu o jogo ontem?', 'manda o cardápio'). Não é pergunta sobre o Bizzu nem nota. O bot precisa redirecionar com bom humor leve para a pesquisa, sem entrar no assunto aleatório e sem travar.",
+    "num_msgs_cliente": 3,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "detrator-vago-empatia-2a",
+    "titulo": "Detrator vago que só abre na 2ª pergunta, com empatia",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "4"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 4,
+    "descricao": "Dá nota baixa e o motivo é genérico ('sei lá, não curti'). Na primeira pergunta de aprofundamento não diz nada útil; só a SEGUNDA, feita com empatia real, faz ele revelar o problema concreto. Testa probing adaptativo (até 2 follow-ups) sem repetir a mesma pergunta.",
+    "num_msgs_cliente": 4,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  },
+  {
+    "id": "nota-e-motivo-juntos",
+    "titulo": "Dá nota e motivo TUDO de uma vez na 1ª mensagem",
+    "score_final": null,
+    "bucket_final": null,
+    "reason_final": null,
+    "topics": [],
+    "turns": 0,
+    "closed_via": null,
+    "fell_back": true,
+    "transcript": [
+      [
+        "BOT",
+        "De 0 a 10, o quanto você recomendaria o Bizzu pra um amigo concurseiro?"
+      ],
+      [
+        "CLIENTE",
+        "nota 7, podia ter mais questões comentadas de direito constitucional"
+      ],
+      [
+        "BOT",
+        "<<FALLBACK: brain devolveu None>>"
+      ]
+    ],
+    "nota_esperada": 7,
+    "descricao": "Na primeira resposta já vem nota + motivo na mesma frase ('nota 7, podia ter mais questões'). O bot não pode pedir o motivo de novo como se não tivesse recebido — deve registrar a nota, reconhecer o motivo já dado e fechar (ou um único follow-up se fizer sentido), sem repetir.",
+    "num_msgs_cliente": 1,
+    "judge": {
+      "nota_inteligencia": null,
+      "nota_capturada_correta": null,
+      "repetiu_pergunta": null,
+      "fechou_na_hora_certa": null,
+      "tom_adequado": null,
+      "problemas": [
+        "<juiz indisponível — Groq devolveu None>"
+      ],
+      "veredito": "<juiz indisponível>"
+    }
+  }
+]

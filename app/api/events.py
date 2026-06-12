@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -31,21 +32,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import get_session
 from app.domain.interfaces.messaging_service import IMessagingService
+from app.domain.survey.brain import SurveyBrain
+from app.domain.survey.constants import STATUS_INGESTED
 from app.domain.survey.dispatcher import SurveyDispatcher
+from app.domain.feedback.ingest import ingest_feedback_item
+from app.domain.survey.parsers import nps_bucket
 from app.models.core import Contact, Organization
+from app.models.feedback import FeedbackItem
 from app.models.survey import Survey, SurveyResponse, SurveyRun
+from app.services.llm import GroqLLM
 
 # Reusa o provider real/injetável do admin (WAHA em prod, fake nos testes).
 from app.api.admin import get_messaging
 
 router = APIRouter(tags=["events"])
+logger = logging.getLogger(__name__)
 
 TIMESTAMP_TOLERANCE_SECONDS = 300
 DISPATCH_COOLDOWN = timedelta(days=7)
 
+# Eventos que viram FeedbackItem GENÉRICO (mega central) em vez de disparar survey.
+# evento → (source, type). Manter sincronizado com os patches do backend.
+GENERIC_EVENT_MAP: dict[str, tuple[str, str]] = {
+    "question_reported": ("bizzu_app", "report"),
+    "edital_requested": ("bizzu_platform", "edital_request"),
+    "ticket_created": ("bizzu_support", "ticket"),
+    # 'ticket_resolved' NÃO entra aqui: dispara a survey "CSAT Atendimento"
+    # (trigger_event='ticket_resolved') via WhatsApp — a resposta vira SurveyResponse.
+}
+
+# Campos de properties que viram colunas próprias do FeedbackItem (não vão no extra).
+_GENERIC_RESERVED = ("score", "text", "observacao", "comment", "reason", "occurred_at")
+
 
 class EventUser(BaseModel):
-    id: str = Field(min_length=1, max_length=120)
+    id: str | None = Field(default=None, max_length=120)  # tickets públicos podem não ter userId
     name: str | None = Field(default=None, max_length=200)
     phone: str = Field(min_length=8, max_length=32)
     whatsapp_opt_in: bool = False
@@ -67,6 +88,163 @@ def _verify_signature(secret: str, timestamp: str, raw_body: bytes, signature: s
 
 def _skip(reason: str, **extra: Any) -> dict[str, Any]:
     return {"dispatched": False, "reason": reason, **extra}
+
+
+async def _classify_response(resp: SurveyResponse, survey_name: str) -> None:
+    """Classifica o feedback textual (sentiment/themes/urgency) — best-effort.
+
+    Espelha resolver._classify: nunca lança, nunca bloqueia o commit. Sem LLM
+    ligado ou sem texto, vira no-op (a response fica apenas sem tags de IA).
+    """
+    if not (settings.llm_enabled and settings.groq_api_key and resp.answer_text):
+        return
+    try:
+        brain = SurveyBrain(GroqLLM(settings.groq_api_key, settings.groq_model))
+        tags = await brain.classify_feedback(resp.answer_text, resp.answer_score, survey_name)
+    except Exception:  # noqa: BLE001 — IA é enriquecedor, nunca ponto de falha.
+        logger.warning("classify ingest falhou — seguindo sem tags", exc_info=True)
+        return
+    if tags is None:
+        return
+    resp.sentiment = tags.sentiment
+    resp.themes = tags.themes
+    resp.ai_meta = {**(resp.ai_meta or {}), "urgency": tags.urgency}
+
+
+async def _ingest_response(
+    session: AsyncSession,
+    org: Organization,
+    survey: Survey,
+    payload: BizzuEvent,
+    contact: Contact,
+    trigger: str,
+) -> dict[str, Any]:
+    """Registra uma resposta JÁ respondida no app (ex.: NPS in-app), sem disparo WA.
+
+    Diferente do caminho normal: não exige opt-in (não há envio), não respeita
+    cooldown (não é repergunta) e cria a response já fechada (status='ingested')
+    com a nota/comentário vindos em `properties`. Classifica o comentário por IA
+    (best-effort). NUNCA instancia o SurveyDispatcher → impossível tocar o WAHA.
+    """
+    now = datetime.now(timezone.utc)
+
+    score_raw = payload.properties.get("score")
+    score = int(score_raw) if isinstance(score_raw, (int, float)) else None
+    comment_raw = payload.properties.get("comment")
+    comment = str(comment_raw).strip()[:2000] if comment_raw else None
+
+    run = SurveyRun(
+        survey_id=survey.id,
+        organization_id=org.id,
+        trigger=trigger,
+        status="done",
+    )
+    session.add(run)
+    await session.flush()  # garante run.id
+
+    resp = SurveyResponse(
+        survey_run_id=run.id,
+        contact_id=contact.id,
+        organization_id=org.id,
+        status=STATUS_INGESTED,
+        answer_score=score,
+        nps_bucket=nps_bucket(score),
+        answer_text=comment,
+        source="in_app",
+        sent_at=now,       # alimenta o cooldown de surveys WA distintas, se houver
+        answered_at=now,
+        closed_at=now,
+    )
+    session.add(resp)
+    await session.flush()  # idempotência: UNIQUE(survey_run_id, contact_id)
+
+    await _classify_response(resp, survey.name)
+
+    await session.commit()
+    return {
+        "dispatched": False,
+        "ingested": True,
+        "response_id": str(resp.id),
+        "survey": survey.name,
+        "phone": contact.phone,
+    }
+
+
+async def _get_or_create_contact(
+    session: AsyncSession, org: Organization, payload: "BizzuEvent", phone: str
+) -> Contact:
+    """get-or-create do contato pelo telefone; eleva opt-in se o emissor sinalizar.
+    Consentimento vem do emissor (sistema do cliente é a fonte do opt-in); nunca rebaixamos aqui."""
+    contact = (
+        await session.execute(
+            select(Contact).where(Contact.organization_id == org.id, Contact.phone == phone)
+        )
+    ).scalar_one_or_none()
+    if contact is None:
+        contact = Contact(
+            organization_id=org.id,
+            phone=phone,
+            name=(payload.user.name or "").strip() or None,
+            opt_in=payload.user.whatsapp_opt_in,
+            profile_data={"bizzu_user_id": payload.user.id},
+        )
+        session.add(contact)
+        await session.flush()
+    elif payload.user.whatsapp_opt_in and not contact.opt_in:
+        contact.opt_in = True
+    return contact
+
+
+async def _ingest_generic_event(
+    session: AsyncSession, org: Organization, payload: "BizzuEvent", phone: str
+) -> dict[str, Any]:
+    """Evento genérico (ticket/report/edital) → FeedbackItem na mega central.
+
+    Não dispara survey nem exige opt-in (não há envio). Idempotente por external_id
+    quando há event_id. Classifica o texto por IA (best-effort, via ingestor).
+    """
+    source, ftype = GENERIC_EVENT_MAP[payload.event]
+    external_id = f"bizzu:{payload.event}:{payload.event_id}" if payload.event_id else None
+
+    if external_id is not None:
+        dup = (
+            await session.execute(
+                select(FeedbackItem.id).where(
+                    FeedbackItem.organization_id == org.id,
+                    FeedbackItem.external_id == external_id,
+                )
+            )
+        ).first()
+        if dup is not None:
+            return _skip("duplicate", event_id=payload.event_id)
+
+    contact = await _get_or_create_contact(session, org, payload, phone)
+
+    props = payload.properties or {}
+    spec = {
+        "source": source,
+        "type": ftype,
+        "external_id": external_id,
+        "score": props.get("score"),
+        "text": props.get("text") or props.get("observacao") or props.get("comment") or props.get("reason"),
+        "occurred_at": props.get("occurred_at"),
+        "extra": {
+            "bizzu_user_id": payload.user.id,
+            "event": payload.event,
+            "event_id": payload.event_id,
+            **{k: v for k, v in props.items() if k not in _GENERIC_RESERVED},
+        },
+    }
+    item = await ingest_feedback_item(session, org.id, contact.id, spec, classify=True)
+    await session.commit()
+    return {
+        "dispatched": False,
+        "ingested": True,
+        "feedback_id": str(item.id),
+        "source": source,
+        "type": ftype,
+        "phone": phone,
+    }
 
 
 @router.post("/events/bizzu", status_code=202)
@@ -112,6 +290,11 @@ async def bizzu_event(
     if org is None:
         raise HTTPException(status_code=404, detail=f"org '{settings.default_org_slug}' não encontrada (rode o seed)")
 
+    # Eventos genéricos (ticket/report/edital) → FeedbackItem direto (mega central),
+    # sem procurar survey nem disparar WhatsApp.
+    if payload.event in GENERIC_EVENT_MAP:
+        return await _ingest_generic_event(session, org, payload, phone)
+
     # Evento → survey ativa configurada para ele (sem survey = integração "muda")
     survey = (
         await session.execute(
@@ -138,25 +321,13 @@ async def bizzu_event(
         if dup is not None:
             return _skip("duplicate", event_id=payload.event_id)
 
-    # Contato: get-or-create pelo telefone. Consentimento vem do emissor
-    # (sistema do cliente é a fonte do opt-in); nunca rebaixamos aqui.
-    contact = (
-        await session.execute(
-            select(Contact).where(Contact.organization_id == org.id, Contact.phone == phone)
-        )
-    ).scalar_one_or_none()
-    if contact is None:
-        contact = Contact(
-            organization_id=org.id,
-            phone=phone,
-            name=(payload.user.name or "").strip() or None,
-            opt_in=payload.user.whatsapp_opt_in,
-            profile_data={"bizzu_user_id": payload.user.id},
-        )
-        session.add(contact)
-        await session.flush()
-    elif payload.user.whatsapp_opt_in and not contact.opt_in:
-        contact.opt_in = True
+    # Contato: get-or-create pelo telefone (helper compartilhado com o ingest genérico).
+    contact = await _get_or_create_contact(session, org, payload, phone)
+
+    # Modo ingest (ex.: NPS in-app): a resposta já veio respondida do app —
+    # registra+classifica e retorna, sem opt-in/cooldown/disparo no WhatsApp.
+    if survey.ingest_mode:
+        return await _ingest_response(session, org, survey, payload, contact, trigger)
 
     if not contact.opt_in:
         await session.commit()  # persiste o contato mesmo sem disparo
