@@ -1208,6 +1208,38 @@ tbody tr:hover { background: var(--ink-700); }
   box-shadow: var(--ring-indigo);
 }
 
+/* ===== card de cluster ("Por significado") — reusa .tema-card ============== */
+/* descrição do cluster (LLM) — máx. 3 linhas */
+.cluster-desc {
+  margin: 12px 0 0;
+  font-size: 13px; line-height: 1.5; color: var(--text-dim);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; text-wrap: pretty;
+}
+
+/* índice de dor em destaque */
+.cluster-pain {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin: 14px 0 14px;
+  padding: 10px 12px; border-radius: var(--radius-xs);
+  background: var(--ink); border: 1px solid var(--charcoal);
+}
+.cluster-pain-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.cluster-pain-value {
+  font-family: var(--mono);
+  font-size: 22px; font-weight: 600; letter-spacing: -0.8px;
+  color: var(--text);
+}
+.tema-card.is-pain .cluster-pain {
+  background: var(--detractor-soft); border-color: var(--detractor-line);
+}
+.tema-card.is-pain .cluster-pain-value { color: var(--detractor); }
+
+.cluster-themes { margin-top: 14px; }
+
 .empty .empty-sub {
   max-width: 420px; margin: 12px auto 0;
   font-size: 13px; line-height: 1.55; color: var(--text-faint);

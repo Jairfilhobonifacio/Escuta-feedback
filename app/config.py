@@ -62,6 +62,12 @@ class Settings:
     # POST /api/playbooks/run; o comportamento dos webhooks é idêntico ao atual.
     # Os plugues são best-effort (try/except que engole) — nunca derrubam o webhook.
     playbooks_inline_enabled: bool = os.getenv("PLAYBOOKS_INLINE_ENABLED", "0") == "1"
+    # Camada 1 (Clustering de Dores): geração INLINE do embedding no write-path de
+    # feedback (após o commit do create_feedback), via asyncio.create_task
+    # fire-and-forget numa sessão nova. OFF (default) = só o POST /api/feedbacks/reindex
+    # (lote, manual/cron) gera embeddings. O plugue é best-effort (engole erro) e
+    # NUNCA bloqueia/derruba a resposta do endpoint.
+    clustering_inline_enabled: bool = os.getenv("CLUSTERING_INLINE_ENABLED", "0") == "1"
 
 
 settings = Settings()

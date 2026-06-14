@@ -787,6 +787,18 @@ export default function FeedbacksPage() {
   const [source, setSource] = useState("");
   const [search, setSearch] = useState("");
   const [abordado, setAbordado] = useState<"" | "sim" | "nao">("");
+  // Deep-links da tela Temas (lidos da URL uma vez, no mount):
+  // ?cluster_id=<id> (cluster de dores) e ?theme=<tag> (tema exato no JSONB).
+  const [clusterId, setClusterId] = useState("");
+  const [theme, setTheme] = useState("");
+
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const c = sp.get("cluster_id");
+    const th = sp.get("theme");
+    if (c) setClusterId(c);
+    if (th) setTheme(th);
+  }, []);
 
   // overlays (criar / editar / excluir)
   const [creating, setCreating] = useState(false);
@@ -805,11 +817,14 @@ export default function FeedbacksPage() {
       if (source) qs.set("source", source);
       if (search.trim()) qs.set("search", search.trim());
       if (abordado) qs.set("abordado", abordado === "sim" ? "true" : "false");
+      // Deep-links da tela Temas: cluster de dores e tema exato (filtro JSONB).
+      if (clusterId) qs.set("cluster_id", clusterId);
+      if (theme) qs.set("theme", theme);
       qs.set("limit", String(PAGE_SIZE));
       qs.set("offset", String(offset));
       return qs.toString();
     },
-    [status, type, sentiment, source, search, abordado],
+    [status, type, sentiment, source, search, abordado, clusterId, theme],
   );
 
   function normalize(raw: FeedbacksResponse | Feedback[]): {
@@ -918,7 +933,7 @@ export default function FeedbacksPage() {
   // Quando filtramos por status, esconde cards que saíram do bucket após o PATCH.
   const visible = status ? items.filter((it) => it.action_status === status) : items;
   const hasMore = visible.length < total;
-  const hasFilters = !!(type || sentiment || source || search || abordado);
+  const hasFilters = !!(type || sentiment || source || search || abordado || clusterId || theme);
 
   return (
     <div>
@@ -999,6 +1014,33 @@ export default function FeedbacksPage() {
           <option value="sim">Já abordados</option>
         </select>
       </div>
+
+      {/* Filtro vindo da tela Temas (deep-link): mostra e permite limpar. */}
+      {(clusterId || theme) && (
+        <div className="note">
+          <span className="note-ico">🔎</span>
+          <span>
+            {clusterId ? (
+              <>Filtrando pelos feedbacks de uma <b>dor</b> (cluster) específica.</>
+            ) : (
+              <>
+                Filtrando pelo tema <b>{theme}</b>.
+              </>
+            )}
+          </span>
+          <button
+            type="button"
+            className="btn ghost sm"
+            style={{ marginLeft: "auto" }}
+            onClick={() => {
+              setClusterId("");
+              setTheme("");
+            }}
+          >
+            Limpar filtro
+          </button>
+        </div>
+      )}
 
       {err && (
         <div className="flash err">

@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.admin import router as admin_router
+from app.api.clusters import router as clusters_router
 from app.api.digest import router as digest_router
 from app.api.events import router as events_router
 from app.api.playbooks import router as playbooks_router
@@ -36,6 +37,7 @@ app.include_router(events_router, prefix="/api")
 app.include_router(digest_router, prefix="/api")
 app.include_router(playbooks_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
+app.include_router(clusters_router, prefix="/api")
 
 
 @app.get("/health")

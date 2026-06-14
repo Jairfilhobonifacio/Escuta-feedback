@@ -22,6 +22,7 @@ import logging
 
 from app.config import settings
 from app.db import get_session
+from app.domain.clustering.inline import maybe_schedule_embed
 from app.domain.digest.aggregator import aggregate_themes
 from app.domain.interfaces.messaging_service import IMessagingService
 from app.domain.survey.brain import SurveyBrain
@@ -964,6 +965,9 @@ async def create_feedback(
     )
     session.add(item)
     await session.commit()
+    # Camada 1: gera o embedding em background (fire-and-forget) SE a flag estiver ON.
+    # Best-effort — não bloqueia nem pode derrubar a resposta. Off (default) = no-op.
+    maybe_schedule_embed(item.id, org.id, text)
     return _feedback_out(item, contact)
 
 
@@ -1019,6 +1023,7 @@ async def list_feedbacks(
     source: str | None = None,
     sentiment: str | None = None,
     theme: str | None = None,
+    cluster_id: str | None = None,
     abordado: bool | None = None,
     search: str | None = None,
     sort: Literal["urgencia", "recente"] = "urgencia",
@@ -1065,6 +1070,8 @@ async def list_feedbacks(
         base = base.where(FeedbackItem.sentiment == sentiment)
     if theme:
         base = base.where(_theme_match_clause(theme, dialect))
+    if cluster_id:
+        base = base.where(FeedbackItem.cluster_id == uuid.UUID(cluster_id))
     if abordado is not None:
         base = base.where(FeedbackItem.abordado == abordado)
     if search:

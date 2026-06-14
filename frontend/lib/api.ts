@@ -174,6 +174,36 @@ export interface ThemesAggregate {
   themes: Tema[];
 }
 
+// --- Clusters de dores (clustering semântico por significado) ----------------
+
+/** Um cluster de dores agrupado por significado. Espelha `ClusterOut` (§4 da spec).
+    `pain_score = item_count * neg_fraction`; `label`/`description`/`dominant_sentiment`
+    podem ser null (LLM best-effort não rotulou ainda). */
+export interface FeedbackCluster {
+  id: string;
+  label: string | null;
+  description: string | null;
+  /** 'positivo' | 'neutro' | 'negativo' | null (sentimento mais frequente no cluster) */
+  dominant_sentiment: string | null;
+  item_count: number;
+  /** Quantos itens do cluster têm sentimento negativo. */
+  neg_count: number;
+  /** Índice de dor: volume × fração negativa. */
+  pain_score: number;
+  /** Tags/temas mais frequentes entre os itens do cluster. */
+  top_themes: string[];
+  /** Melhoria ligada a esta dor (usado no Roadmap depois) ou null. */
+  improvement_id: string | null;
+  created_at: string | null;
+}
+
+/** Resposta de GET /api/feedbacks/clusters — descoberta de dores por significado. */
+export interface ClustersResponse {
+  clusters: FeedbackCluster[];
+  total_items_clustered: number;
+  total_unclustered: number;
+}
+
 // --- Clientes (todos os contatáveis da Bizzu) -------------------------------
 
 /** Linha da tela Clientes — snapshot enriquecido pela API de Clientes da Bizzu. */

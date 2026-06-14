@@ -2,7 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { api, type Tema, type ThemesAggregate } from "@/lib/api";
+import {
+  api,
+  type ClustersResponse,
+  type FeedbackCluster,
+  type Tema,
+  type ThemesAggregate,
+} from "@/lib/api";
+
+// ===== abas (por tag × por significado) =====================================
+
+type TabKey = "tags" | "clusters";
 
 // ===== ordenação ============================================================
 
@@ -155,10 +165,10 @@ function TemaCard({ tema, rank, maxCount }: { tema: Tema; rank: number; maxCount
       <SentimentBar tema={tema} />
 
       <div className="tema-foot">
-        {/* Deep-link best-effort: o filtro do inbox busca no TEXTO/nome, não na tag de
-            tema, então pode não casar 1:1. Ainda assim é o caminho mais útil hoje. */}
+        {/* Deep-link pelo filtro de tema (JSONB) do inbox — casa com a tag exata
+            que a IA colou, não com uma busca textual aproximada. */}
         <Link
-          href={`/feedbacks?search=${encodeURIComponent(tema.name)}`}
+          href={`/feedbacks?theme=${encodeURIComponent(tema.name)}`}
           className="tema-link"
         >
           Ver feedbacks deste tema
@@ -169,15 +179,135 @@ function TemaCard({ tema, rank, maxCount }: { tema: Tema; rank: number; maxCount
   );
 }
 
+// ===== barra de sentimento de um cluster ====================================
+// Reusa o visual da SentimentBar de tags (.tema-sent*), mas o cluster só expõe
+// neg_count vs item_count — então mostramos "negativos" × "demais".
+
+function ClusterSentimentBar({ cluster }: { cluster: FeedbackCluster }) {
+  const total = cluster.item_count || 1;
+  const neg = Math.min(cluster.neg_count, cluster.item_count);
+  const rest = Math.max(0, cluster.item_count - neg);
+
+  return (
+    <div className="tema-sent">
+      <div
+        className="tema-sent-bar"
+        role="img"
+        aria-label={`Sentimento do cluster: ${neg} negativo${neg === 1 ? "" : "s"}, ${rest} demais`}
+      >
+        {neg > 0 && (
+          <span className="seg neg" style={{ width: `${(neg / total) * 100}%` }} />
+        )}
+        {rest > 0 && (
+          <span className="seg none" style={{ width: `${(rest / total) * 100}%` }} />
+        )}
+      </div>
+      <div className="tema-sent-legend">
+        {neg > 0 && (
+          <span className="leg neg">
+            <span className="dot" />
+            {fmtNum.format(neg)} negativo{neg === 1 ? "" : "s"}
+          </span>
+        )}
+        {rest > 0 && (
+          <span className="leg none">
+            <span className="dot" />
+            {fmtNum.format(rest)} demais
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ===== card de um cluster (aba "Por significado") ===========================
+
+function ClusterCard({ cluster, rank }: { cluster: FeedbackCluster; rank: number }) {
+  // "Dor crítica" = volume relevante com sentimento predominantemente negativo.
+  const isCritical =
+    cluster.item_count >= 3 && cluster.dominant_sentiment === "negativo";
+  const title = cluster.label ?? "Cluster sem rótulo";
+
+  return (
+    <div className={`card tema-card ${isCritical ? "is-pain" : ""}`}>
+      <div className="tema-head">
+        <span className={`tema-rank ${rank <= 3 ? "top" : ""}`} aria-hidden>
+          {rank}
+        </span>
+        <h2 className="tema-name" title={title}>
+          {title}
+        </h2>
+        {isCritical && (
+          <span
+            className="badge detractor tema-flag"
+            title="3+ feedbacks com sentimento predominantemente negativo"
+          >
+            🔥 dor crítica
+          </span>
+        )}
+        <span className="tema-count" title="Feedbacks agrupados neste cluster">
+          {fmtNum.format(cluster.item_count)}
+          <span className="tema-count-unit">
+            {cluster.item_count === 1 ? "feedback" : "feedbacks"}
+          </span>
+        </span>
+      </div>
+
+      {cluster.description && (
+        <p className="cluster-desc" title={cluster.description}>
+          {cluster.description}
+        </p>
+      )}
+
+      {/* Índice de dor em destaque (volume × negatividade) */}
+      <div className="cluster-pain" aria-label={`Índice de dor ${cluster.pain_score.toFixed(1)}`}>
+        <span className="cluster-pain-label">Índice de dor</span>
+        <span className="cluster-pain-value">{cluster.pain_score.toFixed(1)}</span>
+      </div>
+
+      <ClusterSentimentBar cluster={cluster} />
+
+      {cluster.top_themes.length > 0 && (
+        <div className="theme-chips cluster-themes">
+          {cluster.top_themes.map((t, i) => (
+            <span key={`${t}-${i}`} className="chip">
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="tema-foot">
+        <Link href={`/feedbacks?cluster_id=${encodeURIComponent(cluster.id)}`} className="tema-link">
+          Ver feedbacks
+          <span aria-hidden> →</span>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 // ===== página ===============================================================
 
+const TAB_OPTIONS: { key: TabKey; label: string }[] = [
+  { key: "tags", label: "Por tag" },
+  { key: "clusters", label: "Por significado" },
+];
+
 export default function TemasPage() {
+  const [tab, setTab] = useState<TabKey>("tags");
+  const [days, setDays] = useState(30);
+
+  // --- aba "Por tag" (contagem de tags da IA) ---
   const [data, setData] = useState<ThemesAggregate | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-
-  const [days, setDays] = useState(30);
   const [sort, setSort] = useState<SortKey>("dor");
+
+  // --- aba "Por significado" (clusters de dores) ---
+  const [clusterData, setClusterData] = useState<ClustersResponse | null>(null);
+  const [clusterErr, setClusterErr] = useState<string | null>(null);
+  const [clusterLoading, setClusterLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -192,9 +322,26 @@ export default function TemasPage() {
     }
   }, [days]);
 
+  const loadClusters = useCallback(async () => {
+    setClusterLoading(true);
+    try {
+      const raw = await api.get<ClustersResponse>(
+        `/api/feedbacks/clusters?sort=dor&days=${days}`,
+      );
+      setClusterData(raw);
+      setClusterErr(null);
+    } catch (e) {
+      setClusterErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClusterLoading(false);
+    }
+  }, [days]);
+
+  // Carrega só a aba ativa (e recarrega quando muda o período).
   useEffect(() => {
-    load();
-  }, [load]);
+    if (tab === "tags") load();
+    else loadClusters();
+  }, [tab, load, loadClusters]);
 
   const themes = data?.themes ?? [];
 
@@ -216,6 +363,9 @@ export default function TemasPage() {
     [themes],
   );
 
+  const clusters = clusterData?.clusters ?? [];
+  const isTags = tab === "tags";
+
   return (
     <div>
       <div className="page-head">
@@ -225,21 +375,53 @@ export default function TemasPage() {
             O que mais aparece nos feedbacks, agrupado por tema — priorize as dores
           </div>
         </div>
-        {!loading && !err && themes.length > 0 && (
-          <span className="refresh-note">
-            {fmtNum.format(themes.length)}{" "}
-            {themes.length === 1 ? "tema" : "temas"} · {fmtNum.format(totalNeg)} negativos
-          </span>
-        )}
+        {isTags
+          ? !loading && !err && themes.length > 0 && (
+              <span className="refresh-note">
+                {fmtNum.format(themes.length)}{" "}
+                {themes.length === 1 ? "tema" : "temas"} · {fmtNum.format(totalNeg)} negativos
+              </span>
+            )
+          : !clusterLoading && !clusterErr && clusters.length > 0 && (
+              <span className="refresh-note">
+                {fmtNum.format(clusters.length)}{" "}
+                {clusters.length === 1 ? "dor" : "dores"} ·{" "}
+                {fmtNum.format(clusterData?.total_items_clustered ?? 0)} agrupados
+              </span>
+            )}
+      </div>
+
+      {/* Switcher de visão: contagem de tags × clusters por significado */}
+      <div className="status-tabs" role="tablist" aria-label="Modo de agrupamento">
+        {TAB_OPTIONS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            className={`status-tab ${tab === t.key ? "active" : ""}`}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
       <div className="note">
         <span className="note-ico">💡</span>
-        <span>
-          Os temas são extraídos e normalizados pela IA a partir do texto dos feedbacks.
-          Conforme mais respostas são classificadas, o ranking fica mais rico — quem tem{" "}
-          <b>volume e maioria negativa</b> é o que mais vale corrigir no produto.
-        </span>
+        {isTags ? (
+          <span>
+            Os temas são extraídos e normalizados pela IA a partir do texto dos feedbacks.
+            Conforme mais respostas são classificadas, o ranking fica mais rico — quem tem{" "}
+            <b>volume e maioria negativa</b> é o que mais vale corrigir no produto.
+          </span>
+        ) : (
+          <span>
+            As dores são descobertas automaticamente agrupando feedbacks por{" "}
+            <b>significado</b> (semântica), não por palavra exata. Cada cluster vira uma dor
+            com um <b>índice de dor</b> (volume × negatividade) para priorizar.
+          </span>
+        )}
       </div>
 
       <div className="toolbar">
@@ -257,50 +439,89 @@ export default function TemasPage() {
             ))}
           </select>
         </label>
-        <label className="tema-control">
-          <span className="tema-control-lbl">Ordenar</span>
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
-            aria-label="Ordenar temas"
-          >
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {isTags && (
+          <label className="tema-control">
+            <span className="tema-control-lbl">Ordenar</span>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+              aria-label="Ordenar temas"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
-      {err && (
-        <div className="flash err">
-          Não consegui carregar os temas ({err}). A API está rodando em{" "}
-          <span className="mono">localhost:8000</span>?
-        </div>
-      )}
+      {isTags ? (
+        <>
+          {err && (
+            <div className="flash err">
+              Não consegui carregar os temas ({err}). A API está rodando em{" "}
+              <span className="mono">localhost:8000</span>?
+            </div>
+          )}
 
-      {!err && sorted.length === 0 ? (
-        <div className="card">
-          <div className="empty">
-            <div className="big">🏷️</div>
-            {loading
-              ? "Carregando temas…"
-              : "Nenhum tema classificado neste período ainda."}
-            {!loading && (
-              <div className="empty-sub">
-                Os temas aparecem aqui assim que a IA classificar os feedbacks. Tente um
-                período maior ou volte depois de novas respostas.
+          {!err && sorted.length === 0 ? (
+            <div className="card">
+              <div className="empty">
+                <div className="big">🏷️</div>
+                {loading
+                  ? "Carregando temas…"
+                  : "Nenhum tema classificado neste período ainda."}
+                {!loading && (
+                  <div className="empty-sub">
+                    Os temas aparecem aqui assim que a IA classificar os feedbacks. Tente um
+                    período maior ou volte depois de novas respostas.
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        </div>
+            </div>
+          ) : (
+            <div className="tema-grid">
+              {sorted.map((t, i) => (
+                <TemaCard key={t.name} tema={t} rank={i + 1} maxCount={maxCount} />
+              ))}
+            </div>
+          )}
+        </>
       ) : (
-        <div className="tema-grid">
-          {sorted.map((t, i) => (
-            <TemaCard key={t.name} tema={t} rank={i + 1} maxCount={maxCount} />
-          ))}
-        </div>
+        <>
+          {clusterErr && (
+            <div className="flash err">
+              Não consegui carregar as dores ({clusterErr}). A API está rodando em{" "}
+              <span className="mono">localhost:8000</span>?
+            </div>
+          )}
+
+          {!clusterErr && clusters.length === 0 ? (
+            <div className="card">
+              <div className="empty">
+                <div className="big">🧭</div>
+                {clusterLoading
+                  ? "Agrupando dores por significado…"
+                  : "Nenhuma dor agrupada neste período ainda."}
+                {!clusterLoading && (
+                  <div className="empty-sub">
+                    Os clusters aparecem quando há feedbacks com texto suficiente para a IA
+                    agrupar por significado. Tente um período maior ou volte após novas
+                    respostas.
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="tema-grid">
+              {clusters.map((c, i) => (
+                <ClusterCard key={c.id} cluster={c} rank={i + 1} />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

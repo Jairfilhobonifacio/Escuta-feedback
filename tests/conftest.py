@@ -27,6 +27,7 @@ import app.models.survey  # noqa: E402,F401
 import app.models.feedback  # noqa: E402,F401
 import app.models.improvement  # noqa: E402,F401
 import app.models.playbook  # noqa: E402,F401
+import app.models.cluster  # noqa: E402,F401
 
 
 @pytest_asyncio.fixture

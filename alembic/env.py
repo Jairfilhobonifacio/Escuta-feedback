@@ -15,6 +15,7 @@ import app.models.survey  # noqa: F401
 import app.models.feedback  # noqa: F401
 import app.models.improvement  # noqa: F401
 import app.models.playbook  # noqa: F401
+import app.models.cluster  # noqa: F401
 
 config = context.config
 

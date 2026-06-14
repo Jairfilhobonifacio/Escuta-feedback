@@ -65,6 +65,54 @@ class GroqLLM:
             return await self._call(self.fallback_model, system, user, temperature, max_tokens)
         return None
 
+    async def complete(
+        self,
+        prompt: str,
+        *,
+        system: str = "Você é um assistente conciso. Responda em português do Brasil.",
+        temperature: float = 0.2,
+        max_tokens: int = 300,
+    ) -> str:
+        """Completa texto livre (sem JSON-mode). Best-effort: "" em qualquer falha.
+
+        Atalho fino sobre o mesmo cliente/timeout do `chat_json` para quem só quer
+        um texto curto (ex.: rotular um cluster de dores). Tenta o modelo principal
+        e, se ele falhar, UMA vez o `fallback_model`. NUNCA lança.
+        """
+        text = await self._call_text(self.model, system, prompt, temperature, max_tokens)
+        if text:
+            return text
+        if self.fallback_model and self.fallback_model != self.model:
+            return await self._call_text(self.fallback_model, system, prompt, temperature, max_tokens)
+        return ""
+
+    async def _call_text(
+        self, model: str, system: str, user: str, temperature: float, max_tokens: int
+    ) -> str:
+        """Uma chamada de texto livre a um modelo. "" em qualquer falha (nunca lança)."""
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(
+                    f"{GROQ_BASE_URL}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json={
+                        "model": model,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                    },
+                )
+            if resp.status_code != 200:
+                logger.warning("GroqLLM.complete[%s]: HTTP %s — %.200s", model, resp.status_code, resp.text)
+                return ""
+            return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+        except Exception:  # noqa: BLE001 — LLM nunca derruba o fluxo.
+            logger.warning("GroqLLM.complete[%s]: falha na chamada (rede/timeout/parse)", model, exc_info=True)
+            return ""
+
     async def _call(
         self, model: str, system: str, user: str, temperature: float, max_tokens: int
     ) -> dict[str, Any] | None:

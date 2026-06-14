@@ -42,6 +42,13 @@ class FeedbackItem(Base):
     improvement_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("improvements.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Dor (cluster semântico) a que este feedback foi atribuído pelo motor de
+    # clustering. NULL = ainda não agrupado. ON DELETE SET NULL: apagar a dor solta
+    # os feedbacks. A coluna pgvector `embedding vector(384)` fica FORA do ORM (só na
+    # migration + SQL cru, igual knowledge_chunks) — ver app/models/cluster.py.
+    cluster_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("feedback_clusters.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # De onde veio: 'bizzu_app' | 'bizzu_billing' | 'bizzu_support' | 'whatsapp' | ...
     source: Mapped[str] = mapped_column(String)
     # O que é: 'nps' | 'churn' | 'csat' | 'ticket' | 'report' | 'edital_request' | ...
