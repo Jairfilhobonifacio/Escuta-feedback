@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Integer, Text, ForeignKey, UniqueConstraint, Index, Uuid, func
+from sqlalchemy import Boolean, String, Integer, Text, ForeignKey, UniqueConstraint, Index, Uuid, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, JSONVariant
@@ -36,6 +36,12 @@ class FeedbackItem(Base):
     contact_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # Melhoria do roadmap a que este feedback foi vinculado ("Fechar o loop").
+    # NULL = ainda não virou melhoria. Um feedback pertence a no máximo UMA melhoria.
+    # ON DELETE SET NULL: apagar a melhoria solta os feedbacks (não os apaga).
+    improvement_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("improvements.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # De onde veio: 'bizzu_app' | 'bizzu_billing' | 'bizzu_support' | 'whatsapp' | ...
     source: Mapped[str] = mapped_column(String)
     # O que é: 'nps' | 'churn' | 'csat' | 'ticket' | 'report' | 'edital_request' | ...
@@ -55,3 +61,13 @@ class FeedbackItem(Base):
     occurred_at: Mapped[datetime | None] = mapped_column(nullable=True)      # quando aconteceu na fonte
     extra: Mapped[dict | None] = mapped_column(JSONVariant, nullable=True)   # metadados livres (NÃO usar 'metadata' — reservado)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    # Estado da AÇÃO tomada sobre o sinal (workflow de monitoramento — separado da IA).
+    # 'novo' | 'em_analise' | 'planejado' | 'resolvido' | 'descartado' (validado na API).
+    action_status: Mapped[str] = mapped_column(String, server_default="novo", default="novo")
+    action_note: Mapped[str | None] = mapped_column(Text, nullable=True)     # nota interna do operador
+
+    # "Abordado": o operador JÁ falou com o cliente sobre este feedback (≠ action_status,
+    # que é o estágio do tratamento interno). abordado_em registra o instante (preenchido na API).
+    abordado: Mapped[bool] = mapped_column(Boolean, server_default=false(), default=False)
+    abordado_em: Mapped[datetime | None] = mapped_column(nullable=True)

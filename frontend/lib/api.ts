@@ -26,13 +26,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(res.status, detail);
   }
-  return res.json() as Promise<T>;
+  // 204 / corpo vazio (ex.: DELETE): não tenta parsear JSON.
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "POST", body: JSON.stringify(body) }),
+  patch: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  /** DELETE — backend responde 204 (sem corpo); por isso não tipamos o retorno. */
+  del: (path: string) =>
+    request<unknown>(path, { method: "DELETE" }),
 };
 
 // --- Tipos da API -----------------------------------------------------------
@@ -140,4 +148,260 @@ export interface Contact360 {
   partner: Record<string, unknown> | null;
   summary: { total: number; feedback_items: number; survey_responses: number };
   timeline: Timeline360Item[];
+}
+
+// --- Temas (Top dores — clustering de feedbacks) ----------------------------
+
+/** Distribuição de sentimento de um tema. Espelha `sentiment_breakdown` do backend. */
+export interface ThemeSentiment {
+  positivo: number;
+  neutro: number;
+  negativo: number;
+}
+
+/** Um tema agregado no período: nome (já normalizado pela IA), volume e sentimento. */
+export interface Tema {
+  name: string;
+  count: number;
+  sentiment: ThemeSentiment;
+}
+
+/** Resposta de GET /api/themes/aggregate — clustering v1 (survey + feedback). */
+export interface ThemesAggregate {
+  period_days: number;
+  /** Soma das contagens de todos os temas (um feedback com N temas conta N vezes). */
+  total: number;
+  themes: Tema[];
+}
+
+// --- Clientes (todos os contatáveis da Bizzu) -------------------------------
+
+/** Linha da tela Clientes — snapshot enriquecido pela API de Clientes da Bizzu. */
+export interface Cliente {
+  id: string;
+  nome: string | null;
+  whatsapp: string;
+  opt_in: boolean;
+  /** 'em_risco' | 'promotor' | 'silencioso' | ... — perfil derivado pela Bizzu. */
+  perfil: string | null;
+  plano: string | null;
+  plan_type: string | null;
+  nps_score: number | null;
+  dias_para_renovar: number | null;
+  ultimo_feedback_em: string | null;
+  /** 'nps' | 'churn' | ... tipo do feedback mais recente. */
+  ultimo_feedback_tipo: string | null;
+  total_feedbacks: number;
+  /** Health Score (0-100) + banda + fatores que pesaram — Fase 1 CS. */
+  health: number;
+  health_band: "healthy" | "watch" | "at_risk";
+  health_factors: { delta: number; label: string }[];
+  criado_em: string | null;
+}
+
+// --- Feedbacks (inbox de monitoramento) -------------------------------------
+
+/** Estados do fluxo de ação sobre um feedback. */
+export type FeedbackStatus =
+  | "novo"
+  | "em_analise"
+  | "planejado"
+  | "resolvido"
+  | "descartado";
+
+/** Um feedback no feed cronológico — coletado no WhatsApp ou ingerido de fonte externa. */
+export interface Feedback {
+  id: string;
+  contato_id: string | null;
+  contato_nome: string | null;
+  contato_whatsapp: string | null;
+  source: string;
+  /** 'nps' | 'churn' | ... */
+  type: string;
+  score: number | null;
+  /** 'promoter' | 'passive' | 'detractor' | null */
+  nps_bucket: string | null;
+  /** 'positivo' | 'neutro' | 'negativo' | null (IA) */
+  sentiment: string | null;
+  themes: string[] | null;
+  text: string | null;
+  action_status: FeedbackStatus;
+  action_note: string | null;
+  /** Já abordamos esse cliente sobre o feedback? (controle interno do time) */
+  abordado: boolean;
+  /** Quando foi marcado como abordado (ISO) ou null. */
+  abordado_em: string | null;
+  occurred_em: string | null;
+  created_em: string | null;
+  /** Score de urgência 0-100 (sentimento + perfil + recência) — ordena o inbox. */
+  urgencia: number;
+}
+
+/** Corpo do POST /api/feedbacks (criar feedback manual). */
+export interface FeedbackInput {
+  /** Use contato_id OU (contato_whatsapp + contato_nome) para cliente fora da base. */
+  contato_id?: string;
+  contato_whatsapp?: string;
+  contato_nome?: string;
+  source?: string;
+  type: string;
+  score?: number | null;
+  text?: string | null;
+  sentiment?: string | null;
+  themes?: string[] | null;
+  abordado?: boolean;
+}
+
+/** Corpo parcial do PATCH /api/feedbacks/{id}. */
+export interface FeedbackPatch {
+  action_status?: FeedbackStatus;
+  action_note?: string;
+  abordado?: boolean;
+  text?: string | null;
+  type?: string;
+  score?: number | null;
+  sentiment?: string | null;
+  themes?: string[] | null;
+}
+
+/** Contagens por status para as abas do inbox. */
+export interface FeedbackCounts {
+  novo: number;
+  em_analise: number;
+  planejado: number;
+  resolvido: number;
+  descartado: number;
+}
+
+/** Resposta paginada de /api/feedbacks. */
+export interface FeedbacksResponse {
+  items: Feedback[];
+  total: number;
+  counts_by_status: FeedbackCounts;
+}
+
+// --- Fase 2: Playbooks (regras gatilho → ação) ------------------------------
+
+/** Gatilhos suportados por um playbook (espelha o enum `trigger_type` do backend). */
+export type PlaybookTrigger =
+  | "nps_detractor"
+  | "health_at_risk"
+  | "inactive_days"
+  | "renewal_soon"
+  | "churn_detected";
+
+/** Ações suportadas por um playbook (espelha o enum `action_type` do backend). */
+export type PlaybookAction = "create_task" | "alert_owner";
+
+/** Uma regra de automação. Espelha `PlaybookOut` (§4 da spec). `*_config` são
+    JSONB livres (ex.: trigger {band:"at_risk"} | {days:14}; action {priority,sla_hours,owner}). */
+export interface Playbook {
+  id: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  trigger_type: PlaybookTrigger;
+  trigger_config: Record<string, unknown>;
+  action_type: PlaybookAction;
+  action_config: Record<string, unknown>;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/** Corpo do POST /api/playbooks (criar regra). */
+export interface PlaybookInput {
+  name: string;
+  description?: string | null;
+  enabled?: boolean;
+  trigger_type: PlaybookTrigger;
+  trigger_config?: Record<string, unknown>;
+  action_type: PlaybookAction;
+  action_config?: Record<string, unknown>;
+}
+
+/** Corpo parcial do PATCH /api/playbooks/{id}. */
+export interface PlaybookPatch {
+  name?: string;
+  description?: string | null;
+  enabled?: boolean;
+  trigger_type?: PlaybookTrigger;
+  trigger_config?: Record<string, unknown>;
+  action_type?: PlaybookAction;
+  action_config?: Record<string, unknown>;
+}
+
+/** Relatório de uma rodada do motor — GET/POST /api/playbooks/run?dry_run=. */
+export interface RunReport {
+  evaluated: number;
+  playbooks_run: number;
+  tasks_would_create: unknown[];
+  tasks_created: number;
+  skipped_duplicate: number;
+}
+
+// --- Fase 2: Tarefas de CS (fila priorizada) --------------------------------
+
+/** Estados de uma tarefa de CS (default `aberta`). */
+export type TarefaStatus = "aberta" | "em_andamento" | "concluida" | "adiada";
+
+/** Prioridade de uma tarefa (default `normal`). */
+export type TarefaPriority = "baixa" | "normal" | "alta" | "urgente";
+
+/** Uma tarefa concreta na fila de CS. Espelha `TarefaOut` (§4 da spec).
+    `health`/`health_band` vêm recomputados inline pelo backend (reusa compute_health). */
+export interface Tarefa {
+  id: string;
+  contato_id: string | null;
+  contato_nome: string | null;
+  contato_whatsapp: string | null;
+  playbook_id: string | null;
+  playbook_nome: string | null;
+  title: string;
+  reason: string | null;
+  status: TarefaStatus;
+  priority: TarefaPriority;
+  owner: string | null;
+  due_at: string | null;
+  snoozed_until: string | null;
+  notes: string | null;
+  health: number | null;
+  health_band: "healthy" | "watch" | "at_risk" | null;
+  meta: Record<string, unknown> | null;
+  criada_em: string | null;
+  atualizada_em: string | null;
+}
+
+/** Corpo do POST /api/tarefas (tarefa manual). */
+export interface TarefaInput {
+  contato_id: string;
+  title: string;
+  reason?: string | null;
+  priority?: TarefaPriority;
+  owner?: string | null;
+  due_at?: string | null;
+}
+
+/** Corpo parcial do PATCH /api/tarefas/{id}. */
+export interface TarefaPatch {
+  status?: TarefaStatus;
+  owner?: string | null;
+  priority?: TarefaPriority;
+  due_at?: string | null;
+  snoozed_until?: string | null;
+  notes?: string | null;
+}
+
+/** Contagens por status para os KPIs/abas da fila de tarefas. */
+export interface TarefaCounts {
+  aberta: number;
+  em_andamento: number;
+  concluida: number;
+  adiada: number;
+}
+
+/** Resposta paginada de GET /api/tarefas. */
+export interface TarefasResponse {
+  items: Tarefa[];
+  total: number;
+  counts_by_status: TarefaCounts;
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import Avatar from "@/components/Avatar";
 import { api, type Contact360, type Timeline360Item } from "@/lib/api";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -91,8 +92,11 @@ function ProfileCard({ partner }: { partner: Record<string, unknown> }) {
 }
 
 function TimelineRow({ t }: { t: Timeline360Item }) {
+  const dotCls =
+    t.sentiment === "negativo" ? "neg" : t.sentiment === "positivo" ? "pos" : t.sentiment === "neutro" ? "neu" : "";
   return (
     <li className="tl-item">
+      <span className={`tl-dot ${dotCls}`} aria-hidden />
       <div className="tl-top">
         {typeBadge(t.type)}
         {t.score !== null && t.score !== undefined && (
@@ -135,16 +139,21 @@ export default function Contact360Page() {
   return (
     <div>
       <div className="page-head">
-        <div>
+        <div className="c360-head">
           <Link href="/contatos" className="back-link">← Contatos</Link>
-          <h1 className="page-title">{data?.contact.name || data?.contact.phone || "Cliente"}</h1>
-          {data && (
-            <div className="page-sub">
-              <span className="mono">{data.contact.phone}</span>
-              {" · "}
-              {data.contact.opt_in ? "opt-in ✓" : "sem opt-in"}
+          <div className="c360-head-row">
+            <Avatar name={data?.contact.name} seed={id} size={52} />
+            <div>
+              <h1 className="page-title">{data?.contact.name || data?.contact.phone || "Cliente"}</h1>
+              {data && (
+                <div className="page-sub">
+                  <span className="mono">{data.contact.phone}</span>
+                  {" · "}
+                  {data.contact.opt_in ? "opt-in ✓" : "sem opt-in"}
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
         {data && <span className="refresh-note">{data.summary.total} interações</span>}
       </div>

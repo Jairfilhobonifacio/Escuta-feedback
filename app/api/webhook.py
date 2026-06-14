@@ -155,19 +155,33 @@ def _extract_inbound(payload: dict[str, Any]) -> dict[str, Any] | None:
             self_check_to = to_raw
 
     sender = msg.get("from")
-    body = msg.get("body")
-    if not sender or body is None:
+    if not sender:
         return None
 
-    body = str(body).strip()
-    if not body:
-        return None
+    # Detecta ÁUDIO (voz): WAHA manda type 'audio'/'ptt'/'voice' e/ou media com
+    # mimetype 'audio/...'. Nesses casos não há body de texto — transcrevemos depois.
+    mtype = str(msg.get("type") or "").lower()
+    media = msg.get("media") if isinstance(msg.get("media"), dict) else {}
+    is_audio = mtype in ("audio", "ptt", "voice") or str(media.get("mimetype") or "").startswith("audio")
+
+    body = str(msg.get("body") or "").strip()
+    if not is_audio and not body:
+        return None  # nem texto nem áudio: ignora
 
     # 5524999214290@c.us -> 5524999214290
     phone = str(sender).split("@", 1)[0]
     # `from_raw` preserva o domínio (@c.us/@lid) — o handler precisa dele para
     # resolver LIDs (self-chat e alguns contatos chegam como '...@lid').
-    out = {"from": phone, "from_raw": str(sender), "body": body, "message_id": msg.get("id")}
+    out = {
+        "from": phone,
+        "from_raw": str(sender),
+        "body": body,
+        "message_id": msg.get("id"),
+        "media_type": "audio" if is_audio else None,
+        "media_url": media.get("url") if is_audio else None,
+        "media_data": media.get("data") if is_audio else None,
+        "media_mimetype": media.get("mimetype") if is_audio else None,
+    }
     if self_check_to is not None:
         out["self_check_to"] = self_check_to
     return out
@@ -255,6 +269,26 @@ async def waha_webhook(request: Request, session: AsyncSession = Depends(get_ses
             session.add(contact)
             await session.flush()  # materializa contact.id para o resolver.
 
+        # --- áudio: transcreve (Groq Whisper) e segue como se fosse texto ----
+        audio_failed = False
+        if inbound.get("media_type") == "audio":
+            from app.services.audio import transcribe_audio
+
+            transcribed = await transcribe_audio(
+                url=inbound.get("media_url"),
+                data_b64=inbound.get("media_data"),
+                mimetype=inbound.get("media_mimetype"),
+                waha_api_key=settings.waha_api_key,
+                groq_api_key=settings.groq_api_key,
+                groq_model=settings.groq_whisper_model,
+            )
+            if transcribed:
+                body = transcribed
+                logger.info("WAHA webhook: áudio de %s transcrito (%d chars)", phone, len(body))
+            else:
+                body = "[áudio recebido — não transcrito]"
+                audio_failed = True
+
         # --- memória da conversa: grava a mensagem inbound (transcript) -----
         session.add(
             Message(
@@ -266,6 +300,18 @@ async def waha_webhook(request: Request, session: AsyncSession = Depends(get_ses
             )
         )
         await session.flush()
+
+        # Áudio que não transcreveu: acolhe e encerra (não joga marcador no resolver).
+        if audio_failed:
+            waha = WAHAService(settings.waha_base_url, settings.waha_api_key, settings.waha_session)
+            try:
+                await waha.send_text(
+                    chat_id=phone, text="recebi seu áudio 🎧 vou ouvir com calma e já te respondo!"
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("WAHA webhook: falha ao responder áudio não transcrito", exc_info=True)
+            await session.commit()
+            return {"status": "audio_not_transcribed"}
 
         # --- hand-off: contato em atendimento humano → o bot PAUSA ----------
         if contact.needs_human_handoff:

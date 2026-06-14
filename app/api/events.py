@@ -21,6 +21,7 @@ import hmac
 import logging
 import re
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -63,6 +64,13 @@ GENERIC_EVENT_MAP: dict[str, tuple[str, str]] = {
 
 # Campos de properties que viram colunas próprias do FeedbackItem (não vão no extra).
 _GENERIC_RESERVED = ("score", "text", "observacao", "comment", "reason", "occurred_at")
+
+# Fase 2 (Playbooks): evento de ciclo de vida → gatilhos do motor a acionar inline.
+# Conservador por ora: cancelamento já virou FeedbackItem(type='churn') antes daqui,
+# então o gatilho 'churn_detected' encontra o candidato. Atrás da flag INLINE (OFF).
+_EVENT_TRIGGER_MAP: dict[str, list[str]] = {
+    "subscription_cancelled": ["churn_detected"],
+}
 
 
 class EventUser(BaseModel):
@@ -357,9 +365,40 @@ async def bizzu_event(
     run = await dispatcher.dispatch(survey, [contact], trigger=trigger)
     await session.commit()
 
+    # Fase 2 (Playbooks): plugue INLINE do motor, atrás de flag (default OFF) e
+    # best-effort — roda os playbooks cujo gatilho casa com o evento recebido (ex.:
+    # 'churn_detected' num 'subscription_cancelled'). NUNCA derruba o endpoint.
+    await _maybe_run_playbooks_inline(session, org.id, payload.event, messaging)
+
     return {
         "dispatched": True,
         "run_id": str(run.id),
         "survey": survey.name,
         "phone": phone,
     }
+
+
+async def _maybe_run_playbooks_inline(
+    session: AsyncSession,
+    org_id: "uuid.UUID",
+    event: str,
+    messaging: IMessagingService,
+) -> None:
+    """Roda o motor de Playbooks atrás de `PLAYBOOKS_INLINE_ENABLED` (default OFF).
+
+    Com a flag OFF é no-op — o motor só roda via POST /api/playbooks/run. Com ON,
+    aciona o motor (dry_run=False) restrito aos gatilhos mapeados pelo evento. O
+    mapeamento é conservador (só churn por ora); demais eventos não acionam nada.
+    Best-effort: try/except que loga e engole — o endpoint de eventos nunca cai.
+    """
+    if not settings.playbooks_inline_enabled:
+        return
+    triggers = _EVENT_TRIGGER_MAP.get(event)
+    if not triggers:
+        return
+    try:
+        from app.domain.cs.engine import run_playbooks
+
+        await run_playbooks(session, org_id, triggers=triggers, dry_run=False, messaging=messaging)
+    except Exception:  # noqa: BLE001 — motor é enriquecedor, nunca ponto de falha.
+        logger.warning("playbooks inline (events): falhou — seguindo", exc_info=True)

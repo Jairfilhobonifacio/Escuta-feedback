@@ -39,6 +39,7 @@ from app.domain.survey.constants import (
     STATUS_CLOSED,
     STATUS_EXPIRED,
 )
+from app.domain.feedback.from_survey import feedback_from_survey_response
 from app.domain.survey.logic import decide_next
 from app.domain.survey.parsers import nps_bucket
 from app.models.core import Contact, Organization
@@ -171,12 +172,17 @@ class SurveyContextResolver:
         if decision.new_status == STATUS_CLOSED:
             pending.closed_at = now
             await self._classify(pending)
+            # Fase 2 (Playbooks): plugue INLINE do motor, atrás de flag (default OFF)
+            # e best-effort — quando um detrator fecha, roda o gatilho nps_detractor.
+            await self._maybe_run_playbooks_inline(pending, contact_id)
             # Fase 2: alerta o dono em tempo real se for detrator urgente/negativo.
             await self._notify_detractor_realtime(pending, contact_id)
             # Aprofundamento: antes de fechar de vez, talvez UMA pergunta de follow-up.
             followup = await self._maybe_followup(pending, now)
             if followup is not None:
                 return followup
+            # Fechou de fato: espelha no inbox da mega central (idempotente).
+            await self._to_central(pending)
 
         await self.session.flush()
         return SurveyReply(
@@ -294,6 +300,8 @@ class SurveyContextResolver:
             pending.closed_at = now
             await self._classify(pending)
             await self._notify_detractor_realtime(pending, contact_id)
+            # Fechou de fato: espelha no inbox da mega central (idempotente).
+            await self._to_central(pending)
             closed = True
         else:
             pending.status = STATUS_AWAITING_REASON  # segue aberto p/ o próximo turno
@@ -440,6 +448,23 @@ class SurveyContextResolver:
         meta["urgency"] = tags.urgency
         pending.ai_meta = meta
 
+    async def _to_central(self, pending: SurveyResponse) -> None:
+        """Leva a resposta fechada para a mega central (inbox de monitoramento).
+
+        Idempotente por external_id='survey_response:<id>' (reabrir+refechar a
+        mesma resposta atualiza o MESMO FeedbackItem). Best-effort: um erro aqui
+        nunca derruba o webhook nem impede o fechamento da pesquisa. Chamado só
+        no fechamento real (status closed), depois de _classify, para o sinal já
+        nascer com sentiment/themes/urgency.
+        """
+        try:
+            await feedback_from_survey_response(self.session, pending)
+        except Exception:  # noqa: BLE001 — ponte p/ a central nunca quebra o fluxo.
+            logger.warning(
+                "survey→central: falha ao espelhar resposta no inbox — seguindo",
+                exc_info=True,
+            )
+
     # --- aprofundamento (probing) --------------------------------------------
 
     async def _maybe_followup(self, pending: SurveyResponse, now: datetime) -> Optional[SurveyReply]:
@@ -513,7 +538,11 @@ class SurveyContextResolver:
 
         await self._notify_handoff(contact, message)
         await self._open_support_ticket(contact, message)
-        return SurveyReply(text=HANDOFF_REPLY, survey_response_id=str(pending.id), closed=True)
+        # Quem pede humano costuma topar conversar: oferece a call direto (se houver link).
+        from app.domain.survey.helpers import append_call_link
+
+        reply = append_call_link(HANDOFF_REPLY, settings.bizzu_call_url)
+        return SurveyReply(text=reply, survey_response_id=str(pending.id), closed=True)
 
     async def _notify_handoff(self, contact: Optional[Contact], message: str) -> None:
         """Alerta o dono no WhatsApp (owner_phone). Best-effort — nunca lança."""
@@ -536,6 +565,31 @@ class SurveyContextResolver:
             await self.messaging.send_text(chat_id=owner_phone, text=alert, session=self.waha_session)
         except Exception:  # noqa: BLE001
             logger.warning("hand-off: falha ao alertar o dono", exc_info=True)
+
+    async def _maybe_run_playbooks_inline(self, pending: SurveyResponse, contact_id: uuid.UUID) -> None:
+        """Plugue INLINE do motor de Playbooks (Fase 2), atrás de flag e best-effort.
+
+        Com `PLAYBOOKS_INLINE_ENABLED` OFF (default) é um no-op — o motor só roda via
+        POST /api/playbooks/run. Com a flag ON, quando um DETRATOR fecha a pesquisa,
+        roda o motor restrito ao gatilho 'nps_detractor' (dry_run=False) para já criar
+        a tarefa de CS. NUNCA propaga exceção: o webhook do WAHA não pode cair por isso.
+        """
+        if not settings.playbooks_inline_enabled:
+            return
+        if pending.nps_bucket != "detractor":
+            return
+        try:
+            from app.domain.cs.engine import run_playbooks
+
+            await run_playbooks(
+                self.session,
+                self.org_id,
+                triggers=["nps_detractor"],
+                dry_run=False,
+                messaging=self.messaging,
+            )
+        except Exception:  # noqa: BLE001 — motor é enriquecedor, nunca ponto de falha.
+            logger.warning("playbooks inline (resolver): falhou — seguindo", exc_info=True)
 
     async def _notify_detractor_realtime(self, pending: SurveyResponse, contact_id: uuid.UUID) -> None:
         """Alerta o dono em TEMPO REAL quando um detrator urgente/negativo fecha (Fase 2).

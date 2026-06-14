@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.admin import router as admin_router
 from app.api.digest import router as digest_router
 from app.api.events import router as events_router
+from app.api.playbooks import router as playbooks_router
+from app.api.tasks import router as tasks_router
 from app.api.webhook import router as webhook_router
 
 app = FastAPI(title="Escuta")
@@ -32,6 +34,8 @@ app.include_router(webhook_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(digest_router, prefix="/api")
+app.include_router(playbooks_router, prefix="/api")
+app.include_router(tasks_router, prefix="/api")
 
 
 @app.get("/health")

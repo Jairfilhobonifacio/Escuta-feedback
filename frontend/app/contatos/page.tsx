@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import Avatar from "@/components/Avatar";
 import { api, type Contact } from "@/lib/api";
 
 export default function ContatosPage() {
@@ -57,8 +58,7 @@ export default function ContatosPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Nome</th>
-                  <th>WhatsApp</th>
+                  <th>Contato</th>
                   <th>Opt-in</th>
                   <th>Desde</th>
                 </tr>
@@ -66,7 +66,7 @@ export default function ContatosPage() {
               <tbody>
                 {contacts.length === 0 && (
                   <tr>
-                    <td colSpan={4}>
+                    <td colSpan={3}>
                       <div className="empty">
                         <div className="big">☎</div>
                         Nenhum contato ainda — adicione o primeiro ao lado.
@@ -77,11 +77,16 @@ export default function ContatosPage() {
                 {contacts.map((c) => (
                   <tr key={c.id}>
                     <td>
-                      <Link href={`/contatos/${c.id}`} className="row-link">
-                        {c.name || "sem nome"}
-                      </Link>
+                      <div className="cell-person">
+                        <Avatar name={c.name} seed={c.id} />
+                        <div className="cell-person-txt">
+                          <Link href={`/contatos/${c.id}`} className="row-link">
+                            {c.name || "sem nome"}
+                          </Link>
+                          <span className="mono cell-person-sub">{c.phone}</span>
+                        </div>
+                      </div>
                     </td>
-                    <td className="mono">{c.phone}</td>
                     <td>
                       {c.opt_in ? (
                         <span className="badge promoter">sim</span>

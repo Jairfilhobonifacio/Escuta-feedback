@@ -15,6 +15,8 @@ from app.domain.survey.resolver import DEFAULT_RETRY_MSG  # noqa: E402
 
 ME = "5524998365809@c.us"
 OTHER = "5531999990001@c.us"
+# Mensagem de texto não tem mídia: as 4 chaves de áudio vêm None (contrato do extract).
+_NO_MEDIA = {"media_type": None, "media_url": None, "media_data": None, "media_mimetype": None}
 
 
 def _payload(body, *, from_=ME, to=ME, from_me=True, source=None, msg_id="m1", event="message.any"):
@@ -33,7 +35,7 @@ def _with_flag(value: bool):
 def test_inbound_normal_de_terceiro_continua_passando():
     _with_flag(False)
     got = _extract_inbound(_payload("9", from_=OTHER, to=ME, from_me=False))
-    assert got == {"from": "5531999990001", "from_raw": OTHER, "body": "9", "message_id": "m1"}
+    assert got == {"from": "5531999990001", "from_raw": OTHER, "body": "9", "message_id": "m1", **_NO_MEDIA}
 
 
 def test_fromme_descartado_com_flag_off():
@@ -44,7 +46,7 @@ def test_fromme_descartado_com_flag_off():
 def test_self_chat_resposta_do_celular_passa_com_flag_on():
     _with_flag(True)
     got = _extract_inbound(_payload("9", source="app"))
-    assert got == {"from": "5524998365809", "from_raw": ME, "body": "9", "message_id": "m1"}
+    assert got == {"from": "5524998365809", "from_raw": ME, "body": "9", "message_id": "m1", **_NO_MEDIA}
 
 
 def test_self_chat_via_lid_preserva_from_raw():
@@ -52,7 +54,7 @@ def test_self_chat_via_lid_preserva_from_raw():
     _with_flag(True)
     lid = "77052233408626@lid"
     got = _extract_inbound(_payload("9", from_=lid, to=lid))
-    assert got == {"from": "77052233408626", "from_raw": lid, "body": "9", "message_id": "m1"}
+    assert got == {"from": "77052233408626", "from_raw": lid, "body": "9", "message_id": "m1", **_NO_MEDIA}
 
 
 def test_self_chat_sem_source_tambem_passa():

@@ -75,7 +75,16 @@ async def ingest_feedback_item(
     text = (str(text).strip() or None) if text else None
     occurred_at = _parse_dt(spec.get("occurred_at"))
     external_id = spec.get("external_id")
-    bucket = nps_bucket(score) if spec.get("type") in _SCORED_TYPES else None
+    # bucket: usa o do spec se já vier pronto (ex.: ponte SurveyResponse, que já
+    # classificou a nota); senão deriva da nota para os tipos pontuados.
+    bucket = spec.get("nps_bucket")
+    if bucket is None and spec.get("type") in _SCORED_TYPES:
+        bucket = nps_bucket(score)
+    # Enriquecimento JÁ computado pela fonte (sentiment/themes/urgency) — aplicado
+    # sem chamar o LLM. Ausência = None (não sobrescreve com vazio sem querer).
+    pre_sentiment = spec.get("sentiment")
+    pre_themes = spec.get("themes")
+    pre_ai_meta = spec.get("ai_meta")
 
     existing = None
     if external_id:
@@ -99,6 +108,13 @@ async def ingest_feedback_item(
             existing.occurred_at = occurred_at
         if spec.get("extra") is not None:
             existing.extra = spec["extra"]
+        # Enriquecimento pré-pronto da fonte refresca o snapshot (sem LLM).
+        if pre_sentiment is not None:
+            existing.sentiment = pre_sentiment
+        if pre_themes is not None:
+            existing.themes = pre_themes
+        if pre_ai_meta is not None:
+            existing.ai_meta = {**(existing.ai_meta or {}), **pre_ai_meta}
         if classify and text_changed:
             await _classify(existing)
         await session.flush()
@@ -113,6 +129,9 @@ async def ingest_feedback_item(
         score=score,
         nps_bucket=bucket,
         text=text,
+        sentiment=pre_sentiment,
+        themes=pre_themes,
+        ai_meta=pre_ai_meta,
         occurred_at=occurred_at,
         extra=spec.get("extra"),
     )

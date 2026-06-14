@@ -133,6 +133,9 @@ async def sync(dry_run: bool, search: str) -> int:
 
     from app.db import SessionLocal
     from app.models.core import Contact, Organization
+    import app.models.feedback  # noqa: F401  registra feedback_items no metadata
+    import app.models.improvement  # noqa: F401  FK feedback_items.improvement_id -> improvements
+    import app.models.survey  # noqa: F401  mapeamentos completos (evita NoReferencedTableError)
     from app.domain.feedback.ingest import ingest_feedback_item
     from app.domain.feedback.partner_map import partner_feedback_specs
 

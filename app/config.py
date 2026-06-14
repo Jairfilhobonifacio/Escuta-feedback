@@ -31,6 +31,9 @@ class Settings:
     # continua neste (cota separada, mais folgada) em vez de cair na máquina de
     # estados. GROQ_FALLBACK_MODEL="" desliga a cascata.
     groq_fallback_model: str = os.getenv("GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant")
+    # Transcrição de áudio inbound (WhatsApp) via Groq Whisper. Usa a GROQ_API_KEY;
+    # sem chave, áudio não é transcrito (o bot só acolhe e avisa que vai ouvir).
+    groq_whisper_model: str = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3")
     llm_enabled: bool = (
         os.getenv("LLM_ENABLED", "1") == "1" and bool(os.getenv("GROQ_API_KEY"))
     )
@@ -46,6 +49,19 @@ class Settings:
     # Requer o patch docs/patches/bizzu-backend-support-ticket-endpoint.patch no backend.
     bizzu_support_ticket_url: str | None = os.getenv("BIZZU_SUPPORT_TICKET_URL")
     bizzu_support_api_key: str | None = os.getenv("BIZZU_SUPPORT_API_KEY")
+    # Link de agendamento de call (Calendly/Google) — entra na oferta de call e no
+    # hand-off. Sem a env, as mensagens não incluem link (comportamento atual).
+    bizzu_call_url: str | None = os.getenv("BIZZU_CALL_URL")
+    # Cooldown de outbound proativo (em horas): janela mínima entre mensagens NÃO
+    # solicitadas para o MESMO contato (ex.: aviso "você pediu, a gente fez" do
+    # /improvements/{id}/notify). Evita spammar quem acabou de receber algo. Conta
+    # só mensagens 'outbound' recentes na tabela `messages`. 0 = desliga o cooldown.
+    notify_cooldown_hours: int = int(os.getenv("NOTIFY_COOLDOWN_HOURS", "20"))
+    # Fase 2 (Playbooks): plugues INLINE do motor nos pontos de evento (resolver de
+    # survey + endpoint de eventos). OFF (default) = o motor SÓ roda via
+    # POST /api/playbooks/run; o comportamento dos webhooks é idêntico ao atual.
+    # Os plugues são best-effort (try/except que engole) — nunca derrubam o webhook.
+    playbooks_inline_enabled: bool = os.getenv("PLAYBOOKS_INLINE_ENABLED", "0") == "1"
 
 
 settings = Settings()

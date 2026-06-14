@@ -10,22 +10,31 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+import logging
 
 from app.config import settings
 from app.db import get_session
 from app.domain.digest.aggregator import aggregate_themes
 from app.domain.interfaces.messaging_service import IMessagingService
+from app.domain.survey.brain import SurveyBrain
 from app.domain.survey.dispatcher import SurveyDispatcher
+from app.domain.survey.parsers import nps_bucket
 from app.models.core import Contact, Organization
 from app.models.feedback import FeedbackItem
-from app.models.survey import Survey, SurveyResponse, SurveyRun
+from app.models.improvement import Improvement
+from app.models.survey import Message, Survey, SurveyResponse, SurveyRun
+from app.services.llm import GroqLLM
 from app.services.waha import WAHAService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
 
@@ -33,6 +42,24 @@ router = APIRouter(tags=["admin"])
 def get_messaging() -> IMessagingService:
     """Canal de envio real (WAHA). Substituível via dependency_overrides nos testes."""
     return WAHAService(settings.waha_base_url, settings.waha_api_key, settings.waha_session)
+
+
+def get_brain() -> SurveyBrain | None:
+    """SurveyBrain (Groq) quando o LLM está configurado; None = sem auto-classificação.
+
+    Mesma checagem dos outros pontos de classificação do projeto (events/ingest):
+    `llm_enabled` (que já exige `GROQ_API_KEY`). Injetável via dependency_overrides
+    nos testes — assim a auto-classificação é testada com um FakeLLM, sem tocar a Groq.
+    """
+    if not (settings.llm_enabled and settings.groq_api_key):
+        return None
+    return SurveyBrain(
+        GroqLLM(
+            settings.groq_api_key,
+            settings.groq_model,
+            fallback_model=settings.groq_fallback_model or None,
+        )
+    )
 
 
 async def _get_org(session: AsyncSession) -> Organization:
@@ -467,6 +494,772 @@ async def contact_360(contact_id: str, session: AsyncSession = Depends(get_sessi
     }
 
 
+# --- Central de Monitoramento (clientes + feed de feedbacks) ------------------
+
+# Estados válidos da AÇÃO sobre um feedback (workflow do operador). A ordem é a
+# do funil — usada também para o cabeçalho de contagem do feed.
+ACTION_STATUSES: tuple[str, ...] = ("novo", "em_analise", "planejado", "resolvido", "descartado")
+
+# Tipos de feedback aceitos no registro manual (Felipe registra o que o cliente
+# deixou por qualquer canal). Mesmo espírito do ACTION_STATUSES: validado na API,
+# sem CHECK no banco (vocabulário pode crescer).
+FEEDBACK_TYPES: tuple[str, ...] = ("nps", "churn", "elogio", "sugestao", "bug", "outro")
+# Sentimentos aceitos (espelha a semântica da IA). None = sem classificação.
+SENTIMENTS: tuple[str, ...] = ("positivo", "neutro", "negativo")
+# Tipos que derivam nps_bucket a partir do score (0-10).
+_BUCKET_TYPES: tuple[str, ...] = ("nps",)
+
+# Score de urgência: faixa fixa 0-100. A fórmula soma sinais independentes e satura
+# (clamp) em 100, para o feed priorizar sozinho o que mais pede ação. Pesos abaixo.
+URGENCIA_MIN = 0
+URGENCIA_MAX = 100
+# Recência: meia-vida em dias (peso de recência decai pela metade a cada N dias).
+_URGENCIA_RECENCIA_MEIA_VIDA_DIAS = 14.0
+_URGENCIA_RECENCIA_PESO = 20  # contribuição máxima da recência (feedback recém-chegado)
+
+
+def _theme_match_clause(theme: str, dialect: str):
+    """Predicado SQL portável: `FeedbackItem.themes` (array JSON) CONTÉM `theme` (exato).
+
+    O array é JSONB no Postgres (Supabase) e JSON genérico no SQLite (testes). Cada
+    dialeto expressa "array contém este elemento" de um jeito — o caller passa o nome
+    do dialeto (`session.bind.dialect.name`) e devolvemos o clause certo:
+
+    - Postgres: `themes @> '["<theme>"]'::jsonb` (operador de contenção do JSONB; usa
+      índice GIN quando houver). Match EXATO do elemento (não substring).
+    - SQLite:   `EXISTS (SELECT 1 FROM json_each(themes) WHERE value = :theme)`.
+
+    O valor é SEMPRE vinculado por bind param (nunca f-string em SQL — regra do
+    projeto). Devolve um ColumnElement booleano para encaixar em `.where(...)`.
+    """
+    from sqlalchemy import cast, text
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    if dialect == "postgresql":
+        # Contenção de array JSONB: `themes @> '["<theme>"]'`. Passamos uma LISTA
+        # Python para `cast(..., JSONB)` — o tipo serializa para um array JSON de
+        # verdade. (cast de uma string json.dumps cairia num escalar JSON string,
+        # que NÃO casa com `@>` — bug pego no smoke contra o PG real.)
+        return FeedbackItem.themes.op("@>")(cast([theme], JSONB))
+    # SQLite (e demais com json1): json_each expande o array; igualamos o elemento.
+    return text(
+        "EXISTS (SELECT 1 FROM json_each(feedback_items.themes) "
+        "WHERE json_each.value = :theme)"
+    ).bindparams(theme=theme)
+
+
+def _coerce_dt(value: Any) -> datetime | None:
+    """datetime aware a partir de datetime/str ISO; None/inválido -> None. Tudo em UTC."""
+    dt = value if isinstance(value, datetime) else _parse_iso_dt(value)
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def compute_urgencia(
+    *,
+    sentiment: str | None,
+    type_: str | None,
+    score: int | None,
+    nps_bucket_value: str | None,
+    abordado: bool,
+    occurred_at: datetime | None,
+    created_at: datetime | None,
+    partner: dict | None,
+    now: datetime,
+) -> int:
+    """Score de urgência 0-100 — quanto MAIOR, mais o feedback pede ação humana agora.
+
+    Combina sinais que JÁ temos no item + no snapshot do contato (partner). É uma soma
+    ponderada saturada em [0,100] (não probabilística): existe para ORDENAR o inbox, não
+    para ser uma métrica calibrada. Sinais e pesos:
+
+      +40  sentimento negativo
+      +25  type == 'churn' (cancelamento é sempre prioridade)
+      +20  detrator: nps_bucket == 'detractor' OU score <= 6  (não soma duas vezes)
+      +20  contato em risco: partner.profile contém 'risco' (ex.: 'ativo_em_risco')
+      +10  plano anual (planType/planName == 'anual'): perder um anual dói mais
+      +15  ainda NÃO abordado (abordado=False) — o que falta tratar sobe
+      +0..20  recência: decaimento exponencial (meia-vida 14d) sobre o mais novo
+
+    Tudo best-effort: campo ausente/None simplesmente não soma. Resultado é clampado
+    em [0,100]. Itens sem nenhum sinal e antigos tendem a ~0; um detrator de churn
+    negativo, em risco, recém-chegado e não abordado satura em 100.
+    """
+    score_v = 0
+
+    if sentiment == "negativo":
+        score_v += 40
+
+    if type_ == "churn":
+        score_v += 25
+
+    # Detrator: por bucket OU por nota baixa — conta uma vez só.
+    if nps_bucket_value == "detractor" or (score is not None and score <= 6):
+        score_v += 20
+
+    partner = partner or {}
+    perfil = partner.get("profile")
+    if isinstance(perfil, str) and "risco" in perfil.lower():
+        score_v += 20
+
+    sub = partner.get("subscription") or {}
+    plano = str(sub.get("planType") or sub.get("planName") or "").lower()
+    if "anual" in plano:
+        score_v += 10
+
+    if not abordado:
+        score_v += 15
+
+    # Recência: meia-vida exponencial sobre occurred_at (fallback created_at).
+    when = _coerce_dt(occurred_at) or _coerce_dt(created_at)
+    if when is not None:
+        idade_dias = max(0.0, (now - when).total_seconds() / 86400.0)
+        fator = 0.5 ** (idade_dias / _URGENCIA_RECENCIA_MEIA_VIDA_DIAS)
+        score_v += round(_URGENCIA_RECENCIA_PESO * fator)
+
+    return max(URGENCIA_MIN, min(URGENCIA_MAX, int(score_v)))
+
+
+def _parse_iso_dt(value: Any) -> datetime | None:
+    """ISO-8601 (str do snapshot, com 'Z') -> datetime aware; tolera None/inválido."""
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _partner_fields(contact: Contact, now: datetime) -> dict[str, Any]:
+    """Deriva perfil/plano/plan_type/nps_score/dias_para_renovar do snapshot partner.
+
+    Tudo best-effort: campo ausente/malformado vira None. `plano` prefere o nome
+    legível (planName) e cai no planType; `dias_para_renovar` é (currentPeriodEnd -
+    hoje).days quando >= 0, espelhando o cálculo do dispatch_by_profile.
+    """
+    partner = (contact.profile_data or {}).get("partner") or {}
+    sub = partner.get("subscription") or {}
+    nps = partner.get("nps") or {}
+
+    plan_type = sub.get("planType")
+    plano = sub.get("planName") or plan_type
+
+    score = nps.get("score")
+    nps_score = int(score) if isinstance(score, (int, float)) else None
+
+    dias = None
+    renova = _parse_iso_dt(sub.get("currentPeriodEnd"))
+    if renova is not None:
+        restante = (renova.date() - now.date()).days
+        if restante >= 0:
+            dias = restante
+
+    return {
+        "perfil": partner.get("profile"),
+        "plano": plano,
+        "plan_type": plan_type,
+        "nps_score": nps_score,
+        "dias_para_renovar": dias,
+    }
+
+
+@router.get("/clientes")
+async def list_clientes(
+    search: str | None = None,
+    perfil: str | None = None,
+    plan_type: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[dict[str, Any]]:
+    """Lista rica de clientes contatáveis da org (Contact + snapshot partner +
+    agregação de feedback_items). Filtros opcionais: search (nome/whatsapp),
+    perfil, plan_type. Ordem: último feedback desc (nulls por último)."""
+    from app.domain.cs.health import compute_health
+
+    org = await _get_org(session)
+
+    # Agregação por contato em feedback_items: total + último occurred/created + tipo.
+    last_at = func.max(func.coalesce(FeedbackItem.occurred_at, FeedbackItem.created_at))
+    agg_rows = (
+        await session.execute(
+            select(
+                FeedbackItem.contact_id,
+                func.count().label("total"),
+                last_at.label("last_at"),
+            )
+            .where(FeedbackItem.organization_id == org.id, FeedbackItem.contact_id.is_not(None))
+            .group_by(FeedbackItem.contact_id)
+        )
+    ).all()
+    agg: dict[Any, dict[str, Any]] = {
+        cid: {"total": total, "last_at": last_at_v} for cid, total, last_at_v in agg_rows
+    }
+    # Tipo do último feedback (mais recente por occurred/created) por contato.
+    last_type: dict[Any, str] = {}
+    type_rows = (
+        await session.execute(
+            select(FeedbackItem.contact_id, FeedbackItem.type, FeedbackItem.occurred_at, FeedbackItem.created_at)
+            .where(FeedbackItem.organization_id == org.id, FeedbackItem.contact_id.is_not(None))
+        )
+    ).all()
+    best_when: dict[Any, Any] = {}
+    for cid, ftype, occ, created in type_rows:
+        when = occ or created
+        if cid not in best_when or (when is not None and (best_when[cid] is None or when >= best_when[cid])):
+            best_when[cid] = when
+            last_type[cid] = ftype
+
+    # Sentimento acumulado por contato (negativos/positivos) — sinal do Health Score.
+    sent: dict[Any, dict[str, int]] = {}
+    sent_rows = (
+        await session.execute(
+            select(FeedbackItem.contact_id, FeedbackItem.sentiment, func.count())
+            .where(FeedbackItem.organization_id == org.id, FeedbackItem.contact_id.is_not(None))
+            .group_by(FeedbackItem.contact_id, FeedbackItem.sentiment)
+        )
+    ).all()
+    for cid, s, n in sent_rows:
+        d = sent.setdefault(cid, {"neg": 0, "pos": 0})
+        if s == "negativo":
+            d["neg"] += n
+        elif s == "positivo":
+            d["pos"] += n
+
+    # Contatos (com filtros SQL portáveis: search no nome/phone; perfil/plan_type no JSON).
+    stmt = select(Contact).where(Contact.organization_id == org.id)
+    if search:
+        term = f"%{search.strip().lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(func.coalesce(Contact.name, "")).like(term),
+                Contact.phone.like(f"%{re.sub(r'%', '', search.strip())}%"),
+            )
+        )
+    if perfil:
+        stmt = stmt.where(Contact.profile_data["partner"]["profile"].as_string() == perfil)
+    if plan_type:
+        stmt = stmt.where(
+            Contact.profile_data["partner"]["subscription"]["planType"].as_string() == plan_type
+        )
+
+    contacts = (await session.execute(stmt)).scalars().all()
+
+    now = datetime.now(timezone.utc)
+    out: list[dict[str, Any]] = []
+    for c in contacts:
+        a = agg.get(c.id, {})
+        last = a.get("last_at")
+        pf = _partner_fields(c, now)
+        sc = sent.get(c.id, {})
+        sub_state = (
+            ((c.profile_data or {}).get("partner") or {}).get("subscription") or {}
+        ).get("state")
+        health = compute_health(
+            nps_score=pf["nps_score"],
+            perfil=pf["perfil"],
+            last_feedback_at=last,
+            neg_count=sc.get("neg", 0),
+            pos_count=sc.get("pos", 0),
+            subscription_state=sub_state,
+            now=now,
+        )
+        out.append(
+            {
+                "id": str(c.id),
+                "nome": c.name,
+                "whatsapp": c.phone,
+                "opt_in": c.opt_in,
+                **pf,
+                "ultimo_feedback_em": last.isoformat() if last else None,
+                "ultimo_feedback_tipo": last_type.get(c.id),
+                "total_feedbacks": a.get("total", 0),
+                "health": health.score,
+                "health_band": health.band,
+                "health_factors": health.factors,
+                "criado_em": c.created_at.isoformat() if c.created_at else None,
+            }
+        )
+
+    # Ordena por último feedback desc, nulls por último (estável por nome de desempate).
+    out.sort(key=lambda r: (r["ultimo_feedback_em"] is not None, r["ultimo_feedback_em"] or ""), reverse=True)
+    return out
+
+
+async def _resolve_contact_for_feedback(
+    session: AsyncSession,
+    org: Organization,
+    contato_id: str | None,
+    contato_whatsapp: str | None,
+    contato_nome: str | None,
+) -> Contact:
+    """Resolve o contato do feedback manual: por id (deve existir na org) OU
+    get-or-create por whatsapp (só dígitos). Segue o padrão de opt-in do projeto:
+    contato CRIADO aqui nasce sem opt-in (o consentimento de envio vem da fonte
+    do cliente, nunca de um registro interno de feedback)."""
+    if contato_id is not None:
+        try:
+            cid = uuid.UUID(contato_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="contato_id inválido")
+        contact = (
+            await session.execute(
+                select(Contact).where(Contact.id == cid, Contact.organization_id == org.id)
+            )
+        ).scalar_one_or_none()
+        if contact is None:
+            raise HTTPException(status_code=404, detail="contato não encontrado")
+        return contact
+
+    phone = re.sub(r"\D", "", contato_whatsapp or "")
+    if len(phone) < 10:
+        raise HTTPException(status_code=422, detail="contato_whatsapp inválido — use DDI+DDD+número, só dígitos")
+    contact = (
+        await session.execute(
+            select(Contact).where(Contact.organization_id == org.id, Contact.phone == phone)
+        )
+    ).scalar_one_or_none()
+    if contact is None:
+        contact = Contact(
+            organization_id=org.id,
+            phone=phone,
+            name=(contato_nome or "").strip() or None,
+            opt_in=False,
+            profile_data={},
+        )
+        session.add(contact)
+        await session.flush()
+    elif contato_nome and not contact.name:
+        contact.name = contato_nome.strip() or None
+    return contact
+
+
+class FeedbackCreateIn(BaseModel):
+    """Feedback manual: o operador registra o que o cliente deixou por qualquer canal.
+
+    Exige `contato_id` OU `contato_whatsapp` (validado no endpoint para dar 422 com
+    mensagem clara). `type` é obrigatório; demais campos opcionais."""
+
+    contato_id: str | None = None
+    contato_whatsapp: str | None = Field(default=None, max_length=32)
+    contato_nome: str | None = Field(default=None, max_length=200)
+    source: str = Field(default="manual", min_length=1, max_length=120)
+    type: str = Field(min_length=1, max_length=60)
+    score: int | None = Field(default=None, ge=0, le=10)
+    text: str | None = Field(default=None, max_length=4000)
+    sentiment: str | None = None
+    themes: list[str] | None = None
+    abordado: bool = False
+
+
+async def _auto_classify_feedback(
+    brain: SurveyBrain | None,
+    *,
+    text: str | None,
+    type_: str,
+    sentiment: str | None,
+    themes: list[str] | None,
+) -> dict[str, Any] | None:
+    """Auto-classifica um feedback manual via IA quando faltam tags — best-effort.
+
+    Roda SÓ quando há `text` e algo a preencher (sentiment/themes ausentes OU type
+    genérico/'outro'). NUNCA sobrescreve o que o operador informou: devolve apenas os
+    campos que vieram vazios + um `ai_meta` registrando a autoria da IA. Retorna None
+    quando não há nada a fazer ou a IA está indisponível/falhou (o endpoint segue sem
+    tags). NUNCA lança — IA é enriquecedor, jamais ponto de falha (regra de ouro).
+    """
+    if brain is None or not text:
+        return None
+    # Só vale chamar a IA se há buraco a preencher: sentimento, temas ou tipo genérico.
+    needs = (sentiment is None) or (not themes) or (type_ in (None, "outro"))
+    if not needs:
+        return None
+
+    try:
+        tags = await brain.classify_feedback(text, None, "feedback manual")
+    except Exception:  # noqa: BLE001 — IA é enriquecedor, nunca ponto de falha.
+        logger.warning("auto-classify feedback falhou — seguindo sem tags", exc_info=True)
+        return None
+    if tags is None:
+        return None
+
+    out: dict[str, Any] = {}
+    # Preenche só o que o operador NÃO informou (não sobrescreve nada explícito).
+    if sentiment is None and tags.sentiment in SENTIMENTS:
+        out["sentiment"] = tags.sentiment
+    if not themes and tags.themes:
+        out["themes"] = tags.themes
+    out["ai_meta"] = {
+        "classified_by": "ai",
+        "model": settings.groq_model,
+        "urgency": tags.urgency,
+        "sentiment": tags.sentiment,
+        "themes": tags.themes,
+    }
+    return out
+
+
+@router.post("/feedbacks", status_code=201)
+async def create_feedback(
+    body: FeedbackCreateIn,
+    session: AsyncSession = Depends(get_session),
+    brain: SurveyBrain | None = Depends(get_brain),
+) -> dict[str, Any]:
+    """Registra um feedback manual na mega central. Exige contato (id OU whatsapp).
+
+    Se vier `text` e faltar classificação (sentiment/themes ausentes OU type genérico),
+    a IA (`SurveyBrain.classify_feedback`) preenche os campos vazios — sem nunca
+    sobrescrever o que o operador informou. A classificação é best-effort: se a Groq
+    estiver OFF/falhar, o feedback é criado mesmo assim (degrada com segurança).
+    Retorna 201 com o item no MESMO formato do feed (`_feedback_out`)."""
+    org = await _get_org(session)
+
+    if body.contato_id is None and not body.contato_whatsapp:
+        raise HTTPException(status_code=422, detail="informe contato_id OU contato_whatsapp")
+    if body.type not in FEEDBACK_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"type inválido: '{body.type}' (use {', '.join(FEEDBACK_TYPES)})",
+        )
+    if body.sentiment is not None and body.sentiment not in SENTIMENTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"sentiment inválido: '{body.sentiment}' (use {', '.join(SENTIMENTS)})",
+        )
+
+    contact = await _resolve_contact_for_feedback(
+        session, org, body.contato_id, body.contato_whatsapp, body.contato_nome
+    )
+
+    now = datetime.now(timezone.utc)
+    text = (body.text.strip() or None) if body.text else None
+    bucket = nps_bucket(body.score) if (body.type in _BUCKET_TYPES and body.score is not None) else None
+
+    sentiment = body.sentiment
+    themes = body.themes
+    ai_meta: dict[str, Any] | None = None
+    enriched = await _auto_classify_feedback(
+        brain, text=text, type_=body.type, sentiment=sentiment, themes=themes
+    )
+    if enriched is not None:
+        sentiment = enriched.get("sentiment", sentiment)
+        themes = enriched.get("themes", themes)
+        ai_meta = enriched.get("ai_meta")
+
+    item = FeedbackItem(
+        organization_id=org.id,
+        contact_id=contact.id,
+        source=body.source,
+        type=body.type,
+        score=body.score,
+        nps_bucket=bucket,
+        text=text,
+        sentiment=sentiment,
+        themes=themes,
+        ai_meta=ai_meta,
+        occurred_at=now,
+        abordado=body.abordado,
+        abordado_em=now if body.abordado else None,
+    )
+    session.add(item)
+    await session.commit()
+    return _feedback_out(item, contact)
+
+
+def _feedback_out(
+    f: FeedbackItem, contact: Contact | None, now: datetime | None = None
+) -> dict[str, Any]:
+    """Serializa um FeedbackItem com os dados do contato juntados (formato do feed).
+
+    Inclui `urgencia` (int 0-100, ver `compute_urgencia`): combina sentimento, type,
+    detração, perfil/plano do contato (snapshot partner), recência e flag abordado.
+    `now` é injetável para a ordenação calcular a página inteira no MESMO instante.
+    """
+    when = f.occurred_at or f.created_at
+    now = now or datetime.now(timezone.utc)
+    partner = (contact.profile_data or {}).get("partner") if contact else None
+    urgencia = compute_urgencia(
+        sentiment=f.sentiment,
+        type_=f.type,
+        score=f.score,
+        nps_bucket_value=f.nps_bucket,
+        abordado=f.abordado,
+        occurred_at=f.occurred_at,
+        created_at=f.created_at,
+        partner=partner if isinstance(partner, dict) else None,
+        now=now,
+    )
+    return {
+        "id": str(f.id),
+        "contato_id": str(f.contact_id) if f.contact_id else None,
+        "contato_nome": contact.name if contact else None,
+        "contato_whatsapp": contact.phone if contact else None,
+        "source": f.source,
+        "type": f.type,
+        "score": f.score,
+        "nps_bucket": f.nps_bucket,
+        "sentiment": f.sentiment,
+        "themes": f.themes,
+        "text": f.text,
+        "urgencia": urgencia,
+        "action_status": f.action_status,
+        "action_note": f.action_note,
+        "abordado": f.abordado,
+        "abordado_em": f.abordado_em.isoformat() if f.abordado_em else None,
+        "occurred_em": when.isoformat() if when else None,
+        "created_em": f.created_at.isoformat() if f.created_at else None,
+    }
+
+
+@router.get("/feedbacks")
+async def list_feedbacks(
+    status: str | None = None,
+    type: str | None = None,
+    source: str | None = None,
+    sentiment: str | None = None,
+    theme: str | None = None,
+    abordado: bool | None = None,
+    search: str | None = None,
+    sort: Literal["urgencia", "recente"] = "urgencia",
+    limit: int = 50,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Feed de monitoramento: feedback_items da org + contato juntado.
+
+    Retorno: {"items": [...], "total": N, "counts_by_status": {"novo": x, ...}}.
+    `total` = total do filtro aplicado (ignora limit/offset). `counts_by_status`
+    cobre os 5 estados (zeros inclusos) sob o MESMO filtro, exceto o próprio
+    `status` (para o frontend montar abas com contagem).
+
+    Filtro `theme`: drill-down da tela Temas — mantém só os feedbacks cujo array
+    `themes` CONTÉM exatamente aquele tema (match exato do elemento, não substring;
+    JSONB `@>` no PG / `json_each` no SQLite). Combina com os demais filtros.
+
+    Ordenação (`sort`):
+    - `urgencia` (DEFAULT): score de urgência desc (ver `compute_urgencia`); empate
+      por recência (occurred desc). O inbox prioriza sozinho — detrator/churn/em-risco
+      sobem ao topo. Calculado em Python sobre o conjunto FILTRADO inteiro (o
+      score combina campos JSON do contato + decaimento por recência, inviável em SQL
+      portável), depois paginado — a paginação continua correta (piloto ~70 itens).
+    - `recente`: occurred desc (fallback created) — cronológico, paginado em SQL."""
+    org = await _get_org(session)
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
+    # Dialeto do bind para o filtro de tema (JSONB @> no PG / json_each no SQLite).
+    dialect = session.bind.dialect.name if session.bind is not None else "postgresql"
+
+    base = (
+        select(FeedbackItem, Contact)
+        .outerjoin(Contact, Contact.id == FeedbackItem.contact_id)
+        .where(FeedbackItem.organization_id == org.id)
+    )
+    if status:
+        base = base.where(FeedbackItem.action_status == status)
+    if type:
+        base = base.where(FeedbackItem.type == type)
+    if source:
+        base = base.where(FeedbackItem.source == source)
+    if sentiment:
+        base = base.where(FeedbackItem.sentiment == sentiment)
+    if theme:
+        base = base.where(_theme_match_clause(theme, dialect))
+    if abordado is not None:
+        base = base.where(FeedbackItem.abordado == abordado)
+    if search:
+        term = f"%{search.strip().lower()}%"
+        base = base.where(
+            or_(
+                func.lower(func.coalesce(FeedbackItem.text, "")).like(term),
+                func.lower(func.coalesce(Contact.name, "")).like(term),
+            )
+        )
+
+    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+
+    order_key = func.coalesce(FeedbackItem.occurred_at, FeedbackItem.created_at)
+    now = datetime.now(timezone.utc)
+    if sort == "recente":
+        # Cronológico: pagina direto no SQL (eficiente, comportamento original).
+        rows = (
+            await session.execute(base.order_by(order_key.desc()).limit(limit).offset(offset))
+        ).all()
+        items = [_feedback_out(f, c, now) for f, c in rows]
+    else:
+        # Urgência: precisa do conjunto filtrado inteiro (score em Python sobre JSON do
+        # contato + recência). Ordena por occurred desc no SQL como desempate estável,
+        # serializa todos (urgencia já calculada no MESMO `now`), ordena por urgencia e
+        # então pagina. Para ~70 itens do piloto é trivial; o LIMIT/OFFSET no SQL não
+        # serve aqui porque cortaria ANTES do ranqueamento por urgência.
+        rows = (await session.execute(base.order_by(order_key.desc()))).all()
+        all_items = [_feedback_out(f, c, now) for f, c in rows]
+        # rows já vêm por recência desc → sort estável por urgência mantém isso no empate.
+        all_items.sort(key=lambda it: it["urgencia"], reverse=True)
+        items = all_items[offset : offset + limit]
+
+    # counts_by_status: mesmo filtro, MENOS o próprio status (abas de status no front).
+    counts_stmt = (
+        select(FeedbackItem.action_status, func.count())
+        .outerjoin(Contact, Contact.id == FeedbackItem.contact_id)
+        .where(FeedbackItem.organization_id == org.id)
+    )
+    if type:
+        counts_stmt = counts_stmt.where(FeedbackItem.type == type)
+    if source:
+        counts_stmt = counts_stmt.where(FeedbackItem.source == source)
+    if sentiment:
+        counts_stmt = counts_stmt.where(FeedbackItem.sentiment == sentiment)
+    if theme:
+        counts_stmt = counts_stmt.where(_theme_match_clause(theme, dialect))
+    if abordado is not None:
+        counts_stmt = counts_stmt.where(FeedbackItem.abordado == abordado)
+    if search:
+        term = f"%{search.strip().lower()}%"
+        counts_stmt = counts_stmt.where(
+            or_(
+                func.lower(func.coalesce(FeedbackItem.text, "")).like(term),
+                func.lower(func.coalesce(Contact.name, "")).like(term),
+            )
+        )
+    counts_raw = dict((await session.execute(counts_stmt.group_by(FeedbackItem.action_status))).all())
+    counts_by_status = {s: int(counts_raw.get(s, 0)) for s in ACTION_STATUSES}
+
+    return {
+        "items": items,
+        "total": int(total),
+        "counts_by_status": counts_by_status,
+    }
+
+
+class FeedbackActionIn(BaseModel):
+    """PATCH parcial do feedback: ação (status/nota), flag `abordado` e edição de
+    conteúdo (text/type/score/sentiment/themes). Todos opcionais — só o que vier no
+    corpo é tocado. `model_fields_set` distingue "não enviado" de "enviado como null".
+    """
+
+    action_status: str | None = None
+    action_note: str | None = None
+    abordado: bool | None = None
+    text: str | None = Field(default=None, max_length=4000)
+    type: str | None = Field(default=None, min_length=1, max_length=60)
+    score: int | None = Field(default=None, ge=0, le=10)
+    sentiment: str | None = None
+    themes: list[str] | None = None
+
+
+@router.patch("/feedbacks/{feedback_id}")
+async def update_feedback_action(
+    feedback_id: str,
+    body: FeedbackActionIn,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Edição parcial de um feedback: ação (status/nota), flag `abordado` (ao virar
+    True grava `abordado_em`=agora se vazio; ao virar False zera) e conteúdo
+    (text/type/score/sentiment/themes). Revalida `nps_bucket` quando type/score
+    mudam. Retorna o item no formato do feed. 422 em valores inválidos."""
+    org = await _get_org(session)
+    try:
+        fid = uuid.UUID(feedback_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="id inválido")
+
+    sent = body.model_fields_set
+
+    if body.action_status is not None and body.action_status not in ACTION_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"action_status inválido: '{body.action_status}' (use {', '.join(ACTION_STATUSES)})",
+        )
+    if "type" in sent and (body.type is None or body.type not in FEEDBACK_TYPES):
+        raise HTTPException(
+            status_code=422,
+            detail=f"type inválido: '{body.type}' (use {', '.join(FEEDBACK_TYPES)})",
+        )
+    if "sentiment" in sent and body.sentiment is not None and body.sentiment not in SENTIMENTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"sentiment inválido: '{body.sentiment}' (use {', '.join(SENTIMENTS)})",
+        )
+
+    feedback = (
+        await session.execute(
+            select(FeedbackItem).where(
+                FeedbackItem.id == fid, FeedbackItem.organization_id == org.id
+            )
+        )
+    ).scalar_one_or_none()
+    if feedback is None:
+        raise HTTPException(status_code=404, detail="feedback não encontrado")
+
+    if body.action_status is not None:
+        feedback.action_status = body.action_status
+    if body.action_note is not None:
+        feedback.action_note = (body.action_note.strip() or None)
+
+    if "abordado" in sent and body.abordado is not None:
+        feedback.abordado = body.abordado
+        if body.abordado:
+            if feedback.abordado_em is None:
+                feedback.abordado_em = datetime.now(timezone.utc)
+        else:
+            feedback.abordado_em = None
+
+    if "text" in sent:
+        feedback.text = (body.text.strip() or None) if body.text else None
+    if "type" in sent:
+        feedback.type = body.type
+    if "sentiment" in sent:
+        feedback.sentiment = body.sentiment
+    if "themes" in sent:
+        feedback.themes = body.themes
+    if "score" in sent:
+        feedback.score = body.score
+
+    # Revalida o bucket se type ou score mudaram (ou se algum foi enviado).
+    if ("score" in sent) or ("type" in sent):
+        feedback.nps_bucket = (
+            nps_bucket(feedback.score)
+            if (feedback.type in _BUCKET_TYPES and feedback.score is not None)
+            else None
+        )
+
+    await session.commit()
+
+    contact = None
+    if feedback.contact_id is not None:
+        contact = (
+            await session.execute(select(Contact).where(Contact.id == feedback.contact_id))
+        ).scalar_one_or_none()
+    return _feedback_out(feedback, contact)
+
+
+@router.delete("/feedbacks/{feedback_id}", status_code=204)
+async def delete_feedback(
+    feedback_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Remove um feedback da org. 404 se não pertencer à org. 204 sem corpo."""
+    org = await _get_org(session)
+    try:
+        fid = uuid.UUID(feedback_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="id inválido")
+
+    feedback = (
+        await session.execute(
+            select(FeedbackItem).where(
+                FeedbackItem.id == fid, FeedbackItem.organization_id == org.id
+            )
+        )
+    ).scalar_one_or_none()
+    if feedback is None:
+        raise HTTPException(status_code=404, detail="feedback não encontrado")
+
+    await session.delete(feedback)
+    await session.commit()
+
+
 # --- Clustering de temas (Fase 2) --------------------------------------------
 
 
@@ -483,6 +1276,406 @@ async def themes_aggregate(days: int = 7, session: AsyncSession = Depends(get_se
             for t in themes
         ],
     }
+
+
+# --- Melhorias do roadmap ("Fechar o loop") ----------------------------------
+
+# Estágios de uma melhoria no roadmap. Ordem = funil (ideia → entregue). Validado
+# na API (sem CHECK no banco — vocabulário pode crescer, igual ACTION_STATUSES).
+IMPROVEMENT_STATUSES: tuple[str, ...] = (
+    "ideia",
+    "planejada",
+    "em_andamento",
+    "entregue",
+    "descartada",
+)
+
+
+def _improvement_out(imp: Improvement, feedback_count: int = 0) -> dict[str, Any]:
+    """Serializa uma melhoria com a contagem de feedbacks vinculados."""
+    return {
+        "id": str(imp.id),
+        "title": imp.title,
+        "description": imp.description,
+        "status": imp.status,
+        "feedback_count": int(feedback_count),
+        "created_em": imp.created_at.isoformat() if imp.created_at else None,
+        "delivered_em": imp.delivered_at.isoformat() if imp.delivered_at else None,
+        "notified_em": imp.notified_at.isoformat() if imp.notified_at else None,
+    }
+
+
+def _first_name(contact: Contact) -> str:
+    """Primeiro nome do contato para a saudação (vazio se não houver nome)."""
+    return (contact.name or "").split(" ")[0].strip() if contact.name else ""
+
+
+def _pick_theme(feedbacks: list[FeedbackItem]) -> str | None:
+    """Tema representativo do conjunto de feedbacks vinculados (o mais citado).
+
+    Junta os arrays `themes` de todos os feedbacks da melhoria e devolve o mais
+    frequente, para a mensagem dizer "você comentou sobre {tema}". None quando
+    nenhum feedback tem tema (a mensagem usa um fallback genérico).
+    """
+    from collections import Counter
+
+    counter: Counter = Counter()
+    for f in feedbacks:
+        for t in (f.themes or []):
+            key = str(t).strip()
+            if key:
+                counter[key] += 1
+    if not counter:
+        return None
+    return counter.most_common(1)[0][0]
+
+
+def _notify_message(contact: Contact, theme: str | None, org: Organization) -> str:
+    """Mensagem "você pediu, a gente fez" — calorosa, curta, on-brand (sem travessão).
+
+    Personaliza com o primeiro nome e o tema citado quando há. {org.name} é a marca
+    (ex.: Bizzu). Sem o caractere '—' (travessão), conforme a identidade da marca.
+    """
+    nome = _first_name(contact)
+    saudacao = f"Oi {nome}! " if nome else "Oi! "
+    marca = org.name or "a gente"
+    if theme:
+        miolo = (
+            f"Lembra que você comentou sobre {theme}? "
+            f"A gente acabou de melhorar isso na {marca} 💜 "
+            "obrigado por ajudar a construir."
+        )
+    else:
+        miolo = (
+            f"Você deixou um feedback pra gente e a gente acabou de melhorar isso na {marca} 💜 "
+            "obrigado por ajudar a construir."
+        )
+    return saudacao + miolo
+
+
+async def _recent_outbound_at(
+    session: AsyncSession, org_id: uuid.UUID, contact_id: uuid.UUID
+) -> datetime | None:
+    """Instante do último outbound para o contato (tabela `messages`) ou None.
+
+    Base do cooldown: se a última mensagem proativa é recente demais, não mandamos
+    de novo. Usa o transcript append-only que o resto do projeto já alimenta.
+    """
+    return (
+        await session.execute(
+            select(func.max(Message.created_at)).where(
+                Message.organization_id == org_id,
+                Message.contact_id == contact_id,
+                Message.direction == "outbound",
+            )
+        )
+    ).scalar_one_or_none()
+
+
+class ImprovementIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+class ImprovementPatchIn(BaseModel):
+    """PATCH parcial: title/description/status. `model_fields_set` distingue
+    "não enviado" de "enviado como null"."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=4000)
+    status: str | None = None
+
+
+class ImprovementLinkIn(BaseModel):
+    feedback_ids: list[str] = Field(min_length=1)
+
+
+@router.post("/improvements", status_code=201)
+async def create_improvement(
+    body: ImprovementIn, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    """Cria uma melhoria do roadmap (title obrigatório). Nasce com status 'ideia'
+    e sem feedbacks vinculados. 201 com o item no formato de `_improvement_out`."""
+    org = await _get_org(session)
+    imp = Improvement(
+        organization_id=org.id,
+        title=body.title.strip(),
+        description=(body.description.strip() or None) if body.description else None,
+        status="ideia",
+    )
+    session.add(imp)
+    await session.commit()
+    return _improvement_out(imp, feedback_count=0)
+
+
+@router.get("/improvements")
+async def list_improvements(session: AsyncSession = Depends(get_session)) -> list[dict[str, Any]]:
+    """Lista as melhorias da org, cada uma com `feedback_count` (feedbacks vinculados)
+    e `status`. Ordem: mais recentes primeiro (created desc)."""
+    org = await _get_org(session)
+    rows = (
+        (
+            await session.execute(
+                select(Improvement)
+                .where(Improvement.organization_id == org.id)
+                .order_by(Improvement.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Contagem de feedbacks por melhoria (uma query agregada para toda a lista).
+    counts = dict(
+        (
+            await session.execute(
+                select(FeedbackItem.improvement_id, func.count())
+                .where(
+                    FeedbackItem.organization_id == org.id,
+                    FeedbackItem.improvement_id.is_not(None),
+                )
+                .group_by(FeedbackItem.improvement_id)
+            )
+        ).all()
+    )
+    return [_improvement_out(imp, counts.get(imp.id, 0)) for imp in rows]
+
+
+async def _get_improvement(session: AsyncSession, org: Organization, improvement_id: str) -> Improvement:
+    try:
+        iid = uuid.UUID(improvement_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="id inválido")
+    imp = (
+        await session.execute(
+            select(Improvement).where(
+                Improvement.id == iid, Improvement.organization_id == org.id
+            )
+        )
+    ).scalar_one_or_none()
+    if imp is None:
+        raise HTTPException(status_code=404, detail="melhoria não encontrada")
+    return imp
+
+
+async def _feedback_count(session: AsyncSession, org_id: uuid.UUID, improvement_id: uuid.UUID) -> int:
+    return (
+        await session.execute(
+            select(func.count())
+            .select_from(FeedbackItem)
+            .where(
+                FeedbackItem.organization_id == org_id,
+                FeedbackItem.improvement_id == improvement_id,
+            )
+        )
+    ).scalar_one()
+
+
+@router.patch("/improvements/{improvement_id}")
+async def update_improvement(
+    improvement_id: str,
+    body: ImprovementPatchIn,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Edita title/description/status de uma melhoria (parcial). Ao status virar
+    'entregue', grava `delivered_at` (uma vez; não re-carimba se já estava entregue).
+    422 em status inválido. Retorna o item com `feedback_count`."""
+    org = await _get_org(session)
+    sent = body.model_fields_set
+
+    if "status" in sent and (body.status is None or body.status not in IMPROVEMENT_STATUSES):
+        raise HTTPException(
+            status_code=422,
+            detail=f"status inválido: '{body.status}' (use {', '.join(IMPROVEMENT_STATUSES)})",
+        )
+
+    imp = await _get_improvement(session, org, improvement_id)
+
+    if "title" in sent and body.title is not None:
+        imp.title = body.title.strip()
+    if "description" in sent:
+        imp.description = (body.description.strip() or None) if body.description else None
+    if "status" in sent and body.status is not None:
+        was_delivered = imp.status == "entregue"
+        imp.status = body.status
+        if body.status == "entregue" and not was_delivered:
+            imp.delivered_at = datetime.now(timezone.utc)
+
+    await session.commit()
+    count = await _feedback_count(session, org.id, imp.id)
+    return _improvement_out(imp, count)
+
+
+@router.post("/improvements/{improvement_id}/link")
+async def link_feedbacks(
+    improvement_id: str,
+    body: ImprovementLinkIn,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Vincula feedbacks a esta melhoria (seta `improvement_id` em cada um). Valida
+    que TODOS os feedbacks pertencem à org (404 se algum não existir/for de outra
+    org). Idempotente: re-vincular o mesmo feedback não duplica. Retorna a melhoria
+    com `feedback_count` atualizado e a lista de ids vinculados."""
+    org = await _get_org(session)
+    imp = await _get_improvement(session, org, improvement_id)
+
+    try:
+        fids = [uuid.UUID(f) for f in body.feedback_ids]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="feedback_id inválido")
+    fids = list(dict.fromkeys(fids))  # dedup preservando ordem
+
+    feedbacks = (
+        (
+            await session.execute(
+                select(FeedbackItem).where(
+                    FeedbackItem.id.in_(fids), FeedbackItem.organization_id == org.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(feedbacks) != len(fids):
+        raise HTTPException(status_code=404, detail="um ou mais feedbacks não encontrados")
+
+    for f in feedbacks:
+        f.improvement_id = imp.id
+    await session.commit()
+
+    count = await _feedback_count(session, org.id, imp.id)
+    return {
+        "improvement": _improvement_out(imp, count),
+        "linked": [str(f.id) for f in feedbacks],
+    }
+
+
+@router.post("/improvements/{improvement_id}/notify")
+async def notify_improvement(
+    improvement_id: str,
+    confirm: bool = False,
+    session: AsyncSession = Depends(get_session),
+    messaging: IMessagingService = Depends(get_messaging),
+) -> dict[str, Any]:
+    """Avisa os clientes que pediram a melhoria ("você pediu, a gente fez").
+
+    Destinatários = contatos dos feedbacks vinculados que têm whatsapp E opt_in,
+    fora do cooldown. A mensagem é calorosa, curta e on-brand (sem travessão),
+    personalizada com o tema mais citado nos feedbacks da melhoria.
+
+    SALVAGUARDA (regra de ouro — WhatsApp real só com OK explícito):
+    - DEFAULT (`confirm` ausente/false) = PREVIEW. Retorna o que SERIA enviado
+      (`would_send`) e quem ficou de fora (`skipped`), SEM enviar nada e SEM
+      gravar `notified_at`.
+    - `?confirm=true` = ENVIA de verdade via o messaging, grava o outbound no
+      transcript (alimenta o cooldown) e carimba `notified_at`. Mesmo com confirm,
+      contatos sem opt_in / sem whatsapp / em cooldown continuam pulados.
+
+    `skipped` traz `reason` por contato: 'sem_whatsapp' | 'sem_opt_in' | 'cooldown'.
+    """
+    org = await _get_org(session)
+    imp = await _get_improvement(session, org, improvement_id)
+
+    # Feedbacks vinculados (para o tema) + seus contatos distintos.
+    feedbacks = (
+        (
+            await session.execute(
+                select(FeedbackItem).where(
+                    FeedbackItem.organization_id == org.id,
+                    FeedbackItem.improvement_id == imp.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    theme = _pick_theme(feedbacks)
+
+    contact_ids = list(dict.fromkeys(f.contact_id for f in feedbacks if f.contact_id is not None))
+    contacts: dict[uuid.UUID, Contact] = {}
+    if contact_ids:
+        rows = (
+            (
+                await session.execute(
+                    select(Contact).where(
+                        Contact.id.in_(contact_ids), Contact.organization_id == org.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        contacts = {c.id: c for c in rows}
+
+    now = datetime.now(timezone.utc)
+    cooldown = timedelta(hours=settings.notify_cooldown_hours) if settings.notify_cooldown_hours else None
+
+    would_send: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for cid in contact_ids:
+        contact = contacts.get(cid)
+        if contact is None:
+            continue
+        base_info = {
+            "contato_id": str(cid),
+            "contato_nome": contact.name,
+            "contato_whatsapp": contact.phone,
+        }
+        phone = re.sub(r"\D", "", contact.phone or "")
+        if len(phone) < 10:
+            skipped.append({**base_info, "reason": "sem_whatsapp"})
+            continue
+        if not contact.opt_in:
+            skipped.append({**base_info, "reason": "sem_opt_in"})
+            continue
+        if cooldown is not None:
+            last = _coerce_dt(await _recent_outbound_at(session, org.id, cid))
+            if last is not None and (now - last) < cooldown:
+                skipped.append({**base_info, "reason": "cooldown"})
+                continue
+        would_send.append({**base_info, "mensagem": _notify_message(contact, theme, org)})
+
+    result: dict[str, Any] = {
+        "improvement_id": str(imp.id),
+        "preview": not confirm,
+        "sent": False,
+        "theme": theme,
+        "would_send": would_send,
+        "skipped": skipped,
+    }
+
+    if not confirm:
+        # PREVIEW: não envia, não grava nada. Só mostra.
+        return result
+
+    # ENVIO REAL (confirmado): manda cada mensagem, grava outbound + notified_at.
+    sent_count = 0
+    for item in would_send:
+        cid = uuid.UUID(item["contato_id"])
+        contact = contacts[cid]
+        await messaging.send_text(
+            chat_id=contact.phone,
+            text=item["mensagem"],
+            session=settings.waha_session,
+        )
+        # Transcript (alimenta o cooldown e dá histórico ao humano).
+        session.add(
+            Message(
+                organization_id=org.id,
+                contact_id=cid,
+                direction="outbound",
+                body=item["mensagem"],
+            )
+        )
+        sent_count += 1
+
+    imp.notified_at = now
+    await session.commit()
+
+    result["sent"] = True
+    result["sent_count"] = sent_count
+    result["notified_em"] = imp.notified_at.isoformat() if imp.notified_at else None
+    return result
 
 
 # --- Disparo ------------------------------------------------------------------

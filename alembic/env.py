@@ -12,6 +12,9 @@ from app.models.base import Base
 # importa os models para registrá-los no metadata
 import app.models.core  # noqa: F401
 import app.models.survey  # noqa: F401
+import app.models.feedback  # noqa: F401
+import app.models.improvement  # noqa: F401
+import app.models.playbook  # noqa: F401
 
 config = context.config
 

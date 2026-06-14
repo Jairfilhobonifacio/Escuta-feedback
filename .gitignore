@@ -30,3 +30,10 @@ scripts/_watch_run.py
 docs/campanhas/abordagem-anuais.html
 docs/campanhas/_preview_demo.png
 docs/campanhas/_anuais_ativos.json
+
+# Campanha de churn — análises/mensagens contêm nome/telefone de clientes (PII). NÃO commitar.
+docs/campanhas/analise-churn.md
+docs/campanhas/mensagens-churn-mensal.md
+
+# Artefato de build do TypeScript
+frontend/tsconfig.tsbuildinfo

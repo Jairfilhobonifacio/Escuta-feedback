@@ -25,6 +25,8 @@ from app.models.base import Base  # noqa: E402
 import app.models.core  # noqa: E402,F401
 import app.models.survey  # noqa: E402,F401
 import app.models.feedback  # noqa: E402,F401
+import app.models.improvement  # noqa: E402,F401
+import app.models.playbook  # noqa: E402,F401
 
 
 @pytest_asyncio.fixture
