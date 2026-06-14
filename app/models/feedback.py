@@ -27,6 +27,8 @@ class FeedbackItem(Base):
         # Idempotência da ingestão: cada sinal tem um id estável por fonte.
         UniqueConstraint("organization_id", "external_id", name="uq_feedback_org_external"),
         Index("ix_feedback_org_contact_occurred", "organization_id", "contact_id", "occurred_at"),
+        # Board (Camada 2): filtrar/agrupar o Kanban por responsável dentro da org.
+        Index("ix_feedback_items_assignee", "organization_id", "assignee"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -73,6 +75,12 @@ class FeedbackItem(Base):
     # 'novo' | 'em_analise' | 'planejado' | 'resolvido' | 'descartado' (validado na API).
     action_status: Mapped[str] = mapped_column(String, server_default="novo", default="novo")
     action_note: Mapped[str | None] = mapped_column(Text, nullable=True)     # nota interna do operador
+
+    # Board de Gestão (Camada 2): roteamento por time + responsável. Sem tabela de
+    # users (igual cs_tasks.owner) — slug/email livre, validado só por presença.
+    # assignee = quem do time cuida; team_tag = produto/suporte/comercial/cs (roteamento).
+    assignee: Mapped[str | None] = mapped_column(String, nullable=True)
+    team_tag: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # "Abordado": o operador JÁ falou com o cliente sobre este feedback (≠ action_status,
     # que é o estágio do tratamento interno). abordado_em registra o instante (preenchido na API).

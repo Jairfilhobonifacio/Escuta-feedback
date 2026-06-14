@@ -34,6 +34,16 @@ class Improvement(Base):
     # Estágio no roadmap: 'ideia' | 'planejada' | 'em_andamento' | 'entregue' | 'descartada'.
     # Validado na API (sem CHECK no banco — vocabulário pode crescer).
     status: Mapped[str] = mapped_column(String, server_default="ideia", default="ideia")
+    # Dor (cluster semântico) que originou esta melhoria — fecha o ciclo dor→melhoria.
+    # NULL = melhoria avulsa (não nasceu de um cluster). ON DELETE SET NULL: apagar a
+    # dor não apaga a melhoria. Coluna portável (Camada 3 — Roadmap & Melhorias).
+    cluster_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("feedback_clusters.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Esforço estimado: 'P' | 'M' | 'G' | 'XG' (validado na API, sem enum no banco). NULL = não estimado.
+    effort: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Data-alvo de entrega exibida no roadmap. NULL = sem data.
+    target_date: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     # Quando a melhoria foi marcada como 'entregue' (preenchido na API ao virar entregue).
     delivered_at: Mapped[datetime | None] = mapped_column(nullable=True)

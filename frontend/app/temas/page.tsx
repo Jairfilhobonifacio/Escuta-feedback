@@ -6,6 +6,7 @@ import {
   api,
   type ClustersResponse,
   type FeedbackCluster,
+  type Improvement,
   type Tema,
   type ThemesAggregate,
 } from "@/lib/api";
@@ -222,11 +223,37 @@ function ClusterSentimentBar({ cluster }: { cluster: FeedbackCluster }) {
 
 // ===== card de um cluster (aba "Por significado") ===========================
 
+// Estado da ação "Virar melhoria" de um card de dor.
+type PromoteState =
+  | { phase: "idle" }
+  | { phase: "saving" }
+  | { phase: "done"; id: string; title: string }
+  | { phase: "error"; msg: string };
+
 function ClusterCard({ cluster, rank }: { cluster: FeedbackCluster; rank: number }) {
   // "Dor crítica" = volume relevante com sentimento predominantemente negativo.
   const isCritical =
     cluster.item_count >= 3 && cluster.dominant_sentiment === "negativo";
   const title = cluster.label ?? "Cluster sem rótulo";
+
+  // Já existe uma melhoria pra essa dor? (FK no cluster). Se sim, o botão vira link.
+  const [promote, setPromote] = useState<PromoteState>(() =>
+    cluster.improvement_id ? { phase: "done", id: cluster.improvement_id, title } : { phase: "idle" },
+  );
+
+  // Cria a melhoria a partir da dor: o backend vincula os feedbacks e é idempotente
+  // (se a dor já tem melhoria, devolve a mesma). Não recarrega a aba — feedback local.
+  async function virarMelhoria() {
+    setPromote({ phase: "saving" });
+    try {
+      const imp = await api.post<Improvement>("/api/improvements/from-cluster", {
+        cluster_id: cluster.id,
+      });
+      setPromote({ phase: "done", id: imp.id, title: imp.title });
+    } catch (e) {
+      setPromote({ phase: "error", msg: e instanceof Error ? e.message : String(e) });
+    }
+  }
 
   return (
     <div className={`card tema-card ${isCritical ? "is-pain" : ""}`}>
@@ -277,12 +304,40 @@ function ClusterCard({ cluster, rank }: { cluster: FeedbackCluster; rank: number
         </div>
       )}
 
-      <div className="tema-foot">
+      <div className="tema-foot cluster-foot">
         <Link href={`/feedbacks?cluster_id=${encodeURIComponent(cluster.id)}`} className="tema-link">
           Ver feedbacks
           <span aria-hidden> →</span>
         </Link>
+
+        {promote.phase === "done" ? (
+          <Link href="/melhorias" className="btn ghost sm promote-done" title="Ver no roadmap de Melhorias">
+            ✓ no roadmap →
+          </Link>
+        ) : (
+          <button
+            type="button"
+            className="btn sm promote-btn"
+            onClick={virarMelhoria}
+            disabled={promote.phase === "saving"}
+            title="Criar uma melhoria a partir desta dor e vincular os feedbacks"
+          >
+            {promote.phase === "saving" ? "Criando…" : "💡 Virar melhoria"}
+          </button>
+        )}
       </div>
+
+      {promote.phase === "done" && (
+        <div className="flash ok cluster-flash">
+          Melhoria <b>{promote.title}</b> criada com os feedbacks vinculados.{" "}
+          <Link href="/melhorias" className="row-link">
+            ver em Melhorias →
+          </Link>
+        </div>
+      )}
+      {promote.phase === "error" && (
+        <div className="flash err cluster-flash">Não consegui criar a melhoria ({promote.msg}).</div>
+      )}
     </div>
   );
 }

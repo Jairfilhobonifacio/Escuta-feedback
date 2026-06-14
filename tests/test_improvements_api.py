@@ -24,6 +24,7 @@ if _REPO_ROOT not in sys.path:
 from app.api.admin import get_brain, get_messaging  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models.cluster import FeedbackCluster  # noqa: E402
 from app.models.core import Contact, Organization  # noqa: E402
 from app.models.feedback import FeedbackItem  # noqa: E402
 from app.models.improvement import Improvement  # noqa: E402
@@ -178,6 +179,129 @@ async def test_patch_entregue_idempotente_nao_recarimba(client, org, session):
     r = await client.patch(f"/api/improvements/{imp.id}", json={"status": "entregue"})
     assert r.status_code == 200
     assert r.json()["delivered_em"] == _dt(2026, 6, 1).isoformat()
+
+
+# --- Campos novos: cluster_id / effort / target_date (Camada 3) ---------------
+
+
+async def _mk_cluster(session, org, *, label=None):
+    cl = FeedbackCluster(organization_id=org.id, label=label, item_count=0)
+    session.add(cl)
+    await session.flush()
+    return cl
+
+
+@pytest.mark.asyncio
+async def test_create_improvement_com_campos_novos(client, org, session):
+    """create aceita cluster_id (da org), effort e target_date; serializa os três."""
+    cl = await _mk_cluster(session, org, label="Dor")
+    await session.commit()
+
+    r = await client.post(
+        "/api/improvements",
+        json={
+            "title": "Com extras",
+            "cluster_id": str(cl.id),
+            "effort": "G",
+            "target_date": "2026-07-01T00:00:00+00:00",
+        },
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["cluster_id"] == str(cl.id)
+    assert body["effort"] == "G"
+    assert body["target_date"] == "2026-07-01T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_create_improvement_effort_minusculo_normaliza(client, org, session):
+    r = await client.post("/api/improvements", json={"title": "x", "effort": "m"})
+    assert r.status_code == 201
+    assert r.json()["effort"] == "M"
+
+
+@pytest.mark.asyncio
+async def test_create_improvement_effort_invalido_422(client, org, session):
+    r = await client.post("/api/improvements", json={"title": "x", "effort": "ENORME"})
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_improvement_cluster_de_outra_org_404(client, org, session):
+    """cluster_id de OUTRA org no create -> 404 (isolamento)."""
+    other = Organization(slug="outra", name="Outra", settings={})
+    session.add(other)
+    await session.flush()
+    alheio = FeedbackCluster(organization_id=other.id, label="Alheia", item_count=0)
+    session.add(alheio)
+    await session.commit()
+
+    r = await client.post(
+        "/api/improvements", json={"title": "x", "cluster_id": str(alheio.id)}
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_campos_novos(client, org, session):
+    """PATCH parcial seta effort, target_date e cluster_id (model_fields_set)."""
+    cl = await _mk_cluster(session, org, label="Dor")
+    imp = Improvement(organization_id=org.id, title="X")
+    session.add(imp)
+    await session.commit()
+
+    r = await client.patch(
+        f"/api/improvements/{imp.id}",
+        json={"effort": "P", "cluster_id": str(cl.id), "target_date": "2026-08-01T00:00:00+00:00"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["effort"] == "P"
+    assert body["cluster_id"] == str(cl.id)
+    assert body["target_date"] == "2026-08-01T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_patch_limpa_cluster_e_effort_com_null(client, org, session):
+    """Enviar null limpa o campo (model_fields_set distingue de 'não enviado')."""
+    cl = await _mk_cluster(session, org, label="Dor")
+    imp = Improvement(
+        organization_id=org.id, title="X", cluster_id=cl.id, effort="G",
+    )
+    session.add(imp)
+    await session.commit()
+
+    r = await client.patch(
+        f"/api/improvements/{imp.id}", json={"cluster_id": None, "effort": None}
+    )
+    assert r.status_code == 200
+    assert r.json()["cluster_id"] is None
+    assert r.json()["effort"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_effort_invalido_422(client, org, session):
+    imp = Improvement(organization_id=org.id, title="X")
+    session.add(imp)
+    await session.commit()
+    r = await client.patch(f"/api/improvements/{imp.id}", json={"effort": "gigante"})
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_nao_mexe_em_campo_nao_enviado(client, org, session):
+    """PATCH só de title não zera effort/cluster_id já gravados."""
+    cl = await _mk_cluster(session, org, label="Dor")
+    imp = Improvement(organization_id=org.id, title="Antigo", cluster_id=cl.id, effort="M")
+    session.add(imp)
+    await session.commit()
+
+    r = await client.patch(f"/api/improvements/{imp.id}", json={"title": "Novo"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["title"] == "Novo"
+    assert body["effort"] == "M"
+    assert body["cluster_id"] == str(cl.id)
 
 
 # --- Link de feedbacks --------------------------------------------------------

@@ -48,12 +48,34 @@ const items: { href: string; label: string; ico: ReactNode; feature?: boolean }[
     ),
   },
   {
+    href: "/board",
+    label: "Board",
+    ico: (
+      <Ico>
+        <rect x="3" y="3" width="5" height="18" rx="1.5" />
+        <rect x="9.5" y="3" width="5" height="12" rx="1.5" />
+        <rect x="16" y="3" width="5" height="15" rx="1.5" />
+      </Ico>
+    ),
+  },
+  {
     href: "/temas",
     label: "Temas",
     ico: (
       <Ico>
         <path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" />
         <circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" stroke="none" />
+      </Ico>
+    ),
+  },
+  {
+    href: "/melhorias",
+    label: "Melhorias",
+    ico: (
+      <Ico>
+        <path d="M15 14c.2-1 .7-1.7 1.5-2.5C17.7 10.2 18 9 18 7.5a6 6 0 0 0-12 0c0 1.5.4 2.7 1.5 4 .8.8 1.3 1.5 1.5 2.5" />
+        <path d="M9 18h6" />
+        <path d="M10 22h4" />
       </Ico>
     ),
   },

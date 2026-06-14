@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import logging
@@ -28,6 +28,7 @@ from app.domain.interfaces.messaging_service import IMessagingService
 from app.domain.survey.brain import SurveyBrain
 from app.domain.survey.dispatcher import SurveyDispatcher
 from app.domain.survey.parsers import nps_bucket
+from app.models.cluster import FeedbackCluster
 from app.models.core import Contact, Organization
 from app.models.feedback import FeedbackItem
 from app.models.improvement import Improvement
@@ -851,6 +852,8 @@ class FeedbackCreateIn(BaseModel):
     text: str | None = Field(default=None, max_length=4000)
     sentiment: str | None = None
     themes: list[str] | None = None
+    assignee: str | None = Field(default=None, max_length=120)
+    team_tag: str | None = Field(default=None, max_length=60)
     abordado: bool = False
 
 
@@ -959,6 +962,8 @@ async def create_feedback(
         sentiment=sentiment,
         themes=themes,
         ai_meta=ai_meta,
+        assignee=(body.assignee.strip() or None) if body.assignee else None,
+        team_tag=(body.team_tag.strip() or None) if body.team_tag else None,
         occurred_at=now,
         abordado=body.abordado,
         abordado_em=now if body.abordado else None,
@@ -1009,6 +1014,8 @@ def _feedback_out(
         "urgencia": urgencia,
         "action_status": f.action_status,
         "action_note": f.action_note,
+        "assignee": f.assignee,
+        "team_tag": f.team_tag,
         "abordado": f.abordado,
         "abordado_em": f.abordado_em.isoformat() if f.abordado_em else None,
         "occurred_em": when.isoformat() if when else None,
@@ -1024,6 +1031,8 @@ async def list_feedbacks(
     sentiment: str | None = None,
     theme: str | None = None,
     cluster_id: str | None = None,
+    assignee: str | None = None,
+    team_tag: str | None = None,
     abordado: bool | None = None,
     search: str | None = None,
     sort: Literal["urgencia", "recente"] = "urgencia",
@@ -1072,6 +1081,10 @@ async def list_feedbacks(
         base = base.where(_theme_match_clause(theme, dialect))
     if cluster_id:
         base = base.where(FeedbackItem.cluster_id == uuid.UUID(cluster_id))
+    if assignee:
+        base = base.where(FeedbackItem.assignee == assignee)
+    if team_tag:
+        base = base.where(FeedbackItem.team_tag == team_tag)
     if abordado is not None:
         base = base.where(FeedbackItem.abordado == abordado)
     if search:
@@ -1119,6 +1132,10 @@ async def list_feedbacks(
         counts_stmt = counts_stmt.where(FeedbackItem.sentiment == sentiment)
     if theme:
         counts_stmt = counts_stmt.where(_theme_match_clause(theme, dialect))
+    if assignee:
+        counts_stmt = counts_stmt.where(FeedbackItem.assignee == assignee)
+    if team_tag:
+        counts_stmt = counts_stmt.where(FeedbackItem.team_tag == team_tag)
     if abordado is not None:
         counts_stmt = counts_stmt.where(FeedbackItem.abordado == abordado)
     if search:
@@ -1139,6 +1156,131 @@ async def list_feedbacks(
     }
 
 
+# Quantos cards mostrar por coluna do board (os mais urgentes). O `count` reflete o
+# total real da coluna; `items` é o recorte priorizado para a tela não estourar.
+BOARD_ITEMS_PER_COLUMN = 12
+
+
+@router.get("/feedbacks/board")
+async def feedbacks_board(
+    team_tag: str | None = None,
+    assignee: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Board de Gestão (Kanban): os feedbacks da org agrupados por coluna de ação.
+
+    Retorno: {"columns": {"novo": {"count": N, "items": [...top 12 por urgência...]},
+    "em_analise": {...}, "planejado": {...}, "resolvido": {...}, "descartado": {...}}}.
+    Todas as 5 colunas de ACTION_STATUSES sempre presentes (zeros inclusos). `count` =
+    total da coluna sob o filtro; `items` = os `BOARD_ITEMS_PER_COLUMN` mais urgentes
+    (mesmo `compute_urgencia`+`_feedback_out` do feed).
+
+    Filtros opcionais `team_tag`/`assignee` (roteamento por time). UMA query (carrega o
+    conjunto filtrado + contato juntado), agrupa/ordena em Python — o board do piloto
+    tem dezenas de itens, então é trivial (mesma estratégia do sort por urgência do feed).
+    """
+    org = await _get_org(session)
+
+    base = (
+        select(FeedbackItem, Contact)
+        .outerjoin(Contact, Contact.id == FeedbackItem.contact_id)
+        .where(FeedbackItem.organization_id == org.id)
+    )
+    if team_tag:
+        base = base.where(FeedbackItem.team_tag == team_tag)
+    if assignee:
+        base = base.where(FeedbackItem.assignee == assignee)
+
+    rows = (await session.execute(base)).all()
+
+    now = datetime.now(timezone.utc)
+    # Agrupa por coluna (action_status). Itens com status fora do vocabulário conhecido
+    # são ignorados no board (não há coluna pra eles) — mas isso não acontece na prática
+    # porque a escrita valida o vocabulário.
+    grouped: dict[str, list[dict[str, Any]]] = {s: [] for s in ACTION_STATUSES}
+    for f, c in rows:
+        if f.action_status in grouped:
+            grouped[f.action_status].append(_feedback_out(f, c, now))
+
+    columns: dict[str, dict[str, Any]] = {}
+    for s in ACTION_STATUSES:
+        col = grouped[s]
+        col.sort(key=lambda it: it["urgencia"], reverse=True)
+        columns[s] = {"count": len(col), "items": col[:BOARD_ITEMS_PER_COLUMN]}
+
+    return {"columns": columns}
+
+
+class FeedbackMoveIn(BaseModel):
+    """Drag-and-drop de um card no board: muda a coluna (`status` = action_status).
+
+    `improvement_id` (opcional): ao mover para 'planejado', vincula o feedback àquela
+    melhoria (valida que pertence à org). `assignee` (opcional): atribui o responsável
+    no mesmo movimento. Vocabulário de `status` validado no endpoint (= ACTION_STATUSES).
+    """
+
+    status: str
+    improvement_id: str | None = None
+    assignee: str | None = Field(default=None, max_length=120)
+
+
+@router.post("/feedbacks/{feedback_id}/move")
+async def move_feedback(
+    feedback_id: str,
+    body: FeedbackMoveIn,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Move um card no board: troca o `action_status` (valida o vocabulário). Se
+    `status=='planejado'` e vier `improvement_id`, vincula o feedback à melhoria (404 se
+    a melhoria não existir/for de outra org). Aplica `assignee` se enviado. Retorna o
+    item no formato do feed (`_feedback_out`). É 1 request por card movido."""
+    org = await _get_org(session)
+    try:
+        fid = uuid.UUID(feedback_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="id inválido")
+
+    if body.status not in ACTION_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"status inválido: '{body.status}' (use {', '.join(ACTION_STATUSES)})",
+        )
+
+    feedback = (
+        await session.execute(
+            select(FeedbackItem).where(
+                FeedbackItem.id == fid, FeedbackItem.organization_id == org.id
+            )
+        )
+    ).scalar_one_or_none()
+    if feedback is None:
+        raise HTTPException(status_code=404, detail="feedback não encontrado")
+
+    # Valida a melhoria ANTES de mexer no feedback (validar-depois-mutar): assim um 404 de
+    # melhoria de outra org não deixa uma mudança de status meia-aplicada na sessão.
+    # O vínculo só faz sentido ao planejar.
+    imp = None
+    if body.status == "planejado" and body.improvement_id:
+        imp = await _get_improvement(session, org, body.improvement_id)
+
+    feedback.action_status = body.status
+    if imp is not None:
+        feedback.improvement_id = imp.id
+
+    sent = body.model_fields_set
+    if "assignee" in sent:
+        feedback.assignee = (body.assignee.strip() or None) if body.assignee else None
+
+    await session.commit()
+
+    contact = None
+    if feedback.contact_id is not None:
+        contact = (
+            await session.execute(select(Contact).where(Contact.id == feedback.contact_id))
+        ).scalar_one_or_none()
+    return _feedback_out(feedback, contact)
+
+
 class FeedbackActionIn(BaseModel):
     """PATCH parcial do feedback: ação (status/nota), flag `abordado` e edição de
     conteúdo (text/type/score/sentiment/themes). Todos opcionais — só o que vier no
@@ -1153,6 +1295,8 @@ class FeedbackActionIn(BaseModel):
     score: int | None = Field(default=None, ge=0, le=10)
     sentiment: str | None = None
     themes: list[str] | None = None
+    assignee: str | None = Field(default=None, max_length=120)
+    team_tag: str | None = Field(default=None, max_length=60)
 
 
 @router.patch("/feedbacks/{feedback_id}")
@@ -1222,6 +1366,10 @@ async def update_feedback_action(
         feedback.themes = body.themes
     if "score" in sent:
         feedback.score = body.score
+    if "assignee" in sent:
+        feedback.assignee = (body.assignee.strip() or None) if body.assignee else None
+    if "team_tag" in sent:
+        feedback.team_tag = (body.team_tag.strip() or None) if body.team_tag else None
 
     # Revalida o bucket se type ou score mudaram (ou se algum foi enviado).
     if ("score" in sent) or ("type" in sent):
@@ -1297,6 +1445,9 @@ IMPROVEMENT_STATUSES: tuple[str, ...] = (
     "descartada",
 )
 
+# Esforço estimado de uma melhoria (camisa). Validado na API (sem CHECK no banco).
+IMPROVEMENT_EFFORTS: tuple[str, ...] = ("P", "M", "G", "XG")
+
 
 def _improvement_out(imp: Improvement, feedback_count: int = 0) -> dict[str, Any]:
     """Serializa uma melhoria com a contagem de feedbacks vinculados."""
@@ -1305,6 +1456,9 @@ def _improvement_out(imp: Improvement, feedback_count: int = 0) -> dict[str, Any
         "title": imp.title,
         "description": imp.description,
         "status": imp.status,
+        "cluster_id": str(imp.cluster_id) if imp.cluster_id else None,
+        "effort": imp.effort,
+        "target_date": imp.target_date.isoformat() if imp.target_date else None,
         "feedback_count": int(feedback_count),
         "created_em": imp.created_at.isoformat() if imp.created_at else None,
         "delivered_em": imp.delivered_at.isoformat() if imp.delivered_at else None,
@@ -1382,19 +1536,65 @@ async def _recent_outbound_at(
 class ImprovementIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=4000)
+    cluster_id: str | None = None
+    effort: str | None = None
+    target_date: datetime | None = None
 
 
 class ImprovementPatchIn(BaseModel):
-    """PATCH parcial: title/description/status. `model_fields_set` distingue
-    "não enviado" de "enviado como null"."""
+    """PATCH parcial: title/description/status/cluster_id/effort/target_date.
+    `model_fields_set` distingue "não enviado" de "enviado como null"."""
 
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=4000)
     status: str | None = None
+    cluster_id: str | None = None
+    effort: str | None = None
+    target_date: datetime | None = None
 
 
 class ImprovementLinkIn(BaseModel):
     feedback_ids: list[str] = Field(min_length=1)
+
+
+class ImprovementFromClusterIn(BaseModel):
+    cluster_id: str
+    title: str | None = Field(default=None, max_length=200)
+
+
+async def _resolve_cluster_id(
+    session: AsyncSession, org: Organization, raw: str
+) -> uuid.UUID:
+    """Valida um cluster_id (UUID + pertence à org) e devolve o UUID. 422/404 senão."""
+    try:
+        cid = uuid.UUID(raw)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="cluster_id inválido")
+    exists = (
+        await session.execute(
+            select(FeedbackCluster.id).where(
+                FeedbackCluster.id == cid, FeedbackCluster.organization_id == org.id
+            )
+        )
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="cluster (dor) não encontrado")
+    return cid
+
+
+def _validate_effort(value: str | None) -> str | None:
+    """Normaliza/valida o esforço (P/M/G/XG). None/'' -> None; inválido -> 422."""
+    if value is None:
+        return None
+    eff = value.strip().upper()
+    if not eff:
+        return None
+    if eff not in IMPROVEMENT_EFFORTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"effort inválido: '{value}' (use {', '.join(IMPROVEMENT_EFFORTS)})",
+        )
+    return eff
 
 
 @router.post("/improvements", status_code=201)
@@ -1402,13 +1602,21 @@ async def create_improvement(
     body: ImprovementIn, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
     """Cria uma melhoria do roadmap (title obrigatório). Nasce com status 'ideia'
-    e sem feedbacks vinculados. 201 com o item no formato de `_improvement_out`."""
+    e sem feedbacks vinculados. Aceita opcionalmente cluster_id (valida que pertence
+    à org), effort (P/M/G/XG) e target_date. 201 com o item no formato de
+    `_improvement_out`."""
     org = await _get_org(session)
+    cluster_id = (
+        await _resolve_cluster_id(session, org, body.cluster_id) if body.cluster_id else None
+    )
     imp = Improvement(
         organization_id=org.id,
         title=body.title.strip(),
         description=(body.description.strip() or None) if body.description else None,
         status="ideia",
+        cluster_id=cluster_id,
+        effort=_validate_effort(body.effort),
+        target_date=body.target_date,
     )
     session.add(imp)
     await session.commit()
@@ -1445,6 +1653,218 @@ async def list_improvements(session: AsyncSession = Depends(get_session)) -> lis
         ).all()
     )
     return [_improvement_out(imp, counts.get(imp.id, 0)) for imp in rows]
+
+
+@router.get("/improvements/roadmap")
+async def roadmap_improvements(
+    status: str | None = None, session: AsyncSession = Depends(get_session)
+) -> list[dict[str, Any]]:
+    """Roadmap priorizado: as melhorias da org ordenadas por `priority_score` desc.
+
+    Para cada melhoria, além dos campos de `_improvement_out`:
+    - `feedback_count`: nº de feedbacks vinculados (uma query agregada).
+    - `urgencia_media`: média do `compute_urgencia` sobre os feedbacks vinculados.
+      Calculada com UMA query em lote (`improvement_id IN (...)`), agrupando em
+      Python — sem N+1. 0 quando a melhoria não tem feedbacks.
+    - `cluster_label` / `cluster_neg_fraction`: do cluster (dor) de origem, se houver
+      `cluster_id` (uma query de labels + uma de frações negativas, ambas em lote).
+
+    `priority_score = feedback_count * max(urgencia_media, 1) * (1 + cluster_neg_fraction)`.
+    O `?status=` filtra por estágio (ex.: só 'planejada').
+    """
+    org = await _get_org(session)
+
+    q = select(Improvement).where(Improvement.organization_id == org.id)
+    if status is not None:
+        q = q.where(Improvement.status == status)
+    rows = (await session.execute(q.order_by(Improvement.created_at.desc()))).scalars().all()
+
+    if not rows:
+        return []
+
+    imp_ids = [imp.id for imp in rows]
+
+    # feedback_count por melhoria (uma query agregada).
+    counts = dict(
+        (
+            await session.execute(
+                select(FeedbackItem.improvement_id, func.count())
+                .where(
+                    FeedbackItem.organization_id == org.id,
+                    FeedbackItem.improvement_id.in_(imp_ids),
+                )
+                .group_by(FeedbackItem.improvement_id)
+            )
+        ).all()
+    )
+
+    # urgencia_media: UMA query em lote com todos os feedbacks vinculados a estas
+    # melhorias. Agrupa por improvement_id em Python e tira a média do compute_urgencia.
+    feedbacks = (
+        (
+            await session.execute(
+                select(FeedbackItem).where(
+                    FeedbackItem.organization_id == org.id,
+                    FeedbackItem.improvement_id.in_(imp_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Snapshot partner por contato (uma query em lote — evita N+1 ao computar urgência).
+    fb_contact_ids = list(dict.fromkeys(f.contact_id for f in feedbacks if f.contact_id is not None))
+    partners: dict[uuid.UUID, dict | None] = {}
+    if fb_contact_ids:
+        for c in (
+            (
+                await session.execute(
+                    select(Contact).where(
+                        Contact.id.in_(fb_contact_ids), Contact.organization_id == org.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        ):
+            partners[c.id] = (c.profile_data or {}).get("partner")
+
+    now = datetime.now(timezone.utc)
+    urg_sum: dict[uuid.UUID, int] = {}
+    urg_n: dict[uuid.UUID, int] = {}
+    for f in feedbacks:
+        partner = partners.get(f.contact_id) if f.contact_id is not None else None
+        u = compute_urgencia(
+            sentiment=f.sentiment,
+            type_=f.type,
+            score=f.score,
+            nps_bucket_value=f.nps_bucket,
+            abordado=f.abordado,
+            occurred_at=f.occurred_at,
+            created_at=f.created_at,
+            partner=partner if isinstance(partner, dict) else None,
+            now=now,
+        )
+        urg_sum[f.improvement_id] = urg_sum.get(f.improvement_id, 0) + u
+        urg_n[f.improvement_id] = urg_n.get(f.improvement_id, 0) + 1
+
+    # Dados do cluster de origem (label + fração negativa) — em lote, só p/ quem tem cluster_id.
+    cluster_ids = list(dict.fromkeys(imp.cluster_id for imp in rows if imp.cluster_id is not None))
+    labels: dict[uuid.UUID, str | None] = {}
+    neg_fraction: dict[uuid.UUID, float] = {}
+    if cluster_ids:
+        for cid, label in (
+            await session.execute(
+                select(FeedbackCluster.id, FeedbackCluster.label).where(
+                    FeedbackCluster.id.in_(cluster_ids)
+                )
+            )
+        ).all():
+            labels[cid] = label
+        # Fração negativa = negativos / total dos feedbacks do cluster (uma query agregada).
+        for cid, total, neg in (
+            await session.execute(
+                select(
+                    FeedbackItem.cluster_id,
+                    func.count(),
+                    func.sum(
+                        case((FeedbackItem.sentiment == "negativo", 1), else_=0)
+                    ),
+                )
+                .where(
+                    FeedbackItem.organization_id == org.id,
+                    FeedbackItem.cluster_id.in_(cluster_ids),
+                )
+                .group_by(FeedbackItem.cluster_id)
+            )
+        ).all():
+            neg_fraction[cid] = (int(neg or 0) / total) if total else 0.0
+
+    out: list[dict[str, Any]] = []
+    for imp in rows:
+        fc = int(counts.get(imp.id, 0))
+        n = urg_n.get(imp.id, 0)
+        urgencia_media = (urg_sum.get(imp.id, 0) / n) if n else 0.0
+        neg = neg_fraction.get(imp.cluster_id, 0.0) if imp.cluster_id is not None else 0.0
+        priority_score = fc * max(urgencia_media, 1.0) * (1.0 + neg)
+        item = _improvement_out(imp, fc)
+        item["urgencia_media"] = round(urgencia_media, 1)
+        item["cluster_label"] = labels.get(imp.cluster_id) if imp.cluster_id is not None else None
+        item["cluster_neg_fraction"] = round(neg, 3)
+        item["priority_score"] = round(priority_score, 2)
+        out.append(item)
+
+    out.sort(key=lambda it: it["priority_score"], reverse=True)
+    return out
+
+
+@router.post("/improvements/from-cluster", status_code=201)
+async def improvement_from_cluster(
+    body: ImprovementFromClusterIn, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    """Cria uma melhoria A PARTIR de uma dor (cluster) e vincula seus feedbacks.
+
+    - `title` = o título dado OU o `label` do cluster (fallback genérico se ambos NULL).
+    - status nasce 'ideia'; seta `improvement.cluster_id` E `cluster.improvement_id`;
+      faz bulk-link de TODOS os `FeedbackItem` do cluster (`improvement_id = nova.id`).
+    - IDEMPOTENTE: se o cluster já tem `improvement_id`, devolve a melhoria existente
+      (não duplica, não re-vincula). 201 com o `_improvement_out` + `feedback_count`.
+    """
+    org = await _get_org(session)
+    cid = await _resolve_cluster_id(session, org, body.cluster_id)
+    cluster = (
+        await session.execute(
+            select(FeedbackCluster).where(
+                FeedbackCluster.id == cid, FeedbackCluster.organization_id == org.id
+            )
+        )
+    ).scalar_one()
+
+    # Idempotência: o cluster já virou melhoria -> devolve a existente, sem duplicar.
+    if cluster.improvement_id is not None:
+        existing = (
+            await session.execute(
+                select(Improvement).where(
+                    Improvement.id == cluster.improvement_id,
+                    Improvement.organization_id == org.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            count = await _feedback_count(session, org.id, existing.id)
+            return _improvement_out(existing, count)
+
+    title = (body.title or "").strip() or (cluster.label or "").strip() or "Melhoria (sem título)"
+    imp = Improvement(
+        organization_id=org.id,
+        title=title,
+        status="ideia",
+        cluster_id=cluster.id,
+    )
+    session.add(imp)
+    await session.flush()  # garante imp.id antes de vincular
+
+    cluster.improvement_id = imp.id
+
+    # bulk-link: todos os feedbacks daquela dor passam a pertencer à nova melhoria.
+    feedbacks = (
+        (
+            await session.execute(
+                select(FeedbackItem).where(
+                    FeedbackItem.organization_id == org.id,
+                    FeedbackItem.cluster_id == cluster.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for f in feedbacks:
+        f.improvement_id = imp.id
+
+    await session.commit()
+    count = await _feedback_count(session, org.id, imp.id)
+    return _improvement_out(imp, count)
 
 
 async def _get_improvement(session: AsyncSession, org: Organization, improvement_id: str) -> Improvement:
@@ -1506,6 +1926,14 @@ async def update_improvement(
         imp.status = body.status
         if body.status == "entregue" and not was_delivered:
             imp.delivered_at = datetime.now(timezone.utc)
+    if "cluster_id" in sent:
+        imp.cluster_id = (
+            await _resolve_cluster_id(session, org, body.cluster_id) if body.cluster_id else None
+        )
+    if "effort" in sent:
+        imp.effort = _validate_effort(body.effort)
+    if "target_date" in sent:
+        imp.target_date = body.target_date
 
     await session.commit()
     count = await _feedback_count(session, org.id, imp.id)

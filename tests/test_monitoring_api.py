@@ -48,11 +48,12 @@ def _brain_override(payload):
     """Override de get_brain → SurveyBrain(FakeClassifyLLM(payload))."""
     return lambda: SurveyBrain(FakeClassifyLLM(payload))
 
-# Chaves exatas do item do feed (`_feedback_out`). Inclui `urgencia` (score 0-100).
+# Chaves exatas do item do feed (`_feedback_out`). Inclui `urgencia` (score 0-100) e,
+# desde a Camada 2 (Board de Gestão), `assignee`/`team_tag`.
 _ITEM_KEYS = {
     "id", "contato_id", "contato_nome", "contato_whatsapp", "source", "type",
     "score", "nps_bucket", "sentiment", "themes", "text", "urgencia",
-    "action_status", "action_note", "abordado", "abordado_em",
+    "action_status", "action_note", "assignee", "team_tag", "abordado", "abordado_em",
     "occurred_em", "created_em",
 }
 

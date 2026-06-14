@@ -1240,6 +1240,19 @@ tbody tr:hover { background: var(--ink-700); }
 
 .cluster-themes { margin-top: 14px; }
 
+/* rodapé do card de dor: "Ver feedbacks" + "Virar melhoria" lado a lado */
+.cluster-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.cluster-foot .tema-link { min-height: 34px; }
+.promote-btn { white-space: nowrap; }
+.promote-done { color: var(--indigo-light); border-color: var(--promoter-line); }
+.promote-done:hover { background: var(--promoter-soft); border-color: var(--promoter-line); }
+/* flash do "virar melhoria" — compacto, dentro do card, sem empurrar a grid */
+.cluster-flash { margin: 12px 0 0; font-size: 12.5px; padding: 10px 12px; }
+.cluster-flash .row-link { color: inherit; font-weight: 700; text-decoration: underline; }
+
 .empty .empty-sub {
   max-width: 420px; margin: 12px auto 0;
   font-size: 13px; line-height: 1.55; color: var(--text-faint);
@@ -1281,3 +1294,184 @@ tbody tr:hover { background: var(--ink-700); }
 }
 .abordar-name { font-family: var(--font-display); font-weight: 700; font-size: 15px; letter-spacing: -0.3px; }
 .abordar-tpl-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+/* ===== melhorias / roadmap (Camada 3 — "fechar o loop") =====================
+   Reusa .survey-item (linha da lista), .chip, .badge e a paleta. Só adiciona o
+   miolo do card de melhoria (demanda + score), as ações e o modal de notify. */
+
+.imp-list .survey-item:first-child { padding-top: 18px; }
+
+/* linha de métricas: nº de pedidos + score de prioridade */
+.imp-metrics {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px;
+  margin-top: 12px;
+}
+.imp-demand { font-size: 13px; color: var(--text-dim); }
+.imp-demand b { color: var(--text); font-weight: 600; }
+
+.imp-score {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  margin-left: auto;
+  padding: 4px 11px; border-radius: 999px;
+  background: var(--gold-glow); border: 1px solid var(--passive-line);
+}
+.imp-score-lbl {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--text-faint);
+}
+.imp-score-val {
+  font-size: 16px; font-weight: 600; letter-spacing: -0.6px; color: var(--gold-soft);
+}
+
+.imp-chips { margin-top: 12px; }
+/* chip da dor de origem é clicável (vira link p/ Temas) */
+.imp-chip-link {
+  cursor: pointer; color: var(--indigo-light); border-color: var(--promoter-line);
+  transition-property: background-color, border-color, color;
+  transition-duration: 140ms; transition-timing-function: var(--ease);
+}
+.imp-chip-link:hover { background: var(--promoter-soft); color: var(--indigo); }
+
+/* ações do card: estágio + fechar o loop */
+.imp-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--charcoal);
+}
+.imp-stage { display: inline-flex; align-items: center; gap: 9px; }
+.imp-stage select {
+  font-family: inherit; font-size: 13px; color: var(--text);
+  background: var(--ink); border: 1px solid var(--charcoal-2);
+  border-radius: var(--radius-xs); padding: 8px 11px; cursor: pointer; outline: none;
+  min-height: 36px;
+  transition-property: border-color, box-shadow;
+  transition-duration: 150ms; transition-timing-function: var(--ease);
+}
+.imp-stage select:focus { border-color: var(--indigo); box-shadow: var(--ring-indigo); }
+.imp-stage select:disabled { opacity: 0.55; cursor: progress; }
+.imp-close-loop { margin-left: auto; }
+
+/* modal "fechar o loop": blocos de destinatários */
+.notify-block { margin-top: 16px; }
+.notify-block:first-of-type { margin-top: 8px; }
+.notify-block-head { margin-bottom: 8px; }
+.notify-row { padding: 10px 0; border-bottom: 1px solid var(--charcoal); }
+.notify-row:last-child { border-bottom: none; }
+.notify-row.is-skip { opacity: 0.75; }
+.notify-row-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.notify-who { font-weight: 600; font-size: 13.5px; color: var(--text); }
+.notify-phone { font-size: 12px; }
+.notify-reason { margin-left: auto; }
+.notify-msg { margin-top: 8px; margin-bottom: 0; }
+
+/* ===== Board (Camada 2 — Kanban de triagem) ================================
+   5 colunas lado a lado; cards arrastáveis (HTML5 DnD nativo). Reusa tokens,
+   .card, .badge, .chip, .cell-person. Aditivo — não toca em classes existentes. */
+.board-cols {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1180px) {
+  /* em telas estreitas, rola na horizontal mantendo colunas legíveis */
+  .board-cols {
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    grid-auto-columns: minmax(248px, 1fr);
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+}
+
+.board-col {
+  background: var(--ink);
+  border: 1px solid var(--charcoal);
+  border-radius: var(--radius);
+  padding: 12px 11px 14px;
+  min-height: 160px;
+  transition-property: background-color, border-color, box-shadow;
+  transition-duration: 150ms; transition-timing-function: var(--ease);
+}
+.board-col.is-over {
+  border-color: var(--indigo);
+  background: var(--indigo-glow);
+  box-shadow: var(--ring-indigo);
+}
+
+.board-col-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 2px 4px 12px;
+  border-bottom: 1px solid var(--charcoal);
+  margin-bottom: 12px;
+}
+.board-col-name {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.8px; color: var(--text-faint);
+}
+
+.board-col-body { display: flex; flex-direction: column; gap: 10px; }
+.board-col-empty {
+  text-align: center; color: var(--text-ghost);
+  font-size: 12.5px; padding: 18px 0; font-style: italic;
+}
+.board-col-more {
+  text-align: center; color: var(--text-faint);
+  font-size: 11.5px; padding: 4px 0 2px;
+}
+
+.board-card {
+  padding: 12px 13px;
+  cursor: grab;
+  background: var(--ink-800);
+  transition-property: transform, box-shadow, border-color, opacity;
+  transition-duration: 150ms; transition-timing-function: var(--ease);
+}
+.board-card:hover { border-color: var(--charcoal-2); box-shadow: var(--shadow-pop); }
+.board-card:focus-visible { outline: none; box-shadow: var(--ring-indigo); }
+.board-card:active { cursor: grabbing; }
+.board-card.is-dragging { opacity: 0.45; }
+@media (prefers-reduced-motion: reduce) { .board-card { transition: none; } }
+
+.board-card-top { gap: 8px; margin-bottom: 9px; }
+.board-card-who {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.board-card-text {
+  font-size: 13px; line-height: 1.5; margin: 0 0 10px;
+  color: var(--text-dim); text-wrap: pretty;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.board-card-text.empty-text { color: var(--text-faint); font-style: italic; }
+
+/* barra fina de urgência: verde <30 · amarelo <60 · vermelho ≥60 */
+.board-urg {
+  height: 4px; border-radius: 999px; background: var(--charcoal);
+  overflow: hidden; margin-bottom: 10px;
+}
+.board-urg span { display: block; height: 100%; border-radius: 999px; }
+.board-urg.u-lo span { background: #4ea672; }
+.board-urg.u-mid span { background: var(--gold); }
+.board-urg.u-hi span { background: var(--detractor); }
+
+.board-card-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip.team { color: var(--indigo-light); border-color: var(--promoter-line); background: var(--promoter-soft); }
+.chip.person { color: var(--gold-soft); border-color: var(--passive-line); background: var(--passive-soft); }
+
+/* modal de detalhe do card */
+.board-detail-head { gap: 11px; margin-bottom: 14px; }
+.board-detail-who { font-size: 15px; font-weight: 600; color: var(--text); }
+a.board-detail-who:hover { color: var(--indigo-light); }
+.board-detail-text {
+  font-size: 14px; line-height: 1.6; color: var(--text);
+  margin-bottom: 14px; text-wrap: pretty;
+}
+.board-detail-text.empty-text { color: var(--text-faint); font-style: italic; }
+.board-detail-facts {
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  font-size: 12.5px; color: var(--text-faint);
+  padding: 12px 0 4px; margin-bottom: 6px;
+  border-top: 1px solid var(--charcoal);
+}
+.board-detail-facts b { color: var(--text-dim); font-weight: 600; }
+.board-detail-facts .mono { color: var(--text); }

@@ -257,6 +257,10 @@ export interface Feedback {
   text: string | null;
   action_status: FeedbackStatus;
   action_note: string | null;
+  /** Quem do time cuida (slug/email) — roteamento do Board. null = sem dono. */
+  assignee: string | null;
+  /** Time responsável (produto|suporte|comercial|cs) — roteamento do Board. */
+  team_tag: string | null;
   /** Já abordamos esse cliente sobre o feedback? (controle interno do time) */
   abordado: boolean;
   /** Quando foi marcado como abordado (ISO) ou null. */
@@ -292,6 +296,9 @@ export interface FeedbackPatch {
   score?: number | null;
   sentiment?: string | null;
   themes?: string[] | null;
+  /** Roteamento do Board (Camada 2). */
+  assignee?: string | null;
+  team_tag?: string | null;
 }
 
 /** Contagens por status para as abas do inbox. */
@@ -308,6 +315,29 @@ export interface FeedbacksResponse {
   items: Feedback[];
   total: number;
   counts_by_status: FeedbackCounts;
+}
+
+// --- Camada 2: Board (Kanban de triagem) ------------------------------------
+
+/** Uma coluna do Board: total da coluna + os feedbacks mais urgentes dela. */
+export interface FeedbackBoardColumn {
+  /** Total de feedbacks na coluna (não só os carregados em `items`). */
+  count: number;
+  /** Top N (12) mais urgentes da coluna — o que aparece como card. */
+  items: Feedback[];
+}
+
+/** Resposta de GET /api/feedbacks/board — itens agrupados por `action_status`. */
+export interface FeedbackBoard {
+  columns: Record<FeedbackStatus, FeedbackBoardColumn>;
+}
+
+/** Corpo do POST /api/feedbacks/{id}/move (o "drag-and-drop": 1 req por card).
+    `improvement_id` só é usado quando `status === "planejado"` (vincula a melhoria). */
+export interface FeedbackMoveInput {
+  status: FeedbackStatus;
+  improvement_id?: string | null;
+  assignee?: string | null;
 }
 
 // --- Fase 2: Playbooks (regras gatilho → ação) ------------------------------
@@ -434,4 +464,105 @@ export interface TarefasResponse {
   items: Tarefa[];
   total: number;
   counts_by_status: TarefaCounts;
+}
+
+// --- Camada 3: Roadmap & Melhorias ("fechar o loop") ------------------------
+
+/** Estágios de uma melhoria no roadmap (funil ideia → entregue). Espelha
+    `IMPROVEMENT_STATUSES` do backend. */
+export type ImprovementStatus =
+  | "ideia"
+  | "planejada"
+  | "em_andamento"
+  | "entregue"
+  | "descartada";
+
+/** Esforço estimado de uma melhoria. Sem enum no banco — validado na API. */
+export type ImprovementEffort = "P" | "M" | "G" | "XG";
+
+/** Uma melhoria do roadmap, vinculada (opcionalmente) a uma dor (cluster).
+ *
+ * NOTA de contrato (drift conhecido): o serializer atual do backend
+ * (`_improvement_out`) devolve os timestamps com sufixo `_em`
+ * (`created_em`/`delivered_em`/`notified_em`), enquanto a spec da Camada 3
+ * usa `_at` (`delivered_at`/`notified_at`). Aceitamos AS DUAS formas aqui
+ * (ambas opcionais) para a UI funcionar com a API atual e com a da spec; o
+ * gate de "fechar o loop" lê `notified_at ?? notified_em`. */
+export interface Improvement {
+  id: string;
+  title: string;
+  description: string | null;
+  status: ImprovementStatus;
+  /** Quantos clientes pediram isso (feedbacks vinculados). */
+  feedback_count: number;
+  /** Dor de origem (cluster) ou null. */
+  cluster_id?: string | null;
+  /** Rótulo da dor ligada (vem no roadmap quando há cluster). */
+  cluster_label?: string | null;
+  effort?: ImprovementEffort | null;
+  /** Data-alvo (ISO) exibida no roadmap. */
+  target_date?: string | null;
+  /** Quando virou "entregue" (ISO). `_at` = spec; `_em` = backend atual. */
+  delivered_at?: string | null;
+  delivered_em?: string | null;
+  /** Quando avisamos os clientes ("você pediu, a gente fez") (ISO). */
+  notified_at?: string | null;
+  notified_em?: string | null;
+  created_at?: string | null;
+  created_em?: string | null;
+}
+
+/** Item da lista priorizada — GET /api/improvements/roadmap. Estende
+    `Improvement` com os campos calculados do score. */
+export interface ImprovementRoadmapItem extends Improvement {
+  /** feedback_count × max(urgencia_media,1) × (1 + cluster_neg_fraction). */
+  priority_score?: number;
+  /** Média de urgência (0–100) dos feedbacks vinculados. */
+  urgencia_media?: number;
+  cluster_neg_fraction?: number;
+}
+
+/** Corpo do POST /api/improvements (criar melhoria). */
+export interface ImprovementInput {
+  title: string;
+  description?: string | null;
+  effort?: ImprovementEffort | null;
+  target_date?: string | null;
+  status?: ImprovementStatus;
+}
+
+/** Corpo parcial do PATCH /api/improvements/{id}. */
+export interface ImprovementPatch {
+  title?: string;
+  description?: string | null;
+  status?: ImprovementStatus;
+  effort?: ImprovementEffort | null;
+  target_date?: string | null;
+  cluster_id?: string | null;
+}
+
+/** Um destinatário no preview do "fechar o loop". */
+export interface NotifyRecipient {
+  contato_id: string;
+  contato_nome: string | null;
+  contato_whatsapp: string;
+  /** Texto que SERIA enviado (só em `would_send`). */
+  mensagem?: string;
+  /** Por que ficou de fora (só em `skipped`): sem_whatsapp | sem_opt_in | cooldown. */
+  reason?: string;
+}
+
+/** Resposta de POST /api/improvements/{id}/notify (preview e envio).
+    Sem `?confirm=true` é PREVIEW (não envia, não grava). */
+export interface NotifyResult {
+  improvement_id: string;
+  preview: boolean;
+  sent: boolean;
+  /** Tema mais citado nos feedbacks (personaliza a mensagem) ou null. */
+  theme: string | null;
+  would_send: NotifyRecipient[];
+  skipped: NotifyRecipient[];
+  /** Presentes só no envio confirmado. */
+  sent_count?: number;
+  notified_em?: string | null;
 }
