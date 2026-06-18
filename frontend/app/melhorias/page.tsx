@@ -5,6 +5,9 @@ import Link from "next/link";
 import Modal from "@/components/Modal";
 import {
   api,
+  clusters,
+  melhorias,
+  type FeedbackCluster,
   type Improvement,
   type ImprovementEffort,
   type ImprovementInput,
@@ -13,6 +16,11 @@ import {
   type NotifyRecipient,
   type NotifyResult,
 } from "@/lib/api";
+
+// emoji em .ts/.tsx só via \u{...} (o bundler do Next no Windows corrompe literais).
+const EMOJI_PULL = "\u{1F3AF}"; // 🎯 — "puxar dor para o roadmap"
+const EMOJI_DONE = "\u{2705}"; // ✅ — nenhuma dor pendente
+const EMOJI_HEART = "\u{1F49C}"; // 💜 — loop fechado (flash de sucesso)
 
 // ===== vocabulário (estágios / esforço) =====================================
 
@@ -52,6 +60,20 @@ function fmtMaybeDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : fmtDate.format(d);
+}
+
+/** Mapeia o sentimento dominante do cluster para a classe + rótulo do badge .sent. */
+function sentimentBadge(s: string | null): { cls: string; label: string } | null {
+  switch (s) {
+    case "negativo":
+      return { cls: "s-neg", label: "negativo" };
+    case "neutro":
+      return { cls: "s-neu", label: "neutro" };
+    case "positivo":
+      return { cls: "s-pos", label: "positivo" };
+    default:
+      return null;
+  }
 }
 
 // ===== card de uma melhoria na lista priorizada =============================
@@ -272,6 +294,126 @@ function CloseLoopModal({
   );
 }
 
+// ===== painel "Puxar dos temas" (dores pendentes → roadmap) =================
+
+/** Uma dor pendente (cluster sem melhoria) na lista do painel "Puxar dos temas". */
+function PendingPainRow({
+  cluster,
+  busy,
+  onPull,
+}: {
+  cluster: FeedbackCluster;
+  busy: boolean;
+  onPull: () => void;
+}) {
+  const title = cluster.label ?? "Dor sem rótulo";
+  const sent = sentimentBadge(cluster.dominant_sentiment);
+
+  return (
+    <div className="survey-item">
+      <div className="survey-name">
+        {title}
+        {sent && <span className={`badge sent ${sent.cls}`}>{sent.label}</span>}
+      </div>
+
+      {cluster.description && <div className="survey-q">{cluster.description}</div>}
+
+      <div className="imp-metrics">
+        <span className="imp-demand" title="Feedbacks agrupados nesta dor">
+          <b className="mono">{fmtNum.format(cluster.item_count)}</b>{" "}
+          {cluster.item_count === 1 ? "cliente pediu isso" : "clientes pediram isso"}
+        </span>
+        <span className="imp-score" title="Índice de dor: volume × fração negativa">
+          <span className="imp-score-lbl">dor</span>
+          <span className="imp-score-val mono">{cluster.pain_score.toFixed(1)}</span>
+        </span>
+      </div>
+
+      {cluster.top_themes.length > 0 && (
+        <div className="theme-chips imp-chips">
+          {cluster.top_themes.slice(0, 4).map((t, i) => (
+            <span key={`${t}-${i}`} className="chip">
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="imp-actions">
+        <button
+          type="button"
+          className="btn sm imp-close-loop"
+          onClick={onPull}
+          disabled={busy}
+          title="Criar uma melhoria a partir desta dor e vincular os feedbacks"
+        >
+          {busy ? "Puxando…" : `${EMOJI_PULL} Puxar para o roadmap`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PullFromThemes({
+  pains,
+  loading,
+  error,
+  busyId,
+  onPull,
+}: {
+  pains: FeedbackCluster[];
+  loading: boolean;
+  error: string | null;
+  busyId: string | null;
+  onPull: (cluster: FeedbackCluster) => void;
+}) {
+  return (
+    <div className="card" style={{ padding: "18px 20px" }}>
+      <h2 className="section-title">Puxar dos temas</h2>
+      <p className="section-sub">
+        Dores descobertas por significado que ainda não viraram melhoria — as mais
+        doloridas primeiro. Puxe uma para o roadmap já com os feedbacks vinculados.
+      </p>
+
+      {error && (
+        <div className="flash err">
+          Não consegui carregar as dores ({error}).
+        </div>
+      )}
+
+      {!error && (loading || pains.length === 0) ? (
+        <div className="empty">
+          <div className="big">{loading ? EMOJI_PULL : EMOJI_DONE}</div>
+          {loading ? (
+            "Procurando dores pendentes…"
+          ) : (
+            <>
+              Nenhuma dor pendente — tudo já está no roadmap.
+              <div className="empty-sub">
+                Quando novos feedbacks formarem uma dor em <b>Temas → Por significado</b>,
+                ela aparece aqui para ser puxada.
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        !error && (
+          <div className="imp-list" style={{ margin: "0 -20px -18px" }}>
+            {pains.map((c) => (
+              <PendingPainRow
+                key={c.id}
+                cluster={c}
+                busy={busyId === c.id}
+                onPull={() => onPull(c)}
+              />
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 // ===== página ===============================================================
 
 export default function MelhoriasPage() {
@@ -300,6 +442,13 @@ export default function MelhoriasPage() {
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
+  // painel "Puxar dos temas" — dores (clusters) sem melhoria ainda
+  const [pains, setPains] = useState<FeedbackCluster[]>([]);
+  const [painsLoading, setPainsLoading] = useState(true);
+  const [painsErr, setPainsErr] = useState<string | null>(null);
+  // id do cluster sendo puxado (trava só o botão daquela dor)
+  const [pullingId, setPullingId] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -317,6 +466,28 @@ export default function MelhoriasPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Carrega as dores pendentes: days alto (todo o histórico), ordenadas por dor;
+  // filtra clusters sem melhoria e com itens, do mais dolorido pro menos.
+  const loadPains = useCallback(async () => {
+    setPainsLoading(true);
+    try {
+      const res = await clusters.list({ days: 3650, sort: "dor" });
+      const pend = res.clusters
+        .filter((c) => c.improvement_id == null && c.item_count > 0)
+        .sort((a, b) => b.pain_score - a.pain_score);
+      setPains(pend);
+      setPainsErr(null);
+    } catch (e) {
+      setPainsErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPainsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPains();
+  }, [loadPains]);
 
   // total de pedidos no roadmap — número-âncora do cabeçalho
   const totalDemand = useMemo(
@@ -366,6 +537,26 @@ export default function MelhoriasPage() {
     }
   }
 
+  // "Puxar para o roadmap": cria a melhoria a partir da dor (idempotente) e
+  // recarrega o roadmap E a lista de dores (a puxada some, pois ganha improvement_id).
+  async function pullFromCluster(cluster: FeedbackCluster) {
+    setPullingId(cluster.id);
+    setFlash(null);
+    const label = cluster.label ?? "Dor sem rótulo";
+    try {
+      const imp = await melhorias.fromCluster(cluster.id);
+      setFlash({
+        kind: "ok",
+        msg: `${EMOJI_PULL} "${imp.title || label}" entrou no roadmap com os feedbacks vinculados.`,
+      });
+      await Promise.all([load(), loadPains()]);
+    } catch (e) {
+      setFlash({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setPullingId(null);
+    }
+  }
+
   // Abre o modal e busca o preview (notify SEM confirm = não envia, não grava).
   async function openCloseLoop(imp: Improvement) {
     setLoopFor(imp);
@@ -398,7 +589,7 @@ export default function MelhoriasPage() {
       const n = res.sent_count ?? res.would_send.length;
       setFlash({
         kind: "ok",
-        msg: `💜 Loop fechado: ${n} cliente${n === 1 ? "" : "s"} avisado${n === 1 ? "" : "s"} no WhatsApp.`,
+        msg: `${EMOJI_HEART} Loop fechado: ${n} cliente${n === 1 ? "" : "s"} avisado${n === 1 ? "" : "s"} no WhatsApp.`,
       });
       closeLoopModal();
       await load();
@@ -488,9 +679,18 @@ export default function MelhoriasPage() {
           )}
         </div>
 
-        {/* ---- direita: criar melhoria ---- */}
-        <div className="card" style={{ padding: "18px 20px" }}>
-          <h2 className="section-title">Nova melhoria</h2>
+        {/* ---- direita: puxar dos temas + criar melhoria ---- */}
+        <div className="imp-side">
+          <PullFromThemes
+            pains={pains}
+            loading={painsLoading}
+            error={painsErr}
+            busyId={pullingId}
+            onPull={pullFromCluster}
+          />
+
+          <div className="card" style={{ padding: "18px 20px" }}>
+            <h2 className="section-title">Nova melhoria</h2>
           <p className="section-sub">
             Registre algo que você vai construir. Vincule a dores depois pela aba Temas.
           </p>
@@ -545,6 +745,7 @@ export default function MelhoriasPage() {
               {saving ? "Criando…" : "Criar melhoria"}
             </button>
           </form>
+          </div>
         </div>
       </div>
 

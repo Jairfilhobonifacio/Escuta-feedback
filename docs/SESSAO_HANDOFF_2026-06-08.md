@@ -100,9 +100,9 @@ export NODE_ENV=development NODE_OPTIONS=--use-system-ca && node_modules/.bin/ne
 
 ## 🔑 Refs rápidas
 - **Supabase Escuta**: ref `nlqeargxkidygbrahkbk` (sa-east-1); PAT em `~\.secrets\supabase_pat_escuta.txt`. 5 tabelas (+ pgvector). `db push` não usado — alembic.
-- **WAHA**: `localhost:3000`, key atual `c08468a7d78b4ee1acaf9fb51d775786` (⚠️ rotacionar; novas em `~/.secrets/waha_*.txt`).
+- **WAHA**: `localhost:3000`, key atual `‹redigido — ver ~/.secrets/waha_api_key.txt›` (⚠️ rotacionar; novas em `~/.secrets/waha_*.txt`).
 - **Groq**: `.env` `GROQ_API_KEY` + `GROQ_MODEL=llama-3.3-70b-versatile`. `LLM_ENABLED=1`.
-- **Bizzu local**: postgres `postgres`/`bizzu_dev_2026` @ localhost:5432/plataforma. Usuário teste `jair.e2e@escuta.test`/`SenhaForte!2026`.
+- **Bizzu local**: postgres `postgres`/`‹redigido — ver ~/.secrets/waha_api_key.txt›` @ localhost:5432/plataforma. Usuário teste `jair.e2e@escuta.test`/`‹redigido — ver ~/.secrets/waha_api_key.txt›`.
 - **HMAC Bizzu↔Escuta**: `BIZZU_WEBHOOK_SECRET` (.env Escuta) = `ESCUTA_WEBHOOK_SECRET` (.env backend Bizzu).
 - **Docs canônicos**: `docs/CONTEXTO_BIZZU.md` (ecossistema) · `docs/INTEGRACAO_BIZZU.md` (integração) · `docs/analise-bizzu/*.md` (por repo) · `docs/corpus_bizzu/*.md` (RAG).
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Integer, Text, Boolean, ForeignKey, UniqueConstraint, Index, Uuid, func
+from sqlalchemy import String, Integer, Text, Boolean, ForeignKey, UniqueConstraint, Index, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, JSONVariant
@@ -108,6 +108,19 @@ class Message(Base):
     __table_args__ = (
         Index("ix_message_org_contact_time", "organization_id", "contact_id", "created_at"),
         Index("ix_message_contact_time", "contact_id", "created_at"),
+        # Dedup atômico do transcript: o MESMO turno do WAHA (channel_msg_id) só
+        # entra UMA vez por org. PARCIAL (channel_msg_id IS NOT NULL) — mensagens
+        # sem id de canal (outbound do bot) não colidem entre si. No Postgres vira
+        # um índice único parcial; o SQLite dos testes ignora o `sqlite_where` e
+        # aplica o unique direto (todas as linhas de teste têm channel_msg_id).
+        Index(
+            "uq_messages_org_channel_msg_id",
+            "organization_id",
+            "channel_msg_id",
+            unique=True,
+            postgresql_where=text("channel_msg_id IS NOT NULL"),
+            sqlite_where=text("channel_msg_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -123,4 +136,8 @@ class Message(Base):
     direction: Mapped[str] = mapped_column(String)            # 'inbound' | 'outbound'
     body: Mapped[str] = mapped_column(Text)
     channel_msg_id: Mapped[str | None] = mapped_column(String, nullable=True)  # id da msg no WAHA
+    # Saco de metadados livres da mensagem (JSONB no PG, JSON no SQLite). Schema em
+    # app/schemas/messages.py (MessageMetadata). NULL = sem metadados. SEMPRE montar
+    # via copia-edita-reatribui (nunca mutar in-place o dict de uma linha existente).
+    msg_metadata: Mapped[dict | None] = mapped_column(JSONVariant, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())

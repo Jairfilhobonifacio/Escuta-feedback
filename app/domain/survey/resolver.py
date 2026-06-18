@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.domain.interfaces.messaging_service import IMessagingService
 from app.domain.knowledge.retriever import KnowledgeBase
+from app.domain.survey import brain as brain_mod
 from app.domain.survey.brain import OPT_OUT_CONFIRM_MSG, SurveyBrain
 from app.domain.survey.constants import (
     STATUS_SENT,
@@ -112,6 +113,16 @@ class SurveyContextResolver:
         pending = await self._find_pending(contact_id, now)
         if pending is None:
             return None
+
+        # Agente VoC (Fase 2, atrás de flag voc_agent_enabled, DEFAULT OFF): conduz o
+        # turno com function-calling sobre as tools de CS. Best-effort e fallback total
+        # — se desligado, sem brain, sem reply utilizável OU em qualquer falha, cai no
+        # fluxo abaixo. Com a flag OFF (default) o pacote voc nem é importado, e o
+        # comportamento é BYTE-A-BYTE idêntico ao atual.
+        if settings.voc_agent_enabled and self.brain is not None:
+            voc_reply = await self._run_voc_agent(pending, contact_id, message, now)
+            if voc_reply is not None:
+                return voc_reply
 
         # Survey Agent (atrás de flag): conduz a pesquisa como conversa de verdade
         # — lê o histórico inteiro + o estado e decide o turno (captura/CORRIGE nota,
@@ -212,6 +223,53 @@ class SurveyContextResolver:
         except Exception:  # noqa: BLE001 — nunca derruba o webhook; cai no texto fixo.
             logger.warning("compose_reason_prompt lançou — usando texto fixo", exc_info=True)
             return fallback
+
+    # --- Agente VoC (Fase 2: function-calling sobre as tools de CS) ------------
+
+    async def _run_voc_agent(
+        self, pending: SurveyResponse, contact_id: uuid.UUID, message: str, now: datetime
+    ) -> Optional[SurveyReply]:
+        """Conduz UM turno via Agente VoC (function-calling). None ⇒ fallback total.
+
+        Só é chamado com a flag voc_agent_enabled ON e brain presente (de onde sai o
+        GroqLLM com chat_with_tools). Imports são LOCAIS de propósito: com a flag OFF
+        o pacote voc nunca é tocado. Best-effort: qualquer falha, ou uma resposta vazia/
+        não-concluída, devolve None e o resolver segue no fluxo determinístico/Survey Agent.
+        """
+        llm = getattr(self.brain, "llm", None)
+        if llm is None:
+            return None
+        try:
+            from app.domain.voc.orchestrator import VoCAgentOrchestrator
+            from app.domain.voc.tools import VoCToolContext, build_default_registry
+
+            ctx = VoCToolContext(
+                session=self.session,
+                org_id=self.org_id,
+                messaging=self.messaging,
+                waha_session=self.waha_session,
+                now=lambda: now,
+            )
+            registry = build_default_registry(ctx)
+            orchestrator = VoCAgentOrchestrator(llm, registry)
+            history = await self._load_history(contact_id)
+            result = await orchestrator.run(message, history)
+        except Exception:  # noqa: BLE001 — agente VoC nunca derruba o webhook.
+            logger.warning("Agente VoC lançou — fallback determinístico", exc_info=True)
+            return None
+
+        # Só assume o turno se o agente realmente conduziu (concluiu com texto). Caso
+        # contrário, devolve None para o fluxo de sempre tratar a mensagem.
+        if not result.completed or not result.reply:
+            return None
+
+        meta = dict(pending.ai_meta or {})
+        meta["voc_agent"] = True
+        if result.tool_calls_made:
+            meta["voc_tools"] = result.tool_calls_made
+        pending.ai_meta = meta
+        await self.session.flush()
+        return SurveyReply(text=result.reply, survey_response_id=str(pending.id), closed=False)
 
     # --- Survey Agent (conversa de verdade, no lugar da máquina de estados) -----
 
@@ -398,9 +456,13 @@ class SurveyContextResolver:
             return await self._handle_handoff(pending, contact_id, message, now)
 
         if intent.kind == "question":
-            # RAG: tenta responder com fatos do corpus da org (grounded). Se o
-            # corpus não cobre, cai na resposta genérica do brain; sem nenhuma
-            # das duas, vira retry determinístico (nunca inventa).
+            # RAG: tenta responder com fatos do corpus da org (grounded).
+            # Com no_kb_fallback_enabled ON (default), `_answer_question` já devolve
+            # a frase HONESTA ("não sei, vou encaminhar pro time") quando o corpus
+            # não cobre — então essa resposta tem precedência sobre o `intent.reply`
+            # genérico do brain (o `or` só usa o genérico se o RAG devolver None,
+            # i.e. RAG indisponível ou flag OFF). Sem nenhuma das duas, vira retry
+            # determinístico (nunca inventa).
             answer = await self._answer_question(message) or intent.reply
             if not answer:
                 return None
@@ -414,15 +476,42 @@ class SurveyContextResolver:
         return None  # unclear → retry determinístico
 
     async def _answer_question(self, message: str) -> Optional[str]:
-        """Resposta grounded via RAG, ou None (sem embedder/corpus/match)."""
+        """Resposta grounded via RAG.
+
+        - Sem embedder/brain ⇒ None (RAG indisponível; quem chama usa o genérico).
+        - O RETRIEVAL (embed + pgvector) roda numa caixa de erro SEPARADA: se ele
+          LANÇA (ex.: sentence-transformers ausente, pgvector fora do ar) isso é
+          FALHA DE KB, não "sem resposta" — logamos como ERROR e devolvemos None
+          (cai no genérico), JAMAIS deixando um erro de infra se passar por uma
+          resposta honesta de "não sei".
+        - Com `no_kb_fallback_enabled` ON (default) a composição usa
+          `answer_question_grounded`: KB vazio/score baixo OU LLM não-respondível ⇒
+          devolve `HONEST_NO_KB_MSG` (nunca inventa). Com a flag OFF preserva o
+          comportamento antigo via `answer_from_context` (None quando não cobre).
+        """
         if self.embedder is None or self.brain is None:
             return None
+        # 1) Retrieval — falha aqui é FALHA DE KB (≠ "sem contexto"): logar alto.
         try:
             kb = KnowledgeBase(self.session, self.org_id, self.embedder)
             chunks = await kb.search(message)
+        except Exception:  # noqa: BLE001 — nunca derruba o webhook, mas é VISÍVEL.
+            logger.error(
+                "RAG: FALHA na busca da base de conhecimento (retrieval lançou — "
+                "embedder/pgvector indisponível?). NÃO é ausência de resposta; "
+                "caindo no genérico sem se passar por 'respondido honestamente'.",
+                exc_info=True,
+            )
+            return None
+        # 2) Composição da resposta — best-effort; sem contexto não é erro de infra.
+        # Lê a flag pelo mesmo ponto de indireção do brain (settings é frozen; isto
+        # é o que os testes monkeypatcham para alternar o caminho honesto).
+        try:
+            if brain_mod._no_kb_fallback_enabled():
+                return await self.brain.answer_question_grounded(message, chunks)
             return await self.brain.answer_from_context(message, chunks)
-        except Exception:  # noqa: BLE001 — RAG é best-effort; nunca derruba o webhook.
-            logger.warning("RAG: busca/resposta falhou — caindo no genérico", exc_info=True)
+        except Exception:  # noqa: BLE001 — geração é best-effort; cai no genérico.
+            logger.warning("RAG: composição da resposta falhou — caindo no genérico", exc_info=True)
             return None
 
     async def _classify(self, pending: SurveyResponse) -> None:

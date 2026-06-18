@@ -43,6 +43,20 @@ export const api = {
     request<unknown>(path, { method: "DELETE" }),
 };
 
+/** Monta uma query string a partir de um objeto de filtros (pula undefined/null/"").
+    Booleans viram 'true'/'false'. Prefixa com '?' só quando há ao menos um par.
+    Aceita qualquer objeto (interfaces sem index signature inclusive). */
+export function buildQuery(params: object | undefined): string {
+  if (!params) return "";
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === "") continue;
+    sp.set(k, String(v));
+  }
+  const s = sp.toString();
+  return s ? `?${s}` : "";
+}
+
 // --- Tipos da API -----------------------------------------------------------
 
 export interface Kpis {
@@ -130,6 +144,8 @@ export interface DispatchResult {
 export interface Timeline360Item {
   /** 'feedback_item' = sinal ingerido de fonte externa; 'survey' = coletado no WhatsApp. */
   kind: "feedback_item" | "survey";
+  /** Id do FeedbackItem — presente só em kind='feedback_item' (alvo do PATCH na 360 editável). */
+  id?: string;
   source: string;
   type: string;
   survey_name?: string;
@@ -139,11 +155,24 @@ export interface Timeline360Item {
   status?: string;
   sentiment?: string | null;
   themes?: string[] | null;
+  /** Estado de ação do feedback (só kind='feedback_item') — editável na 360. */
+  action_status?: FeedbackStatus;
+  /** Já abordamos o cliente sobre este feedback? (só kind='feedback_item'). */
+  abordado?: boolean;
   at: string | null;
 }
 
 export interface Contact360 {
-  contact: { id: string; name: string | null; phone: string; opt_in: boolean };
+  contact: {
+    id: string;
+    name: string | null;
+    phone: string;
+    opt_in: boolean;
+    /** Selos de campanha aplicados ao contato (chips editáveis no cabeçalho). */
+    selos?: string[];
+    /** Sem WhatsApp real? (phone vazio ou 'nowa-') — chip "só e-mail" no cabeçalho. */
+    sem_whatsapp?: boolean;
+  };
   /** Snapshot da API de Clientes (assinatura/perfil/nps). null = ainda não sincronizado. */
   partner: Record<string, unknown> | null;
   summary: { total: number; feedback_items: number; survey_responses: number };
@@ -204,6 +233,17 @@ export interface ClustersResponse {
   total_unclustered: number;
 }
 
+/** Ordenação de GET /api/feedbacks/clusters:
+    'dor' (pain_score desc) | 'volume' (item_count desc) | 'recente' (created desc). */
+export type ClustersSort = "dor" | "volume" | "recente";
+
+/** Filtros opcionais de GET /api/feedbacks/clusters.
+    `days`: só clusters dos últimos N dias (null/0 = todos; default backend = 30). */
+export interface ClustersFiltro {
+  days?: number | null;
+  sort?: ClustersSort;
+}
+
 // --- Clientes (todos os contatáveis da Bizzu) -------------------------------
 
 /** Linha da tela Clientes — snapshot enriquecido pela API de Clientes da Bizzu. */
@@ -212,6 +252,10 @@ export interface Cliente {
   nome: string | null;
   whatsapp: string;
   opt_in: boolean;
+  /** Tem WhatsApp REAL? false quando phone vazio ou começa com 'nowa-' (universo só-email). */
+  tem_whatsapp: boolean;
+  /** Estado da assinatura no snapshot partner (ex.: 'cancelled', 'active_paying') ou null. */
+  estado: string | null;
   /** 'em_risco' | 'promotor' | 'silencioso' | ... — perfil derivado pela Bizzu. */
   perfil: string | null;
   plano: string | null;
@@ -222,11 +266,79 @@ export interface Cliente {
   /** 'nps' | 'churn' | ... tipo do feedback mais recente. */
   ultimo_feedback_tipo: string | null;
   total_feedbacks: number;
+  /** Selos da campanha win-back aplicados ao cliente (lista de nomes). [] quando não há. */
+  selos: string[];
   /** Health Score (0-100) + banda + fatores que pesaram — Fase 1 CS. */
   health: number;
   health_band: "healthy" | "watch" | "at_risk";
   health_factors: { delta: number; label: string }[];
   criado_em: string | null;
+}
+
+// --- Filtros "por tipo de cliente" (Clientes + Feedbacks) -------------------
+
+/** Bucket de NPS derivado do score: promotor (>=9) | neutro (7-8) | detrator (<=6). */
+export type NpsBucket = "promotor" | "neutro" | "detrator";
+
+/** Banda do Health Score (Fase 1 CS). */
+export type HealthBand = "healthy" | "watch" | "at_risk";
+
+/** Estado da assinatura no snapshot partner (partner.subscription.state). */
+export type EstadoAssinatura =
+  | "cancelled"
+  | "paid_without_access"
+  | "active_paying"
+  | "complimentary"
+  | "past_due";
+
+/** Filtro tem/sem WhatsApp REAL (celular BR válido pelo validador do backend). */
+export type TemWhatsappFiltro = "sim" | "nao";
+
+/** Filtros opcionais de GET /api/clientes (query string; ausentes = sem filtro).
+    `estado` é aplicado em SQL; `nps_bucket`/`health_band`/`tem_whatsapp` são POST-FILTER. */
+export interface ClienteFiltro {
+  /** Trecho no nome OU no whatsapp. */
+  search?: string;
+  /** partner.profile, ex.: 'ativo_promotor', 'churn_pos_uso'. */
+  perfil?: string;
+  /** partner.subscription.planType, 'mensal' | 'anual'. */
+  plan_type?: string;
+  /** partner.subscription.state. */
+  estado?: EstadoAssinatura;
+  nps_bucket?: NpsBucket;
+  health_band?: HealthBand;
+  tem_whatsapp?: TemWhatsappFiltro;
+}
+
+/** Filtros opcionais de GET /api/feedbacks (query string; ausentes = sem filtro).
+    Todos aplicados em SQL (no feed E nas contagens, para o total bater). */
+export interface FeedbackFiltro {
+  status?: FeedbackStatus;
+  /** 'nps' | 'churn' | ... */
+  type?: string;
+  source?: string;
+  /** 'positivo' | 'neutro' | 'negativo' */
+  sentiment?: string;
+  /** Drill-down da tela Temas (match exato do elemento). */
+  theme?: string;
+  /** Feedbacks de contatos com aquele selo aplicado. */
+  selo?: string;
+  cluster_id?: string;
+  assignee?: string;
+  team_tag?: string;
+  abordado?: boolean;
+  /** 'hoje' | '7d' | '30d' — recorte de `abordado_em`. */
+  abordado_periodo?: string;
+  /** Filtros "por tipo de cliente" (sobre o contato juntado). */
+  estado?: EstadoAssinatura;
+  perfil?: string;
+  plan_type?: string;
+  tem_whatsapp?: TemWhatsappFiltro;
+  nps_bucket?: NpsBucket;
+  search?: string;
+  sort?: "urgencia" | "recente";
+  limit?: number;
+  offset?: number;
 }
 
 // --- Feedbacks (inbox de monitoramento) -------------------------------------
@@ -245,6 +357,8 @@ export interface Feedback {
   contato_id: string | null;
   contato_nome: string | null;
   contato_whatsapp: string | null;
+  /** Selos de campanha do CONTATO (status win-back no inbox). [] quando não há. */
+  selos: string[];
   source: string;
   /** 'nps' | 'churn' | ... */
   type: string;
@@ -269,6 +383,23 @@ export interface Feedback {
   created_em: string | null;
   /** Score de urgência 0-100 (sentimento + perfil + recência) — ordena o inbox. */
   urgencia: number;
+  // --- Enriquecimento SÓ do card do Board (GET /api/boards/{id}/items) ---------
+  // Estes campos vêm preenchidos APENAS quando o Feedback é um card de board
+  // (`_enrich_feedback_cards` do backend). No feed normal (/api/feedbacks) eles
+  // não aparecem — por isso opcionais. assignee/team_tag/improvement_id/abordado
+  // já existem acima e também são reafirmados pelo backend no card do board.
+  /** Existe alguma CsTask vinculada a este feedback? (card do board) */
+  tem_tarefa?: boolean;
+  /** Status da CsTask MAIS RECENTE vinculada, ou null se não há tarefa. */
+  tarefa_status?: TarefaStatus | null;
+  /** Id da Improvement vinculada (ou null). Exposto pelo backend (_feedback_out). */
+  improvement_id?: string | null;
+  /** Título da Improvement vinculada (via improvement_id), ou null. */
+  melhoria_titulo?: string | null;
+  /** Label do FeedbackCluster (dor) vinculado (via cluster_id), ou null. */
+  dor_label?: string | null;
+  /** Nº de Message (conversa) do contato; 0 se sem contato/sem mensagens. */
+  conversa_count?: number;
 }
 
 /** Corpo do POST /api/feedbacks (criar feedback manual). */
@@ -299,6 +430,9 @@ export interface FeedbackPatch {
   /** Roteamento do Board (Camada 2). */
   assignee?: string | null;
   team_tag?: string | null;
+  /** Vínculo de melhoria (Camada 3): uuid de Improvement da org, ou null p/ DESVINCULAR.
+      AUSENTE do corpo = mantém o vínculo atual; NÃO mexe no action_status (backend). */
+  improvement_id?: string | null;
 }
 
 /** Contagens por status para as abas do inbox. */
@@ -338,6 +472,193 @@ export interface FeedbackMoveInput {
   status: FeedbackStatus;
   improvement_id?: string | null;
   assignee?: string | null;
+}
+
+// --- Boards dinâmicos (kanbans customizados em Organization.settings) --------
+
+/** Entidade que um board agrupa: 'feedback' (FeedbackItem, board clássico),
+    'cliente' (Contact), 'tarefa' (CsTask) ou 'melhoria' (Improvement). Ausente no
+    backend antigo => 'feedback' (retrocompat). */
+export type BoardEntidade = "feedback" | "cliente" | "tarefa" | "melhoria";
+
+/** Campo que um board agrupa.
+    - entidade='feedback': 'action_status' | 'selo'.
+    - entidade='cliente':  'selo' | 'estado' | 'perfil'.
+    - entidade='tarefa':   'status' (CsTask.status).
+    - entidade='melhoria': 'status' (Improvement.status).
+    ATENÇÃO: há 2 conceitos "status" — o de feedback é 'action_status'; o de
+    tarefa/melhoria é 'status'. O tipo é a UNIÃO de todos; a validação por entidade é
+    feita no backend (422). */
+export type BoardCampo = "action_status" | "selo" | "estado" | "perfil" | "status";
+
+/** Campos válidos por entidade — espelha BOARD_CAMPOS_POR_ENTIDADE do backend. */
+export const BOARD_CAMPOS_POR_ENTIDADE: Record<BoardEntidade, BoardCampo[]> = {
+  feedback: ["action_status", "selo"],
+  cliente: ["selo", "estado", "perfil"],
+  tarefa: ["status"],
+  melhoria: ["status"],
+};
+
+/** Uma coluna de um board (config). `valor` = action_status/selo/estado/perfil. */
+export interface BoardColuna {
+  id: string;
+  nome: string;
+  valor: string;
+  cor?: string;
+}
+
+/** Um board customizado (config). Espelha Organization.settings["boards"][i].
+    `entidade` ausente => 'feedback' (boards salvos antes deste campo). */
+export interface Board {
+  id: string;
+  nome: string;
+  entidade: BoardEntidade;
+  campo: BoardCampo;
+  colunas: BoardColuna[];
+}
+
+/** Corpo do POST /api/boards (criar board). */
+export interface BoardInput {
+  nome: string;
+  entidade: BoardEntidade;
+  campo: BoardCampo;
+  colunas: BoardColuna[];
+}
+
+/** Corpo parcial do PATCH /api/boards/{id}. */
+export interface BoardPatch {
+  nome?: string;
+  colunas?: BoardColuna[];
+}
+
+/** Card de CLIENTE num board entidade='cliente' (mesma forma do GET /api/clientes).
+    Espelha `_cliente_card` do backend. */
+export interface BoardClienteCard {
+  id: string;
+  nome: string | null;
+  whatsapp: string | null;
+  /** Tem WhatsApp REAL? false quando phone vazio ou começa com 'nowa-' (só-email). */
+  tem_whatsapp: boolean;
+  perfil: string | null;
+  /** Estado da assinatura no snapshot partner (ex.: 'cancelled') ou null. */
+  estado: string | null;
+  health: number;
+  health_band: "healthy" | "watch" | "at_risk";
+  /** Selos de campanha aplicados ao cliente. [] quando não há. */
+  selos: string[];
+  // --- Conexões do cliente (calculadas EM LOTE pelo backend) ------------------
+  /** Nº de FeedbackItem do contato na org. */
+  feedbacks_count: number;
+  /** Nº de CsTask do contato NÃO concluídas (status != 'concluida'). */
+  tarefas_abertas: number;
+  /** Nº de Message (conversa) do contato. */
+  conversa_count: number;
+}
+
+/** Card de TAREFA num board entidade='tarefa'. Espelha `_tarefa_card` do backend
+    (dict enxuto — espelha o essencial de `TarefaOut`). `feedback_preview` é o trecho
+    (≈140 chars) do feedback vinculado ou null. O status muda via PATCH /api/tarefas/{id}
+    (não há board-move de tarefa). */
+export interface BoardTarefaCard {
+  id: string;
+  titulo: string;
+  status: TarefaStatus;
+  priority: TarefaPriority;
+  owner: string | null;
+  contato_id: string | null;
+  contato_nome: string | null;
+  /** Data-limite (ISO) ou null. */
+  due_at: string | null;
+  /** FeedbackItem vinculado (cs_tasks.feedback_item_id) ou null. */
+  feedback_id: string | null;
+  /** Trecho do feedback vinculado (≈140 chars com '…') ou null. */
+  feedback_preview: string | null;
+}
+
+/** Card de MELHORIA num board entidade='melhoria'. Espelha `_melhoria_card` do backend
+    (dict enxuto). `feedback_count` = nº de FeedbackItem com improvement_id == id (em
+    lote). `priority_score` é derivado só no /improvements/roadmap (não é coluna do
+    modelo) — omitido pelo backend aqui, por isso opcional. O status muda via PATCH
+    /api/improvements/{id} (não há board-move de melhoria). */
+export interface BoardMelhoriaCard {
+  id: string;
+  titulo: string;
+  status: ImprovementStatus;
+  /** Quantos feedbacks pediram essa melhoria (calculado em lote pelo backend). */
+  feedback_count: number;
+  effort?: ImprovementEffort | null;
+  /** Data-alvo (ISO) ou null. */
+  target_date?: string | null;
+  /** Omitido pelo card do board; presente só no /improvements/roadmap. */
+  priority_score?: number;
+}
+
+/** Uma coluna do board JÁ com os cards (resposta de GET /api/boards/{id}/items).
+    Os cards são `Feedback[]` (entidade='feedback'), `BoardClienteCard[]`
+    (entidade='cliente'), `BoardTarefaCard[]` (entidade='tarefa') ou
+    `BoardMelhoriaCard[]` (entidade='melhoria') — decida pela `entidade` do BoardItems
+    pai. */
+export interface BoardItemsColuna extends BoardColuna {
+  /** Total real de cards na coluna (não só os carregados em `items`). */
+  count: number;
+  /** Top N da coluna — feedbacks (urgência), clientes (health asc), tarefas
+      (prioridade+SLA) ou melhorias (feedback_count desc). */
+  items: Feedback[] | BoardClienteCard[] | BoardTarefaCard[] | BoardMelhoriaCard[];
+}
+
+/** Resposta de GET /api/boards/{id}/items — colunas com cards. */
+export interface BoardItems {
+  id: string;
+  nome: string;
+  entidade: BoardEntidade;
+  campo: BoardCampo;
+  colunas: BoardItemsColuna[];
+}
+
+/** Filtros opcionais de GET /api/boards/{id}/items (query string; ausentes = board
+    inteiro). Mesmo vocabulário de `ClienteFiltro`/`FeedbackFiltro`/`TarefaFiltro`, mas
+    APLICADO ANTES do agrupamento no backend, então tanto `items` QUANTO `count` de cada
+    coluna refletem o filtro. Cada campo só vale para a(s) entidade(s) a que pertence; os
+    demais o backend ignora sem erro. Espelha `BoardItemFilters` de app/api/boards.py. */
+export interface BoardItemFiltro {
+  /** feedback + cliente (via o CONTATO): partner.subscription.state. */
+  estado?: EstadoAssinatura;
+  /** feedback + cliente (via o CONTATO): partner.subscription.planType. */
+  plan_type?: string;
+  /** feedback + cliente (via o CONTATO): partner.profile. */
+  perfil?: string;
+  /** feedback + cliente (via o CONTATO): tem WhatsApp REAL ('sim'/'nao'). */
+  tem_whatsapp?: TemWhatsappFiltro;
+  /** feedback + cliente (via o CONTATO): faixa de NPS. */
+  nps_bucket?: NpsBucket;
+  /** Só feedback (coluna do FeedbackItem). */
+  team_tag?: string;
+  /** Só feedback (coluna do FeedbackItem). */
+  assignee?: string;
+  /** Só feedback (coluna do FeedbackItem). */
+  abordado?: boolean;
+  /** Só cliente (post-filter sobre o card). */
+  health_band?: HealthBand;
+  /** Só tarefa (coluna do CsTask). */
+  owner?: string;
+  /** Só tarefa (coluna do CsTask). */
+  priority?: TarefaPriority;
+  /** Só melhoria (coluna do Improvement). */
+  effort?: ImprovementEffort;
+}
+
+/** Corpo do POST /api/feedbacks/{id}/board-move (drag-and-drop de feedback).
+    campo='action_status' seta o status; campo='selo' aplica o selo ao contato. */
+export interface BoardMoveInput {
+  campo: BoardCampo;
+  valor: string;
+}
+
+/** Corpo do POST /api/contacts/{id}/board-move (drag-and-drop de cliente).
+    campo='selo' aplica o selo ao contato; campo='estado'|'perfil' é read-only (409). */
+export interface ContactBoardMoveInput {
+  campo: BoardCampo;
+  valor: string;
 }
 
 // --- Fase 2: Playbooks (regras gatilho → ação) ------------------------------
@@ -427,18 +748,27 @@ export interface Tarefa {
   health: number | null;
   health_band: "healthy" | "watch" | "at_risk" | null;
   meta: Record<string, unknown> | null;
+  /** FeedbackItem vinculado (coluna cs_tasks.feedback_item_id) ou null. */
+  feedback_id: string | null;
+  /** Texto do feedback vinculado truncado em 140 chars (com '…') — null se sem texto.
+      Só vem preenchido no GET e no POST; é sempre null no retorno do PATCH. */
+  feedback_preview: string | null;
   criada_em: string | null;
   atualizada_em: string | null;
 }
 
-/** Corpo do POST /api/tarefas (tarefa manual). */
+/** Corpo do POST /api/tarefas (tarefa manual).
+    NOTA: o backend nomeia o contato como `contact_id` e o vínculo como `feedback_id`
+    (não `contato_id`/`feedback_item_id`). */
 export interface TarefaInput {
-  contato_id: string;
+  contact_id: string;
   title: string;
   reason?: string | null;
   priority?: TarefaPriority;
   owner?: string | null;
   due_at?: string | null;
+  /** Vincula a tarefa a um FeedbackItem da org (ex.: "abordar sobre este NPS"). */
+  feedback_id?: string | null;
 }
 
 /** Corpo parcial do PATCH /api/tarefas/{id}. */
@@ -464,6 +794,50 @@ export interface TarefasResponse {
   items: Tarefa[];
   total: number;
   counts_by_status: TarefaCounts;
+}
+
+/** Ordenação de GET /api/tarefas:
+    'prioridade' (urgente→baixa, depois due_at asc) | 'recente' (created desc) |
+    'sla' (due_at asc, nulls por último). */
+export type TarefaSort = "prioridade" | "recente" | "sla";
+
+/** Filtros opcionais de GET /api/tarefas (query string; ausentes = sem filtro).
+    Todos aplicados em SQL no backend. `contact_id`/`playbook_id` inválidos → 422. */
+export interface TarefaFiltro {
+  status?: TarefaStatus;
+  owner?: string;
+  priority?: TarefaPriority;
+  contact_id?: string;
+  playbook_id?: string;
+  sort?: TarefaSort;
+  limit?: number;
+  offset?: number;
+}
+
+/** Corpo do POST /api/tarefas/gerar-de-feedbacks (gerar tarefas em lote a partir
+    de feedbacks que ainda não têm tarefa vinculada). Todos opcionais; `undefined`
+    (e null/"" via buildQuery não se aplica — vai no corpo) = não filtra aquela coluna.
+    Defaults do backend: tipo="churn", sentimento="negativo", action_status=null, limite=50. */
+export interface GerarDeFeedbacksInput {
+  /** FeedbackItem.type — default "churn". */
+  tipo?: string | null;
+  /** FeedbackItem.sentiment — default "negativo". */
+  sentimento?: string | null;
+  /** FeedbackItem.action_status (ex.: "novo") — default null (não filtra). */
+  action_status?: FeedbackStatus | null;
+  /** Tamanho do lote desta rodada (1..500) — default 50. */
+  limite?: number;
+}
+
+/** Resposta de POST /api/tarefas/gerar-de-feedbacks. Idempotente: rodar 2x não
+    duplica. `tarefas` traz SÓ as CsTask criadas nesta chamada (mesmo shape do GET/POST). */
+export interface GerarDeFeedbacksResult {
+  /** Quantas tarefas foram criadas nesta rodada. */
+  criadas: number;
+  /** Feedbacks que casam os filtros mas já tinham tarefa (sinaliza idempotência). */
+  ja_existiam: number;
+  /** As tarefas criadas nesta chamada (vazio quando criadas=0). */
+  tarefas: Tarefa[];
 }
 
 // --- Camada 3: Roadmap & Melhorias ("fechar o loop") ------------------------
@@ -566,3 +940,371 @@ export interface NotifyResult {
   sent_count?: number;
   notified_em?: string | null;
 }
+
+// --- Camada de Campanha Win-back: selos, outreach, stats e forms ------------
+
+/** Um selo no catálogo da org (etiqueta colorida da campanha). */
+export interface Selo {
+  nome: string;
+  cor: string;
+}
+
+/** Resposta de GET /api/selos — catálogo + uso (nº de contatos por selo). */
+export interface SelosResponse {
+  catalogo: Selo[];
+  /** {"<nome>": <n_contatos_com_o_selo>} — conta TODOS os contatos da org. */
+  uso: Record<string, number>;
+}
+
+/** Uma abordagem 1:1 registrada no histórico do contato (Contact.profile_data["abordagens"]). */
+export interface Abordagem {
+  /** Quando foi a abordagem (ISO). */
+  at: string;
+  /** 'whatsapp' | 'ligacao' | 'email' | 'presencial' | 'outro' (vocabulário aberto). */
+  canal: string;
+  mensagem: string | null;
+  /** Oferta apresentada (ex.: "3 meses grátis"). */
+  oferta: string | null;
+  status: string | null;
+  /** Quem fez a abordagem. */
+  por: string | null;
+}
+
+/** Corpo do POST /api/contacts/{id}/outreach (registrar uma abordagem). */
+export interface OutreachInput {
+  canal: string;
+  mensagem?: string | null;
+  oferta?: string | null;
+  status?: string | null;
+  por?: string | null;
+}
+
+/** Uma etapa do funil da campanha (a contatar → contatado → respondeu → cortesia → reativou). */
+export interface CampanhaFunilStep {
+  etapa: string;
+  count: number;
+}
+
+/** Um tema citado pelo universo da campanha (com nº de feedbacks negativos). */
+export interface CampanhaInsight {
+  tema: string;
+  count: number;
+  /** Quantos desses feedbacks são de sentimento negativo. */
+  neg: number;
+}
+
+/** Resposta de GET /api/campanha/stats — painel de monitoramento da win-back. */
+export interface CampanhaStats {
+  /** Total de contatos churn da org (universo da campanha). */
+  universo: number;
+  /** Recorte do universo com telefone REAL (alcançáveis no WhatsApp). */
+  com_whatsapp: number;
+  /** Recorte do universo só-e-mail (phone vazio ou 'nowa-'); com_whatsapp + sem_whatsapp == universo. */
+  sem_whatsapp: number;
+  /** Contagem do universo por bucket de alcance do validador
+      (whatsapp | so_email | fixo | grupo | sem_contato | invalido) — só buckets > 0.
+      sum(por_alcance) == universo e por_alcance.whatsapp == com_whatsapp. */
+  por_alcance?: Record<string, number>;
+  contatados: number;
+  responderam: number;
+  cortesia: number;
+  reativaram: number;
+  /** max(0, universo - contatados). */
+  faltam: number;
+  /** Contagem das abordagens por canal. */
+  por_canal: Record<string, number>;
+  /** Nº de contatos do universo por selo. */
+  por_selo: Record<string, number>;
+  /** Etapas do funil com counts (ordem do funil). */
+  funil: CampanhaFunilStep[];
+  /** Top ~8 temas do universo (count + negativos). */
+  insights: CampanhaInsight[];
+}
+
+/** Uma linha de resposta de formulário a importar (POST /api/forms/import). */
+export interface FormsRow {
+  whatsapp?: string | null;
+  nome?: string | null;
+  email?: string | null;
+  nota?: number | null;
+  texto?: string | null;
+}
+
+/** Resultado de POST /api/forms/import (idempotente por external_id). */
+export interface FormsImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+}
+
+/** Helpers tipados da camada de campanha (todos sob o prefixo /api). */
+export const campanha = {
+  /** Catálogo de selos + uso por contato. */
+  listSelos: () => api.get<SelosResponse>("/api/selos"),
+  /** Upsert de um selo no catálogo (idempotente por nome; cor atualiza). */
+  createSelo: (body: Selo) => api.post<{ catalogo: Selo[] }>("/api/selos", body),
+  /** Remove o selo do catálogo E de todos os contatos que o têm. */
+  deleteSelo: (nome: string) => api.del(`/api/selos/${encodeURIComponent(nome)}`),
+  /** Aplica um selo a um contato (cria no catálogo se for novo). */
+  applySelo: (contactId: string, body: { nome: string; cor?: string | null }) =>
+    api.post<{ contato_id: string; selos: string[] }>(
+      `/api/contacts/${contactId}/selos`,
+      body,
+    ),
+  /** Remove o selo daquele contato (não mexe no catálogo). */
+  removeSeloFromContact: (contactId: string, nome: string) =>
+    api.del(`/api/contacts/${contactId}/selos/${encodeURIComponent(nome)}`),
+  /** Registra uma abordagem 1:1 (e marca os feedbacks do contato como abordados). */
+  addOutreach: (contactId: string, body: OutreachInput) =>
+    api.post<{ abordagem: Abordagem }>(`/api/contacts/${contactId}/outreach`, body),
+  /** Histórico de abordagens do contato (mais recente primeiro). */
+  listOutreach: (contactId: string) =>
+    api.get<Abordagem[]>(`/api/contacts/${contactId}/outreach`),
+  /** Painel de monitoramento da campanha. */
+  stats: () => api.get<CampanhaStats>("/api/campanha/stats"),
+  /** Importa respostas de formulário (a porta; dados reais chegam depois). */
+  importForms: (rows: FormsRow[]) =>
+    api.post<FormsImportResult>("/api/forms/import", { rows }),
+};
+
+// --- WhatsApp da central (envio 1:1, gated por confirmação) ------------------
+
+/** Resposta de GET /api/whatsapp/status — saúde do gateway WAHA.
+    `conectado` é true só quando a sessão está plenamente ligada ('WORKING');
+    WAHA off/erro -> false. Não expõe segredos (sem api_key). */
+export interface WhatsappStatus {
+  conectado: boolean;
+  session: string;
+  base_url: string;
+}
+
+/** Corpo do POST /api/contacts/{id}/whatsapp/send (preview e envio).
+    `confirm` é injetado pelos helpers (false no preview, true no envio). */
+export interface WhatsappSendInput {
+  texto: string;
+  oferta?: string | null;
+  por?: string | null;
+}
+
+/** Resposta de PREVIEW (sem confirm): NÃO envia nada, devolve o que SERIA enviado. */
+export interface WhatsappSendPreview {
+  preview: true;
+  para: string;
+  /** Telefone é celular BR válido? (validador do backend). */
+  tem_whatsapp: boolean;
+  /** Dá para enviar 1:1? = não-grupo E (tem_whatsapp OU já recebemos inbound dele).
+      É o gate REAL do "Enviar de verdade" (substitui tem_whatsapp no botão). */
+  alcancavel: boolean;
+  /** Telefone é um JID de grupo/comunidade? Grupo nunca recebe mensagem 1:1. */
+  is_grupo: boolean;
+  texto: string;
+  /** Sessão WAHA conectada agora? — outro gate do "Enviar de verdade". */
+  waha_conectado: boolean;
+}
+
+/** Resposta de ENVIO confirmado (confirm=true) — só vem quando WAHA conectado + número válido. */
+export interface WhatsappSendResult {
+  enviado: true;
+  para: string;
+  texto: string;
+  /** A abordagem 1:1 registrada no histórico do contato (canal='whatsapp'). */
+  abordagem: Abordagem;
+  /** Selos do contato após o envio (inclui 'contatado'). */
+  selos: string[];
+  channel_msg_id: string | null;
+}
+
+/** Um item da lista de conversas (coluna esquerda do painel de chat). */
+export interface WhatsappConversation {
+  contact_id: string;
+  nome: string | null;
+  whatsapp: string | null;
+  tem_whatsapp: boolean;
+  /** Telefone é um JID de grupo/comunidade do WhatsApp? */
+  is_grupo: boolean;
+  estado: string | null;
+  selos: string[];
+  total: number;
+  ultima_mensagem: string;
+  ultima_em: string | null;
+  ultima_direction: "inbound" | "outbound";
+}
+
+export interface WhatsappConversationsResponse {
+  conversations: WhatsappConversation[];
+  total: number;
+}
+
+/** Uma mensagem da thread (balão). */
+export interface WhatsappThreadMsg {
+  id: string;
+  direction: "inbound" | "outbound";
+  body: string;
+  at: string | null;
+}
+
+/** Thread de um contato: cabeçalho do contato + mensagens cronológicas (asc). */
+export interface WhatsappThread {
+  contact: {
+    id: string;
+    nome: string | null;
+    whatsapp: string | null;
+    tem_whatsapp: boolean;
+    /** Dá para enviar 1:1? = não-grupo E (tem_whatsapp OU já recebemos inbound). */
+    alcancavel: boolean;
+    /** Telefone é um JID de grupo/comunidade do WhatsApp? */
+    is_grupo: boolean;
+    estado: string | null;
+    selos: string[];
+    opt_in: boolean;
+  };
+  mensagens: WhatsappThreadMsg[];
+}
+
+/** Helpers tipados do WhatsApp da central. Envio é GATED:
+    `sendPreview` nunca envia; `sendConfirm` só envia com WAHA conectado (409) e
+    telefone celular válido (422). */
+export const whatsapp = {
+  /** Status do gateway WAHA (best-effort; WAHA off -> conectado=false). */
+  status: () => api.get<WhatsappStatus>("/api/whatsapp/status"),
+  /** Lista de conversas (1 por contato com mensagem), ordenada pela última msg desc.
+      `excluirGrupos=true` injeta `excluir_grupos=true` e omite contatos classe 'group'. */
+  conversations: (search?: string, excluirGrupos?: boolean) =>
+    api.get<WhatsappConversationsResponse>(
+      `/api/whatsapp/conversations${buildQuery({
+        search,
+        excluir_grupos: excluirGrupos ? true : undefined,
+      })}`,
+    ),
+  /** Thread cronológica de um contato (balões). */
+  thread: (contactId: string) =>
+    api.get<WhatsappThread>(`/api/contacts/${contactId}/whatsapp/thread`),
+  /** PREVIEW: NÃO envia nada; devolve o que SERIA enviado + se WAHA está conectado. */
+  sendPreview: (contactId: string, body: WhatsappSendInput) =>
+    api.post<WhatsappSendPreview>(`/api/contacts/${contactId}/whatsapp/send`, {
+      ...body,
+      confirm: false,
+    }),
+  /** ENVIO REAL (confirm=true): 409 se WAHA off, 422 se telefone não-celular. */
+  sendConfirm: (contactId: string, body: WhatsappSendInput) =>
+    api.post<WhatsappSendResult>(`/api/contacts/${contactId}/whatsapp/send`, {
+      ...body,
+      confirm: true,
+    }),
+};
+
+/** Helpers tipados dos BOARDS dinâmicos (CRUD + items + board-move). */
+export const boards = {
+  /** Lista os boards da org (defaults se vazia). */
+  list: () => api.get<Board[]>("/api/boards"),
+  /** Cria um board (id gerado pelo backend). */
+  create: (body: BoardInput) => api.post<Board>("/api/boards", body),
+  /** Edita nome e/ou colunas de um board (materializa defaults se necessário). */
+  patch: (id: string, body: BoardPatch) => api.patch<Board>(`/api/boards/${id}`, body),
+  /** Remove um board (idempotente; pode remover o último — volta aos defaults). */
+  remove: (id: string) => api.del(`/api/boards/${id}`),
+  /** Cards de cada coluna do board (top ~30 por urgência / ~40 por health, com count
+      total). Filtros opcionais (`BoardItemFiltro`) viram query string e são aplicados
+      ANTES do agrupamento no backend, então items E counts de cada coluna refletem o
+      filtro; campos que não valem para a entidade do board são ignorados sem erro. */
+  items: (id: string, filtro?: BoardItemFiltro) =>
+    api.get<BoardItems>(`/api/boards/${id}/items${buildQuery(filtro)}`),
+  /** Move um card de FEEDBACK: campo=action_status seta status; campo=selo aplica selo. */
+  move: (feedbackId: string, body: BoardMoveInput) =>
+    api.post<Feedback>(`/api/feedbacks/${feedbackId}/board-move`, body),
+  /** Move um card de CLIENTE: campo=selo aplica o selo ao contato (retorna {id, selos}).
+      campo=estado|perfil é read-only (vem da API de Clientes) — backend responde 409. */
+  moveContato: (contatoId: string, body: ContactBoardMoveInput) =>
+    api.post<{ id: string; selos: string[] }>(
+      `/api/contacts/${contatoId}/board-move`,
+      body,
+    ),
+  /** Move um card de TAREFA (board entidade='tarefa') trocando o status no drop.
+      NÃO há board-move de tarefa: o status muda via PATCH /api/tarefas/{id} (reusa
+      `tarefas.patch`). Retorna a Tarefa atualizada (TarefaOut do PATCH). */
+  moveTarefa: (tarefaId: string, status: TarefaStatus) =>
+    tarefas.patch(tarefaId, { status }),
+  /** Move um card de MELHORIA (board entidade='melhoria') trocando o status no drop.
+      NÃO há board-move de melhoria: o status muda via PATCH /api/improvements/{id}
+      (reusa `melhorias.patch`). Retorna a Improvement atualizada. */
+  moveMelhoria: (melhoriaId: string, status: ImprovementStatus) =>
+    melhorias.patch(melhoriaId, { status }),
+};
+
+/** Helpers tipados de CLIENTES (lista rica + filtros por tipo de cliente). */
+export const clientes = {
+  /** Lista de clientes contatáveis. Filtros opcionais viram query string. */
+  list: (filtro?: ClienteFiltro) =>
+    api.get<Cliente[]>(`/api/clientes${buildQuery(filtro)}`),
+};
+
+/** Helpers tipados de FEEDBACKS (feed + contagens + filtros + ações do Board). */
+export const feedbacks = {
+  /** Feed paginado de feedbacks. Filtros opcionais viram query string. */
+  list: (filtro?: FeedbackFiltro) =>
+    api.get<FeedbacksResponse>(`/api/feedbacks${buildQuery(filtro)}`),
+  /** PATCH parcial de um feedback (`FeedbackPatch`): só o que vier no corpo é tocado.
+      Retorna o item no formato do feed (já com assignee/team_tag/improvement_id). */
+  patch: (id: string, body: FeedbackPatch) =>
+    api.patch<Feedback>(`/api/feedbacks/${id}`, body),
+  /** ATRIBUIR: seta dono/time do feedback (string vazia → null no backend).
+      Envie só os campos que quer mudar; ambos null/"" limpam. */
+  atribuir: (id: string, body: { assignee?: string | null; team_tag?: string | null }) =>
+    api.patch<Feedback>(`/api/feedbacks/${id}`, body),
+  /** VINCULAR MELHORIA: liga o feedback a uma Improvement da org (uuid) — NÃO mexe no
+      action_status. `null` DESVINCULA. 404 se a melhoria não existir/for de outra org;
+      422 se o uuid for malformado. */
+  vincularMelhoria: (id: string, improvementId: string | null) =>
+    api.patch<Feedback>(`/api/feedbacks/${id}`, { improvement_id: improvementId }),
+  /** CRIAR TAREFA A PARTIR do feedback: POST /api/tarefas com `feedback_id` vinculado.
+      Reusa o contrato de `TarefaInput` (contact_id obrigatório; title obrigatório). */
+  criarTarefa: (
+    body: { contact_id: string; title: string } & Partial<Omit<TarefaInput, "contact_id" | "title">> & {
+      feedback_id: string;
+    },
+  ) => api.post<Tarefa>("/api/tarefas", body),
+};
+
+/** Helpers tipados de TAREFAS de CS (fila priorizada + filtros). */
+export const tarefas = {
+  /** Fila paginada de tarefas. Filtros opcionais viram query string. */
+  list: (filtro?: TarefaFiltro) =>
+    api.get<TarefasResponse>(`/api/tarefas${buildQuery(filtro)}`),
+  /** Cria uma tarefa manual (201). `feedback_id` vincula a um FeedbackItem da org. */
+  create: (body: TarefaInput) => api.post<Tarefa>("/api/tarefas", body),
+  /** Edição parcial (status/owner/priority/due_at/snoozed_until/notes). */
+  patch: (id: string, body: TarefaPatch) =>
+    api.patch<Tarefa>(`/api/tarefas/${id}`, body),
+  /** Gera tarefas em lote a partir de feedbacks sem tarefa vinculada (201).
+      Idempotente: rodar 2x não duplica (feedbacks já tratados caem em `ja_existiam`).
+      Corpo todo opcional — usa os defaults do backend (churn/negativo/limite 50). */
+  gerarDeFeedbacks: (body?: GerarDeFeedbacksInput) =>
+    api.post<GerarDeFeedbacksResult>("/api/tarefas/gerar-de-feedbacks", body ?? {}),
+};
+
+/** Helpers tipados das DORES (clusters por significado). */
+export const clusters = {
+  /** Lista as dores (clusters) da org + métricas. `days`/`sort` viram query string. */
+  list: (filtro?: ClustersFiltro) =>
+    api.get<ClustersResponse>(`/api/feedbacks/clusters${buildQuery(filtro)}`),
+};
+
+/** Helpers tipados das MELHORIAS (roadmap + "puxar dor para o roadmap"). */
+export const melhorias = {
+  /** Lista as melhorias da org (cada uma com feedback_count). */
+  list: () => api.get<Improvement[]>("/api/improvements"),
+  /** Roadmap priorizado (por priority_score desc). `status` filtra por estágio. */
+  roadmap: (status?: ImprovementStatus) =>
+    api.get<ImprovementRoadmapItem[]>(`/api/improvements/roadmap${buildQuery({ status })}`),
+  /** Cria uma melhoria avulsa (status nasce 'ideia' por padrão). */
+  create: (body: ImprovementInput) =>
+    api.post<Improvement>("/api/improvements", body),
+  /** Edita parcialmente uma melhoria (status, effort, target_date, cluster_id...). */
+  patch: (id: string, body: ImprovementPatch) =>
+    api.patch<Improvement>(`/api/improvements/${id}`, body),
+  /** "Puxar para o roadmap": cria a melhoria A PARTIR de uma dor (cluster) e
+      vincula os feedbacks dela. Idempotente: se a dor já virou melhoria, devolve
+      a existente. Retorna o mesmo shape de Improvement (201). */
+  fromCluster: (clusterId: string, title?: string) =>
+    api.post<Improvement>("/api/improvements/from-cluster", { cluster_id: clusterId, title }),
+};

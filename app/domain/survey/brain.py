@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
+from app.config import settings
 from app.services.llm import GroqLLM
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,24 @@ IntentKind = Literal["score", "opt_out", "question", "unclear", "handoff"]
 
 # Resposta fixa de opt-out (precisa ser estável: entra no filtro de eco do webhook).
 OPT_OUT_CONFIRM_MSG = "Entendido! Não vou mais te mandar pesquisas por aqui. 🙏 Se mudar de ideia, é só avisar."
+
+# Resposta HONESTA quando não há contexto relevante na base (NO_KB_FALLBACK):
+# nunca inventa um fato — encaminha ao time. Curta e calorosa.
+HONEST_NO_KB_MSG = (
+    "Boa pergunta! Essa eu não sei responder com certeza por aqui — "
+    "vou encaminhar pro time pra te dar o retorno certinho. 🙏"
+)
+
+# Piso de similaridade NO NÍVEL DO BRAIN: mesmo que o retriever devolva trechos,
+# se o MELHOR deles não passa deste score o contexto é fraco demais → tratamos como
+# "sem KB". Conservador; o retriever já filtra por um piso próprio, isto é a 2ª trava.
+BRAIN_MIN_RELEVANT_SCORE = 0.30
+
+
+def _no_kb_fallback_enabled() -> bool:
+    """Lê a flag NO_KB_FALLBACK em call-time (settings é frozen; isto é o ponto de
+    indireção que os testes monkeypatcham para alternar o comportamento honesto)."""
+    return settings.no_kb_fallback_enabled
 
 _INTERPRET_SYSTEM = """Você é o assistente de pesquisas via WhatsApp de uma empresa (português brasileiro).
 O contato recebeu uma pergunta de pesquisa com nota de 0 a 10 e respondeu algo que o sistema não entendeu como nota direta.
@@ -195,13 +214,33 @@ class SurveyBrain:
 
         return BrainIntent(kind=kind, score=score, reply=reply)
 
+    @staticmethod
+    def _has_relevant_kb(chunks: list) -> bool:
+        """True se há contexto utilizável: ao menos 1 trecho com conteúdo e cujo
+        melhor score passa do piso do brain. KB vazio OU só ruído fraco ⇒ False.
+
+        Trechos sem atributo `score` (dublês simples) contam como relevantes desde
+        que tenham conteúdo — o filtro de score é a 2ª trava sobre o do retriever."""
+        if not chunks:
+            return False
+        for c in chunks:
+            content = (getattr(c, "content", "") or "").strip()
+            if not content:
+                continue
+            score = getattr(c, "score", None)
+            if score is None or float(score) >= BRAIN_MIN_RELEVANT_SCORE:
+                return True
+        return False
+
     async def answer_from_context(self, question: str, chunks: list) -> Optional[str]:
         """Resposta grounded a uma dúvida, usando SÓ os trechos recuperados.
 
-        chunks: itens com .title e .content (RetrievedChunk). Sem chunks ou
-        LLM julgando não-respondível ⇒ None (quem chama cai no fallback honesto).
+        chunks: itens com .title e .content (RetrievedChunk). Sem chunks (ou só
+        ruído abaixo do piso) ou LLM julgando não-respondível ⇒ None (quem chama
+        cai no fallback honesto / genérico). Para a resposta HONESTA explícita
+        nesse caso (sem depender do chamador), use `answer_question_grounded`.
         """
-        if not chunks:
+        if not self._has_relevant_kb(chunks):
             return None
         context = "\n\n".join(f"[{getattr(c, 'title', '')}]\n{getattr(c, 'content', '')}" for c in chunks)
         user = f"TRECHOS DE CONHECIMENTO:\n{context}\n\nPERGUNTA DO CLIENTE: {question!r}"
@@ -212,6 +251,25 @@ class SurveyBrain:
         if not answer:
             return None
         return str(answer).strip()[:600] or None
+
+    async def answer_question_grounded(self, question: str, chunks: list) -> Optional[str]:
+        """RAG com FALLBACK HONESTO explícito (NO_KB_FALLBACK).
+
+        - Há contexto relevante e o LLM consegue responder grounded ⇒ devolve a resposta.
+        - SEM contexto relevante (KB vazio OU score abaixo do piso): NÃO chama o LLM e,
+          se NO_KB_FALLBACK_ENABLED, devolve a mensagem honesta (`HONEST_NO_KB_MSG`) —
+          jamais inventa um fato. Com a flag OFF, devolve None (comportamento antigo).
+        - Há contexto, mas o LLM julga não-respondível: também cai no honesto (a info
+          existe na base mas não cobre a pergunta — melhor encaminhar do que alucinar).
+        """
+        if not self._has_relevant_kb(chunks):
+            # NO_KB_FALLBACK: caminho honesto explícito, sem gastar uma chamada de LLM.
+            return HONEST_NO_KB_MSG if _no_kb_fallback_enabled() else None
+        answer = await self.answer_from_context(question, chunks)
+        if answer:
+            return answer
+        # Tinha contexto mas o LLM não se sentiu seguro: honesto > inventado.
+        return HONEST_NO_KB_MSG if _no_kb_fallback_enabled() else None
 
     async def narrate_digest(self, data: dict) -> Optional[str]:
         """Narra os números da semana num texto pronto pro WhatsApp do dono.

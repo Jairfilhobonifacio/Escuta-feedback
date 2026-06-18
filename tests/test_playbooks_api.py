@@ -5,6 +5,7 @@ get_session) + messaging fake. Nenhum teste toca Supabase/WAHA.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+import app.api.tasks as _tasks_mod  # noqa: E402
 from app.api.admin import get_messaging  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
@@ -33,7 +35,7 @@ _PB_KEYS = {
 _TAREFA_KEYS = {
     "id", "contato_id", "contato_nome", "contato_whatsapp", "playbook_id", "playbook_nome",
     "title", "reason", "status", "priority", "owner", "due_at", "snoozed_until", "notes",
-    "health", "health_band", "meta", "criada_em", "atualizada_em",
+    "health", "health_band", "meta", "feedback_id", "feedback_preview", "criada_em", "atualizada_em",
 }
 
 
@@ -292,6 +294,327 @@ async def test_tarefas_sort_prioridade(client, org, session):
     assert [i["title"] for i in data["items"]] == ["urgente", "normal", "baixa"]
 
 
+@pytest.mark.asyncio
+async def test_tarefas_filtro_status_isola_estados(client, org, session):
+    """Filtro por status em SQL: só retorna tarefas no estado pedido (counts ignoram status)."""
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.flush()
+    session.add_all([
+        CsTask(organization_id=org.id, contact_id=ana.id, title="A1", status="aberta", priority="normal"),
+        CsTask(organization_id=org.id, contact_id=ana.id, title="A2", status="aberta", priority="normal"),
+        CsTask(organization_id=org.id, contact_id=ana.id, title="EA", status="em_andamento", priority="normal"),
+    ])
+    await session.commit()
+
+    em_and = (await client.get("/api/tarefas", params={"status": "em_andamento"})).json()
+    assert em_and["total"] == 1
+    assert {i["title"] for i in em_and["items"]} == {"EA"}
+    # counts_by_status ignora o próprio filtro de status (abas no front).
+    assert em_and["counts_by_status"] == {"aberta": 2, "em_andamento": 1, "concluida": 0, "adiada": 0}
+
+
+@pytest.mark.asyncio
+async def test_tarefas_filtro_contact_id_isola_contato(client, org, session):
+    """Filtro por contact_id em SQL: só as tarefas do contato pedido."""
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    bob = Contact(organization_id=org.id, phone="5531900000002", name="Bob", opt_in=True, profile_data={})
+    session.add_all([ana, bob])
+    await session.flush()
+    session.add_all([
+        CsTask(organization_id=org.id, contact_id=ana.id, title="A", status="aberta", priority="normal"),
+        CsTask(organization_id=org.id, contact_id=bob.id, title="B", status="aberta", priority="normal"),
+        CsTask(organization_id=org.id, contact_id=ana.id, title="A2", status="aberta", priority="normal"),
+    ])
+    await session.commit()
+
+    da_ana = (await client.get("/api/tarefas", params={"contact_id": str(ana.id)})).json()
+    assert da_ana["total"] == 2
+    assert {i["title"] for i in da_ana["items"]} == {"A", "A2"}
+    assert all(i["contato_id"] == str(ana.id) for i in da_ana["items"])
+
+
+@pytest.mark.asyncio
+async def test_tarefas_filtro_contact_id_invalido_422(client, org):
+    r = await client.get("/api/tarefas", params={"contact_id": "nao-e-uuid"})
+    assert r.status_code == 422
+
+
+# --- /api/tarefas: vínculo a FeedbackItem ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tarefa_com_feedback_id_persiste_e_aparece_no_get(client, org, session):
+    """Criar tarefa vinculada a um FeedbackItem: feedback_id volta no POST e no GET,
+    com preview truncado do texto."""
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.flush()
+    fb = FeedbackItem(
+        organization_id=org.id, contact_id=ana.id, source="bizzu_app", type="nps",
+        score=3, text="O app trava na hora de abrir o simulado, perdi minha sessão de estudo inteira.",
+    )
+    session.add(fb)
+    await session.commit()
+
+    r = await client.post("/api/tarefas", json={
+        "contact_id": str(ana.id), "title": "Abordar Ana sobre o NPS", "feedback_id": str(fb.id),
+    })
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert set(out.keys()) == _TAREFA_KEYS
+    assert out["feedback_id"] == str(fb.id)
+    # POST devolve o preview do feedback vinculado.
+    assert out["feedback_preview"] == fb.text
+
+    # Persistiu na coluna dedicada.
+    import uuid as _uuid
+    row = (await session.execute(select(CsTask).where(CsTask.id == _uuid.UUID(out["id"])))).scalar_one()
+    assert str(row.feedback_item_id) == str(fb.id)
+
+    # GET expõe feedback_id + preview.
+    fila = (await client.get("/api/tarefas")).json()
+    item = next(i for i in fila["items"] if i["id"] == out["id"])
+    assert item["feedback_id"] == str(fb.id)
+    assert item["feedback_preview"] == fb.text
+
+
+@pytest.mark.asyncio
+async def test_tarefa_feedback_preview_trunca_texto_longo(client, org, session):
+    """Texto longo do feedback é truncado no preview (com reticências)."""
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.flush()
+    fb = FeedbackItem(
+        organization_id=org.id, contact_id=ana.id, source="bizzu_app", type="ticket",
+        text="x" * 500,
+    )
+    session.add(fb)
+    await session.commit()
+
+    r = await client.post("/api/tarefas", json={
+        "contact_id": str(ana.id), "title": "T", "feedback_id": str(fb.id),
+    })
+    assert r.status_code == 201, r.text
+    fila = (await client.get("/api/tarefas")).json()
+    item = next(i for i in fila["items"] if i["feedback_id"] == str(fb.id))
+    assert item["feedback_preview"] is not None
+    assert len(item["feedback_preview"]) <= 140
+    assert item["feedback_preview"].endswith("…")  # reticências
+
+
+@pytest.mark.asyncio
+async def test_tarefa_sem_feedback_tem_feedback_id_none(client, org, session):
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.commit()
+    r = await client.post("/api/tarefas", json={"contact_id": str(ana.id), "title": "sem feedback"})
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["feedback_id"] is None
+    assert out["feedback_preview"] is None
+
+
+@pytest.mark.asyncio
+async def test_tarefa_feedback_inexistente_404(client, org, session):
+    import uuid
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.commit()
+    r = await client.post("/api/tarefas", json={
+        "contact_id": str(ana.id), "title": "x", "feedback_id": str(uuid.uuid4()),
+    })
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_tarefa_feedback_id_invalido_422(client, org, session):
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.commit()
+    r = await client.post("/api/tarefas", json={
+        "contact_id": str(ana.id), "title": "x", "feedback_id": "nao-e-uuid",
+    })
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tarefa_feedback_de_outra_org_404(client, org, session):
+    """Isolamento multi-tenant: não dá pra vincular feedback de outra org."""
+    other = Organization(slug="outra", name="Outra", settings={})
+    session.add(other)
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.flush()
+    fb_alheio = FeedbackItem(organization_id=other.id, source="x", type="nps", text="alheio")
+    session.add(fb_alheio)
+    await session.commit()
+    r = await client.post("/api/tarefas", json={
+        "contact_id": str(ana.id), "title": "x", "feedback_id": str(fb_alheio.id),
+    })
+    assert r.status_code == 404
+
+
+# --- POST /api/tarefas/gerar-de-feedbacks ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gerar_de_feedbacks_cria_e_e_idempotente(client, org, session):
+    """2 churns negativos sem tarefa -> criadas=2; rodar de novo -> criadas=0 (idempotente)."""
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    bob = Contact(organization_id=org.id, phone="5531900000002", name="Bob", opt_in=True, profile_data={})
+    session.add_all([ana, bob])
+    await session.flush()
+    fb1 = FeedbackItem(
+        organization_id=org.id, contact_id=ana.id, source="bizzu_billing", type="churn",
+        sentiment="negativo", text="Cancelei porque o preço subiu demais e não vi valor.",
+    )
+    fb2 = FeedbackItem(
+        organization_id=org.id, contact_id=bob.id, source="bizzu_billing", type="churn",
+        sentiment="negativo", text="Não consegui acessar o conteúdo que eu queria.",
+    )
+    session.add_all([fb1, fb2])
+    await session.commit()
+
+    r = await client.post("/api/tarefas/gerar-de-feedbacks", json={})
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["criadas"] == 2
+    assert out["ja_existiam"] == 0
+    assert len(out["tarefas"]) == 2
+    # cada tarefa criada respeita o contrato e vem vinculada ao feedback, status "aberta".
+    vinculados = set()
+    for t in out["tarefas"]:
+        assert set(t.keys()) == _TAREFA_KEYS
+        assert t["status"] == "aberta"
+        assert t["feedback_id"] is not None
+        assert t["title"].startswith("Tratar:")
+        vinculados.add(t["feedback_id"])
+    assert vinculados == {str(fb1.id), str(fb2.id)}
+
+    # apareceram na fila
+    fila = (await client.get("/api/tarefas")).json()
+    assert fila["total"] == 2
+
+    # idempotente: rodar de novo não duplica
+    r2 = await client.post("/api/tarefas/gerar-de-feedbacks", json={})
+    assert r2.status_code == 201, r2.text
+    out2 = r2.json()
+    assert out2["criadas"] == 0
+    assert out2["ja_existiam"] == 2
+    assert out2["tarefas"] == []
+    assert (await client.get("/api/tarefas")).json()["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_gerar_de_feedbacks_respeita_filtros(client, org, session):
+    """Feedback fora do filtro (tipo/sentimento) não vira tarefa."""
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.flush()
+    churn_neg = FeedbackItem(
+        organization_id=org.id, contact_id=ana.id, source="bizzu_billing", type="churn",
+        sentiment="negativo", text="Cancelei, não valeu a pena.",
+    )
+    # fora do filtro: tipo != churn
+    nps_neg = FeedbackItem(
+        organization_id=org.id, contact_id=ana.id, source="bizzu_app", type="nps",
+        sentiment="negativo", score=3, text="App lento.",
+    )
+    # fora do filtro: sentimento != negativo
+    churn_pos = FeedbackItem(
+        organization_id=org.id, contact_id=ana.id, source="bizzu_billing", type="churn",
+        sentiment="positivo", text="Saí mas adorei o produto.",
+    )
+    session.add_all([churn_neg, nps_neg, churn_pos])
+    await session.commit()
+
+    r = await client.post("/api/tarefas/gerar-de-feedbacks", json={})
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["criadas"] == 1
+    assert out["tarefas"][0]["feedback_id"] == str(churn_neg.id)
+    # só o churn negativo gerou tarefa
+    fila = (await client.get("/api/tarefas")).json()
+    assert fila["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_gerar_de_feedbacks_action_status_e_limite(client, org, session):
+    """Filtro action_status restringe; `limite` corta o lote (resto fica p/ próxima rodada)."""
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.flush()
+    novos = [
+        FeedbackItem(
+            organization_id=org.id, contact_id=ana.id, source="bizzu_billing", type="churn",
+            sentiment="negativo", action_status="novo", text=f"motivo {i}",
+        )
+        for i in range(3)
+    ]
+    # mesmo casando tipo+sentimento, action_status != novo fica de fora
+    resolvido = FeedbackItem(
+        organization_id=org.id, contact_id=ana.id, source="bizzu_billing", type="churn",
+        sentiment="negativo", action_status="resolvido", text="já tratado",
+    )
+    session.add_all(novos + [resolvido])
+    await session.commit()
+
+    r = await client.post("/api/tarefas/gerar-de-feedbacks", json={"action_status": "novo", "limite": 2})
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["criadas"] == 2  # limite corta em 2
+    assert (await client.get("/api/tarefas")).json()["total"] == 2
+
+    # próxima rodada pega o 3º "novo" (o "resolvido" continua de fora)
+    r2 = await client.post("/api/tarefas/gerar-de-feedbacks", json={"action_status": "novo", "limite": 2})
+    out2 = r2.json()
+    assert out2["criadas"] == 1
+    assert out2["ja_existiam"] == 2
+    assert (await client.get("/api/tarefas")).json()["total"] == 3
+
+
+@pytest.mark.asyncio
+async def test_gerar_de_feedbacks_titulo_fallback_sem_texto(client, org, session):
+    """Sem texto no feedback, o título cai para tipo + contato."""
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.flush()
+    fb = FeedbackItem(
+        organization_id=org.id, contact_id=ana.id, source="bizzu_billing", type="churn",
+        sentiment="negativo", text=None,
+    )
+    session.add(fb)
+    await session.commit()
+
+    r = await client.post("/api/tarefas/gerar-de-feedbacks", json={})
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["criadas"] == 1
+    assert out["tarefas"][0]["title"] == "Tratar churn de Ana"
+
+
+@pytest.mark.asyncio
+async def test_gerar_de_feedbacks_isola_org(client, org, session):
+    """Multi-tenant: feedback de outra org não vira tarefa na org corrente."""
+    other = Organization(slug="outra", name="Outra", settings={})
+    session.add(other)
+    await session.flush()
+    fb_alheio = FeedbackItem(
+        organization_id=other.id, source="bizzu_billing", type="churn",
+        sentiment="negativo", text="churn de outra org",
+    )
+    session.add(fb_alheio)
+    await session.commit()
+
+    r = await client.post("/api/tarefas/gerar-de-feedbacks", json={})
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["criadas"] == 0
+    assert out["ja_existiam"] == 0
+    assert (await client.get("/api/tarefas")).json()["total"] == 0
+
+
 # --- PATCH /api/tarefas/{id} -------------------------------------------------
 
 
@@ -359,3 +682,124 @@ async def test_tarefa_de_outra_org_nao_aparece(client, org, session):
 
     fila = (await client.get("/api/tarefas")).json()
     assert fila["total"] == 0
+
+
+# --- Esteira (Fase D, REGRA 1): concluir tarefa resolve o feedback vinculado ----
+
+
+def _set_esteira(monkeypatch, enabled: bool) -> None:
+    """Liga/desliga a flag esteira_enabled no binding `settings` que o handler de
+    tarefas usa (frozen dataclass -> dataclasses.replace, igual ao padrão do projeto)."""
+    monkeypatch.setattr(
+        _tasks_mod, "settings", dataclasses.replace(_tasks_mod.settings, esteira_enabled=enabled)
+    )
+
+
+async def _mk_tarefa_com_feedback(session, org, *, action_status="novo"):
+    """Contato + FeedbackItem (com action_status dado) + CsTask vinculada e aberta."""
+    ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.flush()
+    fb = FeedbackItem(
+        organization_id=org.id, contact_id=ana.id, source="bizzu_app", type="nps",
+        score=3, text="trava ao abrir", action_status=action_status,
+    )
+    session.add(fb)
+    await session.flush()
+    t = CsTask(
+        organization_id=org.id, contact_id=ana.id, title="Abordar Ana",
+        status="aberta", priority="normal", feedback_item_id=fb.id,
+    )
+    session.add(t)
+    await session.commit()
+    return t, fb
+
+
+@pytest.mark.asyncio
+async def test_esteira_concluir_tarefa_resolve_feedback(client, org, session, monkeypatch):
+    """Flag ON + tarefa->concluida + feedback não-terminal: feedback vira 'resolvido'
+    e o retorno traz feedback_resolvido=True."""
+    _set_esteira(monkeypatch, True)
+    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="novo")
+
+    r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "concluida"
+    assert body["feedback_resolvido"] is True
+
+    row = (await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb.id))).scalar_one()
+    assert row.action_status == "resolvido"
+
+
+@pytest.mark.asyncio
+async def test_esteira_feedback_ja_resolvido_e_noop(client, org, session, monkeypatch):
+    """Feedback já em estado terminal (resolvido) -> a esteira não mexe e
+    feedback_resolvido=False (idempotência)."""
+    _set_esteira(monkeypatch, True)
+    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="resolvido")
+
+    r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
+    assert r.status_code == 200, r.text
+    assert r.json()["feedback_resolvido"] is False
+
+    row = (await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb.id))).scalar_one()
+    assert row.action_status == "resolvido"  # inalterado
+
+
+@pytest.mark.asyncio
+async def test_esteira_descartado_tambem_e_noop(client, org, session, monkeypatch):
+    """O outro estado terminal ('descartado') também é preservado (não vira resolvido)."""
+    _set_esteira(monkeypatch, True)
+    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="descartado")
+
+    r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
+    assert r.status_code == 200, r.text
+    assert r.json()["feedback_resolvido"] is False
+
+    row = (await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb.id))).scalar_one()
+    assert row.action_status == "descartado"
+
+
+@pytest.mark.asyncio
+async def test_esteira_flag_off_nao_mexe(client, org, session, monkeypatch):
+    """Flag OFF: concluir a tarefa NÃO toca o feedback e feedback_resolvido=False."""
+    _set_esteira(monkeypatch, False)
+    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="novo")
+
+    r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
+    assert r.status_code == 200, r.text
+    assert r.json()["feedback_resolvido"] is False
+
+    row = (await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb.id))).scalar_one()
+    assert row.action_status == "novo"  # intacto
+
+
+@pytest.mark.asyncio
+async def test_esteira_status_diferente_de_concluida_nao_mexe(client, org, session, monkeypatch):
+    """PATCH que NÃO conclui (ex.: status=em_andamento) não dispara a esteira."""
+    _set_esteira(monkeypatch, True)
+    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="novo")
+
+    r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "em_andamento"})
+    assert r.status_code == 200, r.text
+    assert r.json()["feedback_resolvido"] is False
+
+    row = (await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb.id))).scalar_one()
+    assert row.action_status == "novo"
+
+
+@pytest.mark.asyncio
+async def test_esteira_tarefa_sem_feedback_nao_quebra(client, org, session, monkeypatch):
+    """Concluir tarefa SEM feedback vinculado: feedback_resolvido=False, sem erro."""
+    _set_esteira(monkeypatch, True)
+    ana = Contact(organization_id=org.id, phone="5531900000002", name="Bia", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.flush()
+    t = CsTask(organization_id=org.id, contact_id=ana.id, title="sem fb", status="aberta", priority="normal")
+    session.add(t)
+    await session.commit()
+
+    r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
+    assert r.status_code == 200, r.text
+    assert r.json()["feedback_resolvido"] is False

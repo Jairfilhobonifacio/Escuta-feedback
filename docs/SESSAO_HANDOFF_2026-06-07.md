@@ -69,7 +69,7 @@ contato do Jair vinculado ao user da Bizzu.
 | 8000 | API Escuta (matar órfãos antes! `netstat -ano \| grep :8000`) | `set -a && source .env && set +a && export SELF_CHAT_TEST=1 && py -m uvicorn app.main:app --host 0.0.0.0 --port 8000` |
 
 Dados de teste no postgres Bizzu local: user `jair.e2e@escuta.test` (senha
-`SenhaForte!2026`, whatsappOptIn=t), plano 'Mensal Teste E2E Escuta', assinatura
+`‹redigido — ver ~/.secrets/waha_api_key.txt›`, whatsappOptIn=t), plano 'Mensal Teste E2E Escuta', assinatura
 CANCELLED (a do E2E). Usuário fictício `optin.e2e` REMOVIDO (sem-mock).
 
 ## ✅ Rodada de 4 agentes paralelos (noite, commit `47297b7`)
@@ -104,8 +104,8 @@ CANCELLED (a do E2E). Usuário fictício `optin.e2e` REMOVIDO (sem-mock).
 9. Fase 1: clusters de temas (já temos `themes` por response → agrupar)
 
 ## 🔑 Refs rápidas
-- WAHA: `localhost:3000`, key `c08468a7d78b4ee1acaf9fb51d775786` (⚠️ rotacionar)
-- Postgres Bizzu local: `postgres`/`bizzu_dev_2026` @ localhost:5432/plataforma
+- WAHA: `localhost:3000`, key `‹redigido — ver ~/.secrets/waha_api_key.txt›` (⚠️ rotacionar)
+- Postgres Bizzu local: `postgres`/`‹redigido — ver ~/.secrets/waha_api_key.txt›` @ localhost:5432/plataforma
 - Supabase Escuta: ref `nlqeargxkidygbrahkbk` (PAT em `~\.secrets\supabase_pat_escuta.txt`)
 - WhatsApp pareado: 5524998365809 (Jair), self-chat com `SELF_CHAT_TEST=1` (NUNCA em prod)
 - Segredo HMAC Bizzu↔Escuta: nos `.env` dos dois lados (`BIZZU_WEBHOOK_SECRET` / `ESCUTA_WEBHOOK_SECRET`)

@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -48,13 +48,14 @@ def _brain_override(payload):
     """Override de get_brain → SurveyBrain(FakeClassifyLLM(payload))."""
     return lambda: SurveyBrain(FakeClassifyLLM(payload))
 
-# Chaves exatas do item do feed (`_feedback_out`). Inclui `urgencia` (score 0-100) e,
-# desde a Camada 2 (Board de Gestão), `assignee`/`team_tag`.
+# Chaves exatas do item do feed (`_feedback_out`). Inclui `urgencia` (score 0-100),
+# `assignee`/`team_tag` (Camada 2 — Board de Gestão) e `selos` (status de campanha
+# do contato no inbox — camada win-back).
 _ITEM_KEYS = {
-    "id", "contato_id", "contato_nome", "contato_whatsapp", "source", "type",
+    "id", "contato_id", "contato_nome", "contato_whatsapp", "selos", "source", "type",
     "score", "nps_bucket", "sentiment", "themes", "text", "urgencia",
-    "action_status", "action_note", "assignee", "team_tag", "abordado", "abordado_em",
-    "occurred_em", "created_em",
+    "action_status", "action_note", "assignee", "team_tag", "improvement_id",
+    "abordado", "abordado_em", "occurred_em", "created_em",
 }
 
 
@@ -131,15 +132,20 @@ async def test_clientes_enriquece_e_agrega(client, org, session):
     data = (await client.get("/api/clientes")).json()
     assert len(data) == 2
 
-    # Chaves exatas do contrato.
+    # Chaves exatas do contrato (inclui `selos` desde a camada de campanha win-back,
+    # e `tem_whatsapp`/`estado` desde a correção do universo de churn).
     assert set(data[0].keys()) == {
-        "id", "nome", "whatsapp", "opt_in", "perfil", "plano", "plan_type",
-        "nps_score", "dias_para_renovar", "ultimo_feedback_em", "ultimo_feedback_tipo",
-        "total_feedbacks", "health", "health_band", "health_factors", "criado_em",
+        "id", "nome", "whatsapp", "opt_in", "tem_whatsapp", "estado", "selos",
+        "perfil", "plano", "plan_type", "nps_score", "dias_para_renovar",
+        "ultimo_feedback_em", "ultimo_feedback_tipo", "total_feedbacks",
+        "health", "health_band", "health_factors", "criado_em",
     }
 
     by_name = {r["nome"]: r for r in data}
     a = by_name["Ana Promotora"]
+    # tem WhatsApp real; sem state no snapshot -> estado None.
+    assert a["tem_whatsapp"] is True
+    assert a["estado"] is None
     assert a["perfil"] == "ativo_promotor"
     assert a["plano"] == "Plano Anual"  # planName preferido
     assert a["plan_type"] == "anual"
@@ -160,6 +166,33 @@ async def test_clientes_enriquece_e_agrega(client, org, session):
 
     # Ordem: Ana (tem feedback) antes de Bia (nulls por último).
     assert data[0]["nome"] == "Ana Promotora"
+
+
+@pytest.mark.asyncio
+async def test_clientes_tem_whatsapp_e_estado(client, org, session):
+    """`tem_whatsapp` False p/ placeholder 'nowa-' (ou phone vazio); `estado` vem do snapshot."""
+    # Churn sem WhatsApp: phone placeholder 'nowa-' + state cancelled no snapshot.
+    sem_wa = Contact(
+        organization_id=org.id, phone="nowa-42", name="Sem Whats", opt_in=False,
+        profile_data={
+            "sem_whatsapp": True,
+            "partner": {"profile": "churn_pos_uso", "subscription": {"state": "cancelled"}},
+        },
+    )
+    # Cliente com WhatsApp real + state active_paying.
+    com_wa = Contact(
+        organization_id=org.id, phone="5531900000010", name="Com Whats", opt_in=True,
+        profile_data={"partner": {"subscription": {"state": "active_paying"}}},
+    )
+    session.add_all([sem_wa, com_wa])
+    await session.commit()
+
+    data = (await client.get("/api/clientes")).json()
+    by_name = {r["nome"]: r for r in data}
+    assert by_name["Sem Whats"]["tem_whatsapp"] is False
+    assert by_name["Sem Whats"]["estado"] == "cancelled"
+    assert by_name["Com Whats"]["tem_whatsapp"] is True
+    assert by_name["Com Whats"]["estado"] == "active_paying"
 
 
 @pytest.mark.asyncio
@@ -187,6 +220,95 @@ async def test_clientes_filtros(client, org, session):
     # plan_type
     r = (await client.get("/api/clientes", params={"plan_type": "anual"})).json()
     assert [c["nome"] for c in r] == ["Ana"]
+
+
+@pytest.mark.asyncio
+async def test_clientes_tem_whatsapp_real_fixo_vs_celular(client, org, session):
+    """`tem_whatsapp` usa o validador real: FIXO (12 díg, sem o 9) -> False; celular -> True."""
+    # Fixo real do piloto: a heurística antiga contava como WhatsApp; o validador não.
+    fixo = Contact(
+        organization_id=org.id, phone="553192973323", name="Fixo Cliente", opt_in=True, profile_data={}
+    )
+    cel = Contact(
+        organization_id=org.id, phone="5531987654321", name="Celular Cliente", opt_in=True, profile_data={}
+    )
+    # Grupo (JID) também não é WhatsApp alcançável.
+    grupo = Contact(
+        organization_id=org.id, phone="120363247633739480", name="Grupo", opt_in=True, profile_data={}
+    )
+    session.add_all([fixo, cel, grupo])
+    await session.commit()
+
+    data = (await client.get("/api/clientes")).json()
+    by_name = {r["nome"]: r for r in data}
+    assert by_name["Fixo Cliente"]["tem_whatsapp"] is False
+    assert by_name["Celular Cliente"]["tem_whatsapp"] is True
+    assert by_name["Grupo"]["tem_whatsapp"] is False
+
+
+@pytest.mark.asyncio
+async def test_clientes_filtros_por_tipo_de_cliente(client, org, session):
+    """Filtros novos de /api/clientes: estado, nps_bucket, health_band, tem_whatsapp."""
+    # Cancelado, detrator (nps 3), fixo -> sem whatsapp.
+    cancel_det_fixo = Contact(
+        organization_id=org.id, phone="553192973323", name="Cancel Det Fixo", opt_in=False,
+        profile_data={"partner": {
+            "profile": "churn_pos_uso",
+            "subscription": {"state": "cancelled"},
+            "nps": {"score": 3},
+        }},
+    )
+    # Ativo pagante, promotor (nps 10), celular -> com whatsapp + saudável.
+    ativo_promo = Contact(
+        organization_id=org.id, phone="5531987654321", name="Ativo Promo", opt_in=True,
+        profile_data={"partner": {
+            "profile": "ativo_promotor",
+            "subscription": {"state": "active_paying"},
+            "nps": {"score": 10},
+        }},
+    )
+    # Ativo, neutro (nps 8), celular.
+    ativo_neutro = Contact(
+        organization_id=org.id, phone="5531999998888", name="Ativo Neutro", opt_in=True,
+        profile_data={"partner": {
+            "subscription": {"state": "active_paying"},
+            "nps": {"score": 8},
+        }},
+    )
+    session.add_all([cancel_det_fixo, ativo_promo, ativo_neutro])
+    await session.commit()
+
+    # estado (SQL JSON path)
+    r = (await client.get("/api/clientes", params={"estado": "cancelled"})).json()
+    assert [c["nome"] for c in r] == ["Cancel Det Fixo"]
+
+    # nps_bucket (post-filter): promotor / neutro / detrator
+    r = (await client.get("/api/clientes", params={"nps_bucket": "promotor"})).json()
+    assert [c["nome"] for c in r] == ["Ativo Promo"]
+    r = (await client.get("/api/clientes", params={"nps_bucket": "neutro"})).json()
+    assert [c["nome"] for c in r] == ["Ativo Neutro"]
+    r = (await client.get("/api/clientes", params={"nps_bucket": "detrator"})).json()
+    assert [c["nome"] for c in r] == ["Cancel Det Fixo"]
+
+    # tem_whatsapp (post-filter via validador): celular sim, fixo nao
+    r = (await client.get("/api/clientes", params={"tem_whatsapp": "sim"})).json()
+    assert {c["nome"] for c in r} == {"Ativo Promo", "Ativo Neutro"}
+    r = (await client.get("/api/clientes", params={"tem_whatsapp": "nao"})).json()
+    assert [c["nome"] for c in r] == ["Cancel Det Fixo"]
+
+    # health_band (post-filter sobre a banda calculada): o promotor ativo é healthy.
+    healthy = (await client.get("/api/clientes", params={"health_band": "healthy"})).json()
+    nomes_healthy = {c["nome"] for c in healthy}
+    assert "Ativo Promo" in nomes_healthy
+    # cada item retornado de fato está na banda pedida.
+    assert all(c["health_band"] == "healthy" for c in healthy)
+    # banda inexistente -> lista vazia (post-filter não casa nada).
+    vazio = (await client.get("/api/clientes", params={"health_band": "inexistente"})).json()
+    assert vazio == []
+
+    # combinação: estado + tem_whatsapp coerentes (cancelado é o único fixo)
+    r = (await client.get("/api/clientes", params={"estado": "active_paying", "tem_whatsapp": "sim"})).json()
+    assert {c["nome"] for c in r} == {"Ativo Promo", "Ativo Neutro"}
 
 
 # --- /api/feedbacks ----------------------------------------------------------
@@ -250,6 +372,85 @@ async def test_feedbacks_feed_e_filtro(client, org, session):
     # limit/offset não muda o total
     paged = (await client.get("/api/feedbacks", params={"limit": 1, "offset": 0})).json()
     assert paged["total"] == 3 and len(paged["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_feedbacks_filtros_por_tipo_de_cliente(client, org, session):
+    """Filtros novos de /api/feedbacks (sobre o CONTATO juntado): estado, perfil,
+    plan_type, tem_whatsapp, nps_bucket — aplicados ao feed E às contagens (total bate)."""
+    # Cliente A: cancelado, perfil churn, plano anual, celular, detrator (nps 3).
+    a = Contact(
+        organization_id=org.id, phone="5531987654321", name="Cliente A", opt_in=True,
+        profile_data={"partner": {
+            "profile": "churn_pos_uso",
+            "subscription": {"state": "cancelled", "planType": "anual"},
+            "nps": {"score": 3},
+        }},
+    )
+    # Cliente B: ativo, perfil promotor, plano mensal, FIXO (sem whatsapp), promotor (nps 10).
+    b = Contact(
+        organization_id=org.id, phone="553192973323", name="Cliente B", opt_in=True,
+        profile_data={"partner": {
+            "profile": "ativo_promotor",
+            "subscription": {"state": "active_paying", "planType": "mensal"},
+            "nps": {"score": 10},
+        }},
+    )
+    session.add_all([a, b])
+    await session.flush()
+
+    # 2 feedbacks p/ A (ambos 'novo'), 1 p/ B.
+    session.add_all([
+        FeedbackItem(
+            organization_id=org.id, contact_id=a.id, source="bizzu_app", type="churn",
+            external_id="ta1", text="cancelei A1", occurred_at=_dt(2026, 6, 1),
+        ),
+        FeedbackItem(
+            organization_id=org.id, contact_id=a.id, source="bizzu_app", type="nps",
+            external_id="ta2", score=3, nps_bucket="detractor", text="ruim A2", occurred_at=_dt(2026, 6, 2),
+        ),
+        FeedbackItem(
+            organization_id=org.id, contact_id=b.id, source="bizzu_app", type="nps",
+            external_id="tb1", score=10, nps_bucket="promoter", text="amei B1", occurred_at=_dt(2026, 6, 3),
+        ),
+    ])
+    await session.commit()
+
+    todos = (await client.get("/api/feedbacks")).json()
+    assert todos["total"] == 3
+
+    # estado=cancelled -> só os 2 feedbacks de A; counts batem com o total filtrado.
+    r = (await client.get("/api/feedbacks", params={"estado": "cancelled"})).json()
+    assert r["total"] == 2
+    assert all(i["contato_nome"] == "Cliente A" for i in r["items"])
+    assert sum(r["counts_by_status"].values()) == r["total"]
+
+    # perfil=ativo_promotor -> só B (1).
+    r = (await client.get("/api/feedbacks", params={"perfil": "ativo_promotor"})).json()
+    assert r["total"] == 1 and r["items"][0]["contato_nome"] == "Cliente B"
+    assert sum(r["counts_by_status"].values()) == 1
+
+    # plan_type=anual -> só A (2).
+    r = (await client.get("/api/feedbacks", params={"plan_type": "anual"})).json()
+    assert r["total"] == 2 and all(i["contato_nome"] == "Cliente A" for i in r["items"])
+
+    # tem_whatsapp=sim -> A (celular, 2 feedbacks); tem_whatsapp=nao -> B (fixo, 1).
+    r = (await client.get("/api/feedbacks", params={"tem_whatsapp": "sim"})).json()
+    assert r["total"] == 2 and all(i["contato_nome"] == "Cliente A" for i in r["items"])
+    assert sum(r["counts_by_status"].values()) == 2
+    r = (await client.get("/api/feedbacks", params={"tem_whatsapp": "nao"})).json()
+    assert r["total"] == 1 and r["items"][0]["contato_nome"] == "Cliente B"
+    assert sum(r["counts_by_status"].values()) == 1
+
+    # nps_bucket=detrator -> A (nps 3, 2 feedbacks); promotor -> B (nps 10, 1).
+    r = (await client.get("/api/feedbacks", params={"nps_bucket": "detrator"})).json()
+    assert r["total"] == 2 and all(i["contato_nome"] == "Cliente A" for i in r["items"])
+    r = (await client.get("/api/feedbacks", params={"nps_bucket": "promotor"})).json()
+    assert r["total"] == 1 and r["items"][0]["contato_nome"] == "Cliente B"
+
+    # combinação coerente: cancelled + plano anual = A (2).
+    r = (await client.get("/api/feedbacks", params={"estado": "cancelled", "plan_type": "anual"})).json()
+    assert r["total"] == 2
 
 
 # --- PATCH /api/feedbacks/{id} ----------------------------------------------
@@ -557,6 +758,33 @@ async def test_feedbacks_filtro_abordado(client, org, session):
     nao = (await client.get("/api/feedbacks", params={"abordado": "false"})).json()
     assert nao["total"] == 2
     assert all(i["abordado"] is False for i in nao["items"])
+
+
+@pytest.mark.asyncio
+async def test_feedbacks_filtro_abordado_periodo(client, org, session):
+    """?abordado_periodo recorta os já abordados por carimbo `abordado_em`."""
+    ana = Contact(organization_id=org.id, phone="5531900000009", name="Ana", opt_in=True, profile_data={})
+    session.add(ana)
+    await session.flush()
+
+    agora = datetime.now(timezone.utc)
+    dez_dias = agora - timedelta(days=10)
+    await _make_feedback(
+        session, org, contact=ana, type="nps", score=3, text="hoje",
+        external_id="ap1", abordado=True, abordado_em=agora,
+    )
+    await _make_feedback(
+        session, org, contact=ana, type="nps", score=4, text="antigo",
+        external_id="ap2", abordado=True, abordado_em=dez_dias,
+    )
+
+    so_hoje = (await client.get("/api/feedbacks", params={"abordado_periodo": "hoje"})).json()
+    assert so_hoje["total"] == 1
+    assert {i["text"] for i in so_hoje["items"]} == {"hoje"}
+
+    ultimos_30 = (await client.get("/api/feedbacks", params={"abordado_periodo": "30d"})).json()
+    assert ultimos_30["total"] == 2
+    assert {i["text"] for i in ultimos_30["items"]} == {"hoje", "antigo"}
 
 
 # --- DELETE /api/feedbacks/{id} ----------------------------------------------

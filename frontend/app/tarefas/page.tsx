@@ -7,6 +7,7 @@ import { healthCell } from "@/components/HealthCell";
 import AbordarModal, { waIcon, type AbordarTarget } from "@/components/AbordarModal";
 import {
   api,
+  tarefas as tarefasApi,
   type Tarefa,
   type TarefaCounts,
   type TarefaPriority,
@@ -18,26 +19,24 @@ const PAGE_SIZE = 50;
 
 const EMPTY_COUNTS: TarefaCounts = { aberta: 0, em_andamento: 0, concluida: 0, adiada: 0 };
 
-const STATUS_OPTIONS: { value: TarefaStatus; label: string }[] = [
-  { value: "aberta", label: "Aberta" },
-  { value: "em_andamento", label: "Em andamento" },
-  { value: "concluida", label: "Concluída" },
-  { value: "adiada", label: "Adiada" },
+/** Abas por status (espelha o padrão de status-tabs do inbox de Feedbacks). */
+const STATUS_TABS: { key: TarefaStatus; label: string }[] = [
+  { key: "aberta", label: "Aberta" },
+  { key: "em_andamento", label: "Em andamento" },
+  { key: "concluida", label: "Concluída" },
+  { key: "adiada", label: "Adiada" },
 ];
+
+const STATUS_OPTIONS: { value: TarefaStatus; label: string }[] = STATUS_TABS.map((s) => ({
+  value: s.key,
+  label: s.label,
+}));
 
 const STATUS_LABEL: Record<TarefaStatus, string> = {
   aberta: "Aberta",
   em_andamento: "Em andamento",
   concluida: "Concluída",
   adiada: "Adiada",
-};
-
-/** Classe de badge por status (reusa a paleta de badges do globals.css). */
-const STATUS_BADGE: Record<TarefaStatus, string> = {
-  aberta: "open",
-  em_andamento: "passive",
-  concluida: "promoter",
-  adiada: "neutral",
 };
 
 const PRIORITY_OPTIONS: { value: TarefaPriority; label: string }[] = [
@@ -54,10 +53,14 @@ const PRIORITY_LABEL: Record<TarefaPriority, string> = {
   urgente: "Urgente",
 };
 
-/** Badge de prioridade — urgente/alta puxam vermelho, normal neutro, baixa apagado. */
+/** Badge de prioridade — urgente/alta puxam vermelho, normal/baixa neutro. */
 function priorityBadge(p: TarefaPriority) {
-  const cls = p === "urgente" || p === "alta" ? "detractor" : p === "normal" ? "neutral" : "neutral";
-  return <span className={`badge ${cls}`} title={`Prioridade ${PRIORITY_LABEL[p]}`}>{PRIORITY_LABEL[p]}</span>;
+  const cls = p === "urgente" || p === "alta" ? "detractor" : "neutral";
+  return (
+    <span className={`badge ${cls}`} title={`Prioridade ${PRIORITY_LABEL[p]}`}>
+      {PRIORITY_LABEL[p]}
+    </span>
+  );
 }
 
 /** Rótulo legível do gatilho que originou a tarefa (lido de `meta.trigger_type`). */
@@ -121,6 +124,7 @@ function TarefaRow({
   onAbordar: (t: Tarefa) => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const now = useMemo(() => new Date(), []);
   const triggerType = (t.meta?.trigger_type as string | undefined) ?? null;
 
@@ -128,13 +132,16 @@ function TarefaRow({
     const prev = t.status;
     if (next === prev) return;
     setSaving(true);
+    setError(null);
     const optimistic: Tarefa = { ...t, status: next };
     onPatched(optimistic, prev);
     try {
       const updated = await api.patch<Tarefa>(`/api/tarefas/${t.id}`, { status: next });
-      onPatched(updated, prev);
-    } catch {
+      // O PATCH não devolve feedback_preview — preserva o que já tínhamos do GET.
+      onPatched({ ...updated, feedback_preview: updated.feedback_preview ?? t.feedback_preview }, prev);
+    } catch (e) {
       onPatched(t, prev); // reverte
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -170,9 +177,28 @@ function TarefaRow({
               <span className="badge type">{TRIGGER_LABEL[triggerType] ?? triggerType}</span>
             )}
             {priorityBadge(t.priority)}
+            {t.feedback_id && (
+              <span className="badge neutral" title="Tarefa nasceu de um feedback do cliente">
+                {"\u{1F4AC}"} do feedback
+              </span>
+            )}
           </div>
           {t.reason && (
             <span className="dim" style={{ fontSize: 12 }}>{t.reason}</span>
+          )}
+          {/* Trecho do feedback vinculado (quando houver) — fecha o loop com a dor real. */}
+          {t.feedback_preview && (
+            <span
+              className="dim"
+              style={{
+                fontSize: 12, fontStyle: "italic",
+                borderLeft: "2px solid var(--charcoal-2)", paddingLeft: 8, marginTop: 2,
+                color: "var(--text-dim)", textWrap: "pretty",
+              }}
+              title={t.feedback_preview}
+            >
+              {"\u{201C}"}{t.feedback_preview}{"\u{201D}"}
+            </span>
           )}
         </div>
       </td>
@@ -180,7 +206,7 @@ function TarefaRow({
         {t.playbook_id ? (
           <span className="chip">{t.playbook_nome || "playbook"}</span>
         ) : (
-          <span className="faint" title="Tarefa criada manualmente">manual</span>
+          <span className="faint" title="Tarefa criada manualmente ou gerada de feedback">manual</span>
         )}
       </td>
       <td className="dim">{t.owner || <span className="faint">—</span>}</td>
@@ -202,6 +228,11 @@ function TarefaRow({
             <option key={s.value} value={s.value}>{s.label}</option>
           ))}
         </select>
+        {error && (
+          <div className="badge detractor" title={error} style={{ marginTop: 6 }}>
+            erro ao salvar
+          </div>
+        )}
       </td>
       <td>
         <button
@@ -233,7 +264,12 @@ export default function TarefasPage() {
   const [owner, setOwner] = useState("");
   const [priority, setPriority] = useState<TarefaPriority | "">("");
   const [sort, setSort] = useState<"prioridade" | "recente" | "sla">("prioridade");
+  // Busca por contato (nome/WhatsApp) + título/motivo — client-side por cima do lote.
   const [search, setSearch] = useState("");
+
+  // "Gerar tarefas das dores"
+  const [gerando, setGerando] = useState(false);
+  const [flash, setFlash] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   // overlay de abordagem
   const [abordando, setAbordando] = useState<Tarefa | null>(null);
@@ -302,6 +338,50 @@ export default function TarefasPage() {
     }
   }
 
+  /** Gera tarefas a partir das dores (feedbacks churn + negativo sem tarefa) e recarrega. */
+  async function gerarDasDores() {
+    if (gerando) return;
+    setGerando(true);
+    setFlash(null);
+    try {
+      const res = await tarefasApi.gerarDeFeedbacks({ tipo: "churn", sentimento: "negativo" });
+      if (res.criadas > 0) {
+        const plural = res.criadas === 1 ? "tarefa criada" : "tarefas criadas";
+        const extra =
+          res.ja_existiam > 0
+            ? ` (${res.ja_existiam} ${res.ja_existiam === 1 ? "feedback já tinha" : "feedbacks já tinham"} tarefa).`
+            : ".";
+        setFlash({
+          kind: "ok",
+          text: `${"\u{2705}"} ${res.criadas} ${plural} a partir das dores${extra}`,
+        });
+      } else if (res.ja_existiam > 0) {
+        setFlash({
+          kind: "ok",
+          text: `${"\u{1F44D}"} Nada novo: as dores recentes (cancelamento + negativo) já viraram tarefa.`,
+        });
+      } else {
+        setFlash({
+          kind: "ok",
+          text: `${"\u{1F44C}"} Nenhuma dor de cancelamento negativa pendente no momento.`,
+        });
+      }
+      // Mostra as recém-criadas no topo: volta para "Todas" + ordena por mais recentes.
+      if (res.criadas > 0) {
+        setStatus("");
+        setSort("recente");
+      }
+      await load();
+    } catch (e) {
+      setFlash({
+        kind: "err",
+        text: `Não consegui gerar as tarefas (${e instanceof Error ? e.message : String(e)}).`,
+      });
+    } finally {
+      setGerando(false);
+    }
+  }
+
   const onPatched = useCallback((updated: Tarefa, previousStatus: TarefaStatus) => {
     setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
     if (updated.status !== previousStatus) {
@@ -319,12 +399,12 @@ export default function TarefasPage() {
     [items],
   );
 
-  // Busca client-side (cliente/título/motivo) por cima do que veio do backend.
+  // Busca client-side (contato/título/motivo) por cima do que veio do backend.
   const q = search.trim().toLowerCase();
   const visible = useMemo(() => {
     if (!q) return items;
     return items.filter((t) =>
-      [t.contato_nome, t.contato_whatsapp, t.title, t.reason, t.owner]
+      [t.contato_nome, t.contato_whatsapp, t.title, t.reason, t.owner, t.feedback_preview]
         .filter(Boolean)
         .some((v) => (v as string).toLowerCase().includes(q)),
     );
@@ -357,11 +437,27 @@ export default function TarefasPage() {
         <div>
           <h1 className="page-title">Tarefas</h1>
           <div className="page-sub">
-            Fila priorizada de CS — contas a abordar hoje, geradas pelos playbooks ou criadas à mão
+            Fila priorizada de CS — contas a abordar hoje, geradas pelos playbooks, criadas à mão ou puxadas das dores
           </div>
         </div>
-        {!loading && <span className="refresh-note">{total} no total</span>}
+        <div className="page-head-actions">
+          {!loading && <span className="refresh-note">{total} no total</span>}
+          <button
+            type="button"
+            className="btn"
+            onClick={gerarDasDores}
+            disabled={gerando}
+            title="Cria tarefas a partir dos feedbacks de cancelamento negativos que ainda não viraram tarefa"
+          >
+            <span aria-hidden>{"\u{1F525}"}</span>{" "}
+            {gerando ? "Gerando…" : "Gerar tarefas das dores"}
+          </button>
+        </div>
       </div>
+
+      {flash && (
+        <div className={`flash ${flash.kind === "ok" ? "ok" : "err"}`}>{flash.text}</div>
+      )}
 
       {/* KPIs */}
       <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
@@ -384,22 +480,38 @@ export default function TarefasPage() {
         </div>
       </div>
 
+      {/* Abas por status, com contagens de counts_by_status */}
+      <div className="status-tabs">
+        <button
+          type="button"
+          className={`status-tab ${status === "" ? "active" : ""}`}
+          onClick={() => setStatus("")}
+        >
+          Todas
+        </button>
+        {STATUS_TABS.map((s) => (
+          <button
+            type="button"
+            key={s.key}
+            className={`status-tab ${status === s.key ? "active" : ""}`}
+            onClick={() => setStatus(s.key)}
+          >
+            {s.label}
+            <span className="tab-count">{counts[s.key] ?? 0}</span>
+          </button>
+        ))}
+      </div>
+
       {/* Toolbar de filtros */}
       <div className="toolbar">
         <label className="search">
-          <span className="ico">🔍</span>
+          <span className="ico">{"\u{1F50D}"}</span>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por cliente, tarefa, motivo…"
+            placeholder="Buscar por contato, tarefa, motivo…"
           />
         </label>
-        <select value={status} onChange={(e) => setStatus(e.target.value as TarefaStatus | "")} aria-label="Filtrar por status">
-          <option value="">Todos os status</option>
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s.value} value={s.value}>{s.label}</option>
-          ))}
-        </select>
         <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Filtrar por dono">
           <option value="">Todos os donos</option>
           {ownerOptions.map((o) => (
@@ -433,7 +545,7 @@ export default function TarefasPage() {
               <tr>
                 <th>Cliente</th>
                 <th>Saúde</th>
-                <th>Motivo</th>
+                <th>Tarefa</th>
                 <th>Playbook</th>
                 <th>Dono</th>
                 <th>SLA</th>
@@ -446,12 +558,29 @@ export default function TarefasPage() {
                 <tr>
                   <td colSpan={8}>
                     <div className="empty">
-                      <div className="big">✅</div>
+                      <div className="big">{"\u{2705}"}</div>
                       {loading
                         ? "Carregando…"
+                        : status
+                        ? `Nenhuma tarefa em "${STATUS_LABEL[status as TarefaStatus]}".`
                         : hasFilters
                         ? "Nenhuma tarefa bate com os filtros."
-                        : "Fila vazia — nenhuma tarefa pendente 🎉"}
+                        : (
+                          <>
+                            Fila vazia — nenhuma tarefa pendente.
+                            <div className="empty-cta">
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={gerarDasDores}
+                                disabled={gerando}
+                              >
+                                <span aria-hidden>{"\u{1F525}"}</span>{" "}
+                                {gerando ? "Gerando…" : "Gerar tarefas das dores"}
+                              </button>
+                            </div>
+                          </>
+                        )}
                     </div>
                   </td>
                 </tr>

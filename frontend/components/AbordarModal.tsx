@@ -3,12 +3,17 @@
 import { useId, useState } from "react";
 import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
+import { campanha } from "@/lib/api";
 import {
   fillTemplate,
   isCustom,
+  loadFormUrl,
+  loadOferta,
   loadSenderName,
   loadTemplates,
   saveCustomTemplates,
+  saveFormUrl,
+  saveOferta,
   saveSenderName,
   waLink,
   type MsgTemplate,
@@ -55,8 +60,15 @@ export default function AbordarModal({
   const [templates, setTemplates] = useState<MsgTemplate[]>(() => loadTemplates());
   const [tplId, setTplId] = useState(templates[0]?.id ?? "principal");
   const [seuNome, setSeuNome] = useState(() => loadSenderName());
+  const [oferta, setOferta] = useState(() => loadOferta());
+  const [formUrl, setFormUrl] = useState(() => loadFormUrl());
   const [msg, setMsg] = useState(() =>
-    fillTemplate(templates[0]?.body ?? "", { nome: target.contato_nome, seuNome: loadSenderName() }),
+    fillTemplate(templates[0]?.body ?? "", {
+      nome: target.contato_nome,
+      seuNome: loadSenderName(),
+      oferta: loadOferta(),
+      formUrl: loadFormUrl(),
+    }),
   );
   const [copied, setCopied] = useState(false);
   const [marcar, setMarcar] = useState(!target.abordado);
@@ -65,17 +77,46 @@ export default function AbordarModal({
   const phoneDigits = (target.contato_whatsapp || "").replace(/\D/g, "");
   const semWhats = phoneDigits.length < 8;
 
+  /** Recompõe a mensagem com o template atual e os valores informados. */
+  function recompose(over: {
+    id?: string;
+    seuNome?: string;
+    oferta?: string;
+    formUrl?: string;
+  }) {
+    const id = over.id ?? tplId;
+    const t = templates.find((x) => x.id === id);
+    setMsg(
+      fillTemplate(t?.body ?? "", {
+        nome: target.contato_nome,
+        seuNome: over.seuNome ?? seuNome,
+        oferta: over.oferta ?? oferta,
+        formUrl: over.formUrl ?? formUrl,
+      }),
+    );
+  }
+
   function pickTemplate(id: string) {
     setTplId(id);
-    const t = templates.find((x) => x.id === id);
-    setMsg(fillTemplate(t?.body ?? "", { nome: target.contato_nome, seuNome }));
+    recompose({ id });
   }
 
   function onSeuNome(v: string) {
     setSeuNome(v);
     saveSenderName(v);
-    const t = templates.find((x) => x.id === tplId);
-    setMsg(fillTemplate(t?.body ?? "", { nome: target.contato_nome, seuNome: v }));
+    recompose({ seuNome: v });
+  }
+
+  function onOferta(v: string) {
+    setOferta(v);
+    saveOferta(v);
+    recompose({ oferta: v });
+  }
+
+  function onFormUrl(v: string) {
+    setFormUrl(v);
+    saveFormUrl(v);
+    recompose({ formUrl: v });
   }
 
   async function copiar() {
@@ -108,6 +149,20 @@ export default function AbordarModal({
 
   function onOpenWhats() {
     if (marcar && podeMarcar) onMarcarAbordado?.();
+    // Registra o toque no histórico da campanha (best-effort — não bloqueia o
+    // abrir do WhatsApp nem trava o fluxo se a API estiver fora). O endpoint já
+    // marca abordado=true nos feedbacks do contato; aqui guardamos o que foi dito.
+    if (target.contato_id) {
+      campanha
+        .addOutreach(target.contato_id, {
+          canal: "whatsapp",
+          mensagem: msg,
+          oferta: oferta.trim() || null,
+        })
+        .catch(() => {
+          /* histórico é enriquecedor, nunca ponto de falha */
+        });
+    }
     onClose();
   }
 
@@ -144,6 +199,27 @@ export default function AbordarModal({
           </div>
         </div>
 
+        <div className="form-row-2">
+          <div className="field">
+            <label htmlFor={`${titleId}-oferta`}>Oferta {"{oferta}"}</label>
+            <input
+              id={`${titleId}-oferta`}
+              value={oferta}
+              onChange={(e) => onOferta(e.target.value)}
+              placeholder="ex.: 3 meses grátis"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor={`${titleId}-form`}>Link do formulário {"{form_url}"}</label>
+            <input
+              id={`${titleId}-form`}
+              value={formUrl}
+              onChange={(e) => onFormUrl(e.target.value)}
+              placeholder="ex.: https://forms.gle/…"
+            />
+          </div>
+        </div>
+
         <div className="field">
           <label htmlFor={`${titleId}-msg`}>Mensagem (edite à vontade)</label>
           <textarea
@@ -162,7 +238,7 @@ export default function AbordarModal({
               </button>
             )}
             <button type="button" className="btn ghost sm" onClick={copiar}>
-              {copied ? "Copiado ✓" : "Copiar"}
+              {copied ? "Copiado!" : "Copiar"}
             </button>
           </div>
         </div>

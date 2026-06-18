@@ -37,3 +37,6 @@ docs/campanhas/mensagens-churn-mensal.md
 
 # Artefato de build do TypeScript
 frontend/tsconfig.tsbuildinfo
+
+# Transcripts de sessão (centenas de KB; podem conter trechos sensíveis) — não versionar
+docs/historico/

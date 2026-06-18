@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Churn Mensal — Abordagem (Escuta)</title>
+<style>
+  :root{
+    --ink:#16161d; --muted:#6b7570; --faint:#98a19c; --line:#e7e4dc;
+    --paper:#f7f6f2; --card:#fff; --wa:#25d366; --wa-d:#15a34a;
+    --rapido:#dc2626; --posuso:#d97706; --outro:#6b7570; --invol:#9aa0ad; --expira:#6C5CE7;
+    --shadow:0 1px 2px rgba(18,38,30,.05),0 4px 16px rgba(18,38,30,.06);
+    --font:"Segoe UI",system-ui,-apple-system,sans-serif; --mono:"Consolas",ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;} html,body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);}
+  .wrap{max-width:960px;margin:0 auto;padding:26px 18px 60px;}
+  header h1{font-size:22px;font-weight:800;margin:0;letter-spacing:-.3px;}
+  header .sub{color:var(--muted);font-size:13px;margin-top:3px;}
+  .stats{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 6px;}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 13px;box-shadow:var(--shadow);}
+  .stat b{font-size:18px;font-weight:800;display:block;} .stat span{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px;}
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0 18px;position:sticky;top:0;background:var(--paper);padding:8px 0;z-index:5;}
+  .chip{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:6px 13px;font-size:12.5px;font-weight:600;cursor:pointer;color:var(--muted);}
+  .chip.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .toolbar label{font-size:12.5px;color:var(--muted);margin-left:auto;display:flex;align-items:center;gap:6px;cursor:pointer;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);padding:15px 17px;margin-bottom:12px;border-left:4px solid var(--outro);}
+  .card.p-churn_rapido{border-left-color:var(--rapido);} .card.p-churn_pos_uso{border-left-color:var(--posuso);}
+  .card.p-churn_outro{border-left-color:var(--outro);} .card.p-churn_involuntario{border-left-color:var(--invol);}
+  .card.p-vai_expirar{border-left-color:var(--expira);}
+  .card.done{opacity:.5;}
+  .c-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap;}
+  .c-nome{font-weight:800;font-size:15.5px;}
+  .badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;}
+  .b-churn_rapido{background:#fdeaea;color:#b91c1c;} .b-churn_pos_uso{background:#fdf1e0;color:#a85b05;}
+  .b-churn_outro{background:#eef0ee;color:#5a665f;} .b-churn_involuntario{background:#f0f1f3;color:#7a818c;}
+  .b-vai_expirar{background:#efeafd;color:#4b3fc0;}
+  .badge.obj{background:#eaf6ef;color:#137a39;font-weight:600;}
+  .c-when{margin-left:auto;font-size:12px;color:var(--faint);white-space:nowrap;}
+  .meta{display:flex;flex-wrap:wrap;gap:5px 16px;margin-top:9px;font-size:12.5px;color:var(--muted);}
+  .meta b{color:var(--ink);font-weight:600;}
+  .nps{margin-top:9px;font-size:13px;background:#faf9f5;border:1px solid var(--line);border-radius:8px;padding:8px 11px;}
+  .nps .sc{font-weight:800;} .nps .sc.lo{color:var(--rapido);} .nps .sc.mid{color:var(--posuso);} .nps .sc.hi{color:var(--wa-d);}
+  .msg{margin-top:11px;}
+  .msg textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-family:inherit;font-size:13px;color:var(--ink);background:#fdfcfa;resize:vertical;min-height:62px;line-height:1.45;}
+  .actions{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap;}
+  .btn{display:inline-flex;align-items:center;gap:6px;border:none;border-radius:9px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;}
+  .btn.wa{background:var(--wa);color:#053a1f;} .btn.wa:hover{background:var(--wa-d);color:#fff;}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);} .btn.ghost:hover{background:#f3f1ea;}
+  .btn.done-btn{background:#eef0ee;color:#5a665f;}
+  .noc{margin-top:10px;font-size:12.5px;color:var(--faint);background:#f6f6f6;border-radius:8px;padding:8px 11px;}
+  .empty{text-align:center;color:var(--faint);padding:50px 20px;font-size:14px;}
+  .hidden{display:none;}
+  .badge.selo{background:#efeafd;color:#4b3fc0;}
+  .coleta{margin-top:12px;border-top:1px dashed var(--line);padding-top:11px;}
+  .rot-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--faint);margin-bottom:5px;}
+  .rot{margin:0 0 9px;padding-left:20px;font-size:13px;color:var(--ink);line-height:1.7;}
+  .oferta{font-size:12.5px;color:var(--muted);background:#faf9f5;border:1px solid var(--line);border-radius:8px;padding:7px 11px;margin-bottom:9px;}
+  .notas{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-family:inherit;font-size:13px;background:#fffef9;min-height:54px;resize:vertical;}
+  .qa{display:flex;flex-direction:column;gap:6px;margin-top:4px;}
+  .q{width:100%;border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-family:inherit;font-size:13px;background:#fffef9;}
+  .q:focus{outline:none;border-color:var(--wa-d);}
+  .flags{display:flex;gap:16px;margin-top:8px;font-size:12.5px;color:var(--muted);flex-wrap:wrap;}
+  .flags label{display:flex;align-items:center;gap:6px;cursor:pointer;}
+  .flags input{accent-color:var(--wa-d);width:15px;height:15px;}
+  footer{margin-top:24px;font-size:11.5px;color:var(--faint);text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Abordagem — Churn 🔴</h1>
+    <div class="sub">Quem pediu cancelamento (todos os planos). Objetivo: <b>entender o porquê</b> e abrir reativação. Um a um, no WhatsApp.</div>
+  </header>
+  <div class="stats" id="stats"></div>
+  <div class="toolbar" id="toolbar"></div>
+  <div id="list"></div>
+  <div id="empty" class="empty hidden">Nenhum cliente neste filtro. 🎉</div>
+  <footer>Gerado pelo Escuta · contém dados pessoais — não compartilhe este arquivo.</footer>
+</div>
+
+<script>
+/*__CLIENTES__*/
+
+const PERFIL_LABEL = {churn_rapido:"Cancelou cedo", churn_pos_uso:"Usou e parou", churn_outro:"Outro motivo", churn_involuntario:"Pagamento falhou", vai_expirar:"Vai expirar"};
+const OBJ_LABEL = {entender_inicio:"Entender o início", entender_parada:"Por que parou", entender:"Entender", nao_contatar:"Não contatar", reter:"Reter"};
+const CLIENTES = (window.CLIENTES || []).map((c,i)=>({...c, _id: c.whatsapp || c.email || ('i'+i)}));
+
+const LS_KEY = "churn_mensal_contatados_v1";
+const done = new Set(JSON.parse(localStorage.getItem(LS_KEY) || "[]"));
+function saveDone(){ localStorage.setItem(LS_KEY, JSON.stringify([...done])); }
+const notas = JSON.parse(localStorage.getItem("churn_notas_v1") || "{}");
+function saveNotas(){ localStorage.setItem("churn_notas_v1", JSON.stringify(notas)); }
+
+let filtroPerfil = "todos";
+let ocultarFeitos = false;
+
+function npsClass(s){ if(s===null||s===undefined) return ""; if(s<=6) return "lo"; if(s<=8) return "mid"; return "hi"; }
+function esc(s){ return (s||"").replace(/[&<>"]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+
+function renderStats(){
+  const total = CLIENTES.length;
+  const contataveis = CLIENTES.filter(c=>c.should_contact && c.mensagem_sugerida).length;
+  const feitos = CLIENTES.filter(c=>done.has(c._id)).length;
+  const exPromo = CLIENTES.filter(c=>c.ex_promotor).length;
+  const porPerfil = {};
+  CLIENTES.forEach(c=>porPerfil[c.perfil]=(porPerfil[c.perfil]||0)+1);
+  let h = `<div class="stat"><b>${total}</b><span>em churn</span></div>`+
+          `<div class="stat"><b>${contataveis}</b><span>contatáveis</span></div>`+
+          `<div class="stat"><b>${exPromo}</b><span>♻️ reativação quente</span></div>`+
+          `<div class="stat"><b>${feitos}</b><span>já contatei</span></div>`;
+  Object.entries(porPerfil).sort((a,b)=>b[1]-a[1]).forEach(([p,n])=>{
+    h += `<div class="stat"><b>${n}</b><span>${PERFIL_LABEL[p]||p}</span></div>`;
+  });
+  document.getElementById("stats").innerHTML = h;
+}
+
+function renderToolbar(){
+  const perfis = ["todos", ...new Set(CLIENTES.map(c=>c.perfil))];
+  let h = perfis.map(p=>`<span class="chip ${p===filtroPerfil?'on':''}" data-p="${p}">${p==='todos'?'Todos':(PERFIL_LABEL[p]||p)}</span>`).join("");
+  h += `<button class="btn ghost" id="exportBtn" title="Baixa o que você anotou (.json) para o import_abordagens.py levar à central">📤 Exportar p/ central</button>`;
+  h += `<label><input type="checkbox" id="hideDone" ${ocultarFeitos?'checked':''}> ocultar quem já contatei</label>`;
+  const tb = document.getElementById("toolbar");
+  tb.innerHTML = h;
+  tb.querySelectorAll(".chip").forEach(el=>el.onclick=()=>{ filtroPerfil=el.dataset.p; render(); });
+  document.getElementById("hideDone").onchange = e=>{ ocultarFeitos=e.target.checked; render(); };
+  document.getElementById("exportBtn").onclick = exportarCentral;
+}
+
+// Fecha o loop: baixa as anotações (motivo/faltou/voltaria + flags) no formato que
+// scripts/import_abordagens.py ingere na mega central.
+function exportarCentral(){
+  const out = [];
+  CLIENTES.forEach(c=>{
+    const st = notas[c._id]; if(!st) return;
+    const flags = {quer_call: !!st.quer_call, audio: !!st.audio, reativavel: !!st.reativavel};
+    const temTexto = [st.motivo, st.faltou, st.voltaria].some(x=>(x||"").trim());
+    if(!temTexto && !flags.quer_call && !flags.audio && !flags.reativavel) return;
+    out.push({
+      whatsapp: c.whatsapp || "", nome: c.nome_completo || c.nome || "",
+      motivo: (st.motivo||"").trim(), faltou: (st.faltou||"").trim(), voltaria: (st.voltaria||"").trim(),
+      flags, abordado_em: new Date().toISOString(),
+    });
+  });
+  if(!out.length){ alert("Nada anotado ainda — preencha as respostas dos clientes primeiro."); return; }
+  const blob = new Blob([JSON.stringify(out, null, 2)], {type:"application/json"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = "abordagens-export.json"; a.click(); URL.revokeObjectURL(a.href);
+}
+
+function card(c){
+  const isDone = done.has(c._id);
+  const waText = encodeURIComponent(c.mensagem_sugerida || "");
+  const npsBlock = c.nps_votou ? `<div class="nps">NPS prévio: <span class="sc ${npsClass(c.nps_score)}">${c.nps_score ?? '—'}/10</span>${c.nps_comment?` — "${esc(c.nps_comment)}"`:""}</div>` : "";
+  const meses = c.meses_de_casa!=null ? `${c.meses_de_casa} ${c.meses_de_casa===1?'mês':'meses'} de casa` : "";
+  const metaParts = [
+    c.plano?`Plano: <b>${esc(c.plano)}</b>`:"",
+    c.motivo_label?`Motivo: <b>${esc(c.motivo_label)}</b>`:"",
+    c.cancelou_em?`Cancelou em <b>${c.cancelou_em}</b>`:"",
+    meses?`<b>${meses}</b>`:"",
+    c.total_pago?`Pagou <b>${c.total_pago}</b>`:"",
+  ].filter(Boolean).join("");
+
+  let acao;
+  if(c.mensagem_sugerida && c.should_contact){
+    acao = `<div class="msg"><textarea>${esc(c.mensagem_sugerida)}</textarea></div>`+
+      `<div class="actions">`+
+      `<a class="btn wa" href="https://wa.me/${c.whatsapp}?text=${waText}" target="_blank" rel="noopener">💬 Abrir WhatsApp</a>`+
+      `<button class="btn ghost" data-act="copy">Copiar mensagem</button>`+
+      `<button class="btn ${isDone?'done-btn':'ghost'}" data-act="done">${isDone?'✓ Contatei':'Marcar contatado'}</button>`+
+      `</div>`;
+  } else {
+    acao = `<div class="noc">⚠️ <b>Não contatar:</b> pagamento falhou (involuntário) — esse cliente já recebe winback por e-mail do backend. Contatar por aqui = double-touch.</div>`;
+  }
+
+  const selo = c.ex_promotor ? `<span class="badge selo">♻️ Reativação quente</span>` : "";
+  let coleta = "";
+  if(c.mensagem_sugerida && c.should_contact){
+    coleta = `<div class="coleta">`+
+      `<div class="rot-title">Roteiro da conversa</div>`+
+      `<ol class="rot">`+(c.roteiro||[]).map(q=>`<li>${esc(q)}</li>`).join("")+`</ol>`+
+      `<div class="oferta">💡 Ofereça: <b>"te chamo numa call rápida de 10 min"</b> ou <b>"me manda um áudio 🎙️"</b>.</div>`+
+      `<div class="qa">`+
+        `<input class="q" data-q="motivo" placeholder="1. Por que cancelou?">`+
+        `<input class="q" data-q="faltou" placeholder="2. O que faltou pra valer a pena?">`+
+        `<input class="q" data-q="voltaria" placeholder="3. O que faria você voltar?">`+
+      `</div>`+
+      `<div class="flags">`+
+        `<label><input type="checkbox" data-flag="quer_call"> quer call</label>`+
+        `<label><input type="checkbox" data-flag="audio"> mandou áudio</label>`+
+        `<label><input type="checkbox" data-flag="reativavel"> disse que voltaria</label>`+
+      `</div></div>`;
+  }
+  return `<div class="card p-${c.perfil} ${isDone?'done':''}" data-id="${c._id}">`+
+    `<div class="c-top"><span class="c-nome">${esc(c.nome_completo||c.nome||'Cliente')}</span>`+
+    `<span class="badge b-${c.perfil}">${PERFIL_LABEL[c.perfil]||c.perfil}</span>`+selo+
+    `<span class="badge obj">${OBJ_LABEL[c.objetivo]||c.objetivo}</span>`+
+    `<span class="c-when">${c.whatsapp?('📱 '+c.whatsapp):''}</span></div>`+
+    `<div class="meta">${metaParts}</div>${npsBlock}${acao}${coleta}</div>`;
+}
+
+function render(){
+  renderStats();
+  let rows = CLIENTES.filter(c=> filtroPerfil==="todos" || c.perfil===filtroPerfil);
+  if(ocultarFeitos) rows = rows.filter(c=>!done.has(c._id));
+  // já vem ordenado por prioridade; manda os contatados pro fim
+  rows.sort((a,b)=> (done.has(a._id)-done.has(b._id)) || (b.prioridade-a.prioridade));
+  const list = document.getElementById("list");
+  document.getElementById("empty").classList.toggle("hidden", rows.length>0);
+  list.innerHTML = rows.map(card).join("");
+  list.querySelectorAll(".card").forEach(el=>{
+    const c = CLIENTES.find(x=>x._id===el.dataset.id);
+    const copyBtn = el.querySelector('[data-act="copy"]');
+    if(copyBtn) copyBtn.onclick=()=>{ navigator.clipboard.writeText(c.mensagem_sugerida||""); copyBtn.textContent="Copiado ✓"; setTimeout(()=>copyBtn.textContent="Copiar mensagem",1200); };
+    const doneBtn = el.querySelector('[data-act="done"]');
+    if(doneBtn) doneBtn.onclick=()=>{ if(done.has(c._id)) done.delete(c._id); else done.add(c._id); saveDone(); render(); };
+    const qs = el.querySelectorAll(".q");
+    if(qs.length || el.querySelector('[data-flag]')){
+      const st = notas[c._id] || {};
+      qs.forEach(inp=>{
+        inp.value = st[inp.dataset.q] || "";
+        inp.onchange = ()=>{ notas[c._id] = {...(notas[c._id]||{}), [inp.dataset.q]: inp.value}; saveNotas(); };
+      });
+      el.querySelectorAll('[data-flag]').forEach(cb=>{
+        cb.checked = !!st[cb.dataset.flag];
+        cb.onchange = ()=>{ notas[c._id] = {...(notas[c._id]||{}), [cb.dataset.flag]: cb.checked}; saveNotas(); };
+      });
+    }
+  });
+}
+
+renderToolbar();
+render();
+</script>
+</body>
+</html>

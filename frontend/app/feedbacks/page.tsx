@@ -14,16 +14,50 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import AbordarModal, { waIcon } from "@/components/AbordarModal";
 import {
   api,
+  campanha as campanhaApi,
   type Cliente,
+  type EstadoAssinatura,
   type Feedback,
   type FeedbackCounts,
   type FeedbackInput,
   type FeedbackPatch,
   type FeedbackStatus,
   type FeedbacksResponse,
+  type NpsBucket,
+  type TemWhatsappFiltro,
 } from "@/lib/api";
 
 const PAGE_SIZE = 25;
+
+/** Estados de assinatura oferecidos no filtro "por tipo de cliente" (partner.subscription.state). */
+const ESTADO_OPTIONS: { value: EstadoAssinatura; label: string }[] = [
+  { value: "active_paying", label: "Pagando (ativo)" },
+  { value: "past_due", label: "Em atraso" },
+  { value: "paid_without_access", label: "Pago sem acesso" },
+  { value: "complimentary", label: "Cortesia" },
+  { value: "cancelled", label: "Cancelado" },
+];
+
+/** Perfis de feedback (partner.profile) — taxonomia estável da segmentação Bizzu. */
+const PERFIL_OPTIONS: { value: string; label: string }[] = [
+  { value: "embaixador", label: "Embaixador" },
+  { value: "ativo_promotor", label: "Ativo promotor" },
+  { value: "ativo_passivo", label: "Ativo passivo" },
+  { value: "ativo_em_risco", label: "Ativo em risco" },
+  { value: "ativo_recente", label: "Ativo recente" },
+  { value: "ativo_silencioso", label: "Ativo silencioso" },
+  { value: "ativo_fiel", label: "Ativo fiel" },
+  { value: "cortesia", label: "Cortesia" },
+  { value: "vai_expirar", label: "Vai expirar" },
+  { value: "churn_pos_uso", label: "Churn pós-uso" },
+  { value: "churn_rapido", label: "Churn rápido" },
+  { value: "churn_involuntario", label: "Churn involuntário" },
+  { value: "churn_outro", label: "Churn outro" },
+  { value: "indefinido", label: "Indefinido" },
+];
+
+/** Selos de campanha win-back sugeridos no controle "+ selo" do card. */
+const SELOS_CAMPANHA = ["contatado", "respondeu", "cortesia", "reativou"];
 
 const STATUS_TABS: { key: FeedbackStatus; label: string }[] = [
   { key: "novo", label: "Novo" },
@@ -584,6 +618,118 @@ function CreateFeedbackModal({
   );
 }
 
+// ===== Selos de campanha do contato (chips + aplicar direto no card) =========
+
+function SeloControl({
+  fb,
+  onSelosChanged,
+}: {
+  fb: Feedback;
+  onSelosChanged: (selos: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  // Sem contato não há onde aplicar selo.
+  if (!fb.contato_id) return null;
+  const contatoId = fb.contato_id;
+  // A API pode não devolver `selos` (feedbacks antigos / antes do backend novo) — defensivo.
+  const selosFb = fb.selos ?? [];
+
+  const disponiveis = SELOS_CAMPANHA.filter((s) => !selosFb.includes(s));
+
+  async function aplicar(nome: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const out = await campanhaApi.applySelo(contatoId, { nome });
+      onSelosChanged(out.selos);
+      setOpen(false);
+    } catch {
+      /* erro silencioso — o operador tenta de novo */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remover(nome: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const out = await campanhaApi.removeSeloFromContact(contatoId, nome);
+      // O DELETE responde { selos }; tipamos como unknown no helper, então normalizamos.
+      const selos = (out as { selos?: string[] })?.selos;
+      onSelosChanged(Array.isArray(selos) ? selos : selosFb.filter((s) => s !== nome));
+    } catch {
+      /* erro silencioso */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fb-selos" ref={boxRef}>
+      {selosFb.map((nome) => (
+        <span key={nome} className="selo-chip">
+          <span className="selo-dot" style={{ background: "var(--indigo)" }} />
+          {nome}
+          <button
+            type="button"
+            className="selo-x"
+            onClick={() => remover(nome)}
+            aria-label={`Remover selo ${nome}`}
+            disabled={busy}
+          >
+            {"\u{2715}"}
+          </button>
+        </span>
+      ))}
+      <button
+        type="button"
+        className="selo-add"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="Marcar selo de campanha"
+        disabled={busy}
+      >
+        {"\u{FF0B}"} selo
+      </button>
+      {open && (
+        <div className="selo-pop fb-selo-pop">
+          {disponiveis.length === 0 ? (
+            <div className="picker-empty">Todos os selos de campanha já aplicados.</div>
+          ) : (
+            <div className="selo-pop-list">
+              {disponiveis.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className="selo-pop-item"
+                  onClick={() => aplicar(s)}
+                  disabled={busy}
+                >
+                  <span className="selo-dot" style={{ background: "var(--indigo)" }} />
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== Card de um feedback ==================================================
 
 function FeedbackCard({
@@ -592,12 +738,14 @@ function FeedbackCard({
   onEdit,
   onDelete,
   onAbordar,
+  onSelosChanged,
 }: {
   fb: Feedback;
   onPatched: (updated: Feedback, previousStatus: FeedbackStatus) => void;
   onEdit: (fb: Feedback) => void;
   onDelete: (fb: Feedback) => void;
   onAbordar: (fb: Feedback) => void;
+  onSelosChanged: (id: string, selos: string[]) => void;
 }) {
   const [note, setNote] = useState(fb.action_note ?? "");
   const [saving, setSaving] = useState(false);
@@ -702,6 +850,8 @@ function FeedbackCard({
       )}
       {themeChips(fb.themes)}
 
+      <SeloControl fb={fb} onSelosChanged={(selos) => onSelosChanged(fb.id, selos)} />
+
       <div className="fb-actions">
         <span className="act-label">Status</span>
         <select value={fb.action_status} onChange={onStatusChange} disabled={saving}>
@@ -786,7 +936,21 @@ export default function FeedbacksPage() {
   const [sentiment, setSentiment] = useState("");
   const [source, setSource] = useState("");
   const [search, setSearch] = useState("");
-  const [abordado, setAbordado] = useState<"" | "sim" | "nao">("");
+  // Filtro "Abordado": um único estado. "" = todos; sim/nao viram ?abordado=true|false;
+  // hoje/7d/30d viram ?abordado_periodo=... (nunca os dois juntos).
+  const [abordado, setAbordado] = useState<
+    "" | "sim" | "nao" | "hoje" | "7d" | "30d"
+  >("");
+  // Filtro por selo de campanha do contato (status win-back no inbox).
+  const [selo, setSelo] = useState("");
+  // Filtros "por tipo de cliente" do AUTOR do feedback (snapshot partner do contato):
+  // estado da assinatura, plano (mensal/anual), perfil de segmentação, alcance no
+  // WhatsApp e faixa de NPS. Todos viram query params em /api/feedbacks.
+  const [estado, setEstado] = useState<EstadoAssinatura | "">("");
+  const [planType, setPlanType] = useState("");
+  const [perfil, setPerfil] = useState("");
+  const [temWhatsapp, setTemWhatsapp] = useState<TemWhatsappFiltro | "">("");
+  const [npsBucket, setNpsBucket] = useState<NpsBucket | "">("");
   // Deep-links da tela Temas (lidos da URL uma vez, no mount):
   // ?cluster_id=<id> (cluster de dores) e ?theme=<tag> (tema exato no JSONB).
   const [clusterId, setClusterId] = useState("");
@@ -816,7 +980,19 @@ export default function FeedbacksPage() {
       if (sentiment) qs.set("sentiment", sentiment);
       if (source) qs.set("source", source);
       if (search.trim()) qs.set("search", search.trim());
-      if (abordado) qs.set("abordado", abordado === "sim" ? "true" : "false");
+      if (abordado === "sim" || abordado === "nao") {
+        qs.set("abordado", abordado === "sim" ? "true" : "false");
+      } else if (abordado) {
+        // hoje | 7d | 30d → recorte "abordados por período" (já filtra abordado=true).
+        qs.set("abordado_periodo", abordado);
+      }
+      if (selo) qs.set("selo", selo);
+      // Filtros "por tipo de cliente" do autor (sobre o contato juntado).
+      if (estado) qs.set("estado", estado);
+      if (planType) qs.set("plan_type", planType);
+      if (perfil) qs.set("perfil", perfil);
+      if (temWhatsapp) qs.set("tem_whatsapp", temWhatsapp);
+      if (npsBucket) qs.set("nps_bucket", npsBucket);
       // Deep-links da tela Temas: cluster de dores e tema exato (filtro JSONB).
       if (clusterId) qs.set("cluster_id", clusterId);
       if (theme) qs.set("theme", theme);
@@ -824,7 +1000,11 @@ export default function FeedbacksPage() {
       qs.set("offset", String(offset));
       return qs.toString();
     },
-    [status, type, sentiment, source, search, abordado, clusterId, theme],
+    [
+      status, type, sentiment, source, search, abordado, selo,
+      estado, planType, perfil, temWhatsapp, npsBucket,
+      clusterId, theme,
+    ],
   );
 
   function normalize(raw: FeedbacksResponse | Feedback[]): {
@@ -903,6 +1083,16 @@ export default function FeedbacksPage() {
     setEditing(null);
   }, []);
 
+  /** Atualiza os selos do contato em TODOS os cards do mesmo contato (selo é do contato). */
+  const onSelosChanged = useCallback((id: string, selos: string[]) => {
+    setItems((prev) => {
+      const card = prev.find((it) => it.id === id);
+      const contatoId = card?.contato_id;
+      if (!contatoId) return prev.map((it) => (it.id === id ? { ...it, selos } : it));
+      return prev.map((it) => (it.contato_id === contatoId ? { ...it, selos } : it));
+    });
+  }, []);
+
   /** Insere um feedback novo no topo do feed e atualiza contagens. */
   const onCreated = useCallback((created: Feedback) => {
     setItems((prev) => [created, ...prev]);
@@ -933,7 +1123,11 @@ export default function FeedbacksPage() {
   // Quando filtramos por status, esconde cards que saíram do bucket após o PATCH.
   const visible = status ? items.filter((it) => it.action_status === status) : items;
   const hasMore = visible.length < total;
-  const hasFilters = !!(type || sentiment || source || search || abordado || clusterId || theme);
+  const hasFilters = !!(
+    type || sentiment || source || search || abordado || selo ||
+    estado || planType || perfil || temWhatsapp || npsBucket ||
+    clusterId || theme
+  );
 
   return (
     <div>
@@ -1006,12 +1200,73 @@ export default function FeedbacksPage() {
         </select>
         <select
           value={abordado}
-          onChange={(e) => setAbordado(e.target.value as "" | "sim" | "nao")}
+          onChange={(e) =>
+            setAbordado(
+              e.target.value as "" | "sim" | "nao" | "hoje" | "7d" | "30d",
+            )
+          }
           aria-label="Filtrar por abordado"
         >
           <option value="">Abordado: todos</option>
           <option value="nao">Não abordados</option>
           <option value="sim">Já abordados</option>
+          <option value="hoje">Abordados hoje</option>
+          <option value="7d">Últimos 7 dias</option>
+          <option value="30d">Últimos 30 dias</option>
+        </select>
+        <select value={selo} onChange={(e) => setSelo(e.target.value)} aria-label="Filtrar por selo de campanha">
+          <option value="">Todos os selos</option>
+          {SELOS_CAMPANHA.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select
+          value={estado}
+          onChange={(e) => setEstado(e.target.value as EstadoAssinatura | "")}
+          aria-label="Filtrar por estado da assinatura do cliente"
+        >
+          <option value="">Toda assinatura</option>
+          {ESTADO_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <select
+          value={planType}
+          onChange={(e) => setPlanType(e.target.value)}
+          aria-label="Filtrar por plano do cliente"
+        >
+          <option value="">Todos os planos</option>
+          <option value="mensal">Mensal</option>
+          <option value="anual">Anual</option>
+        </select>
+        <select
+          value={perfil}
+          onChange={(e) => setPerfil(e.target.value)}
+          aria-label="Filtrar por perfil do cliente"
+        >
+          <option value="">Todos os perfis</option>
+          {PERFIL_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <select
+          value={npsBucket}
+          onChange={(e) => setNpsBucket(e.target.value as NpsBucket | "")}
+          aria-label="Filtrar por faixa de NPS do cliente"
+        >
+          <option value="">Todo NPS</option>
+          <option value="promotor">Promotores</option>
+          <option value="neutro">Neutros</option>
+          <option value="detrator">Detratores</option>
+        </select>
+        <select
+          value={temWhatsapp}
+          onChange={(e) => setTemWhatsapp(e.target.value as TemWhatsappFiltro | "")}
+          aria-label="Filtrar por alcance no WhatsApp do cliente"
+        >
+          <option value="">Todo alcance</option>
+          <option value="sim">Com WhatsApp</option>
+          <option value="nao">Sem WhatsApp (só e-mail)</option>
         </select>
       </div>
 
@@ -1079,6 +1334,7 @@ export default function FeedbacksPage() {
               onEdit={setEditing}
               onDelete={setDeleting}
               onAbordar={setAbordando}
+              onSelosChanged={onSelosChanged}
             />
           ))}
         </div>

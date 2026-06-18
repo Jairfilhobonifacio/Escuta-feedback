@@ -13,8 +13,9 @@ por isso o default executa de verdade — use --dry-run para só inspecionar.
 
 Envs:
   DATABASE_URL        — Supabase do Escuta (postgresql+asyncpg://...), via .env
-  BIZZU_DATABASE_URL  — Postgres da Bizzu; default = dev local
-                        (postgresql://postgres:bizzu_dev_2026@localhost:5432/plataforma)
+  BIZZU_DATABASE_URL  — Postgres da Bizzu (obrigatória), ex.:
+                        postgresql://USER:SENHA@localhost:5432/plataforma
+                        Defina no .env / ambiente; sem default por conter senha.
 
 Uso:
     py scripts/sync_bizzu_contacts.py [--dry-run]
@@ -38,12 +39,24 @@ try:
 except Exception:
     pass
 
-BIZZU_DATABASE_URL = os.getenv(
-    "BIZZU_DATABASE_URL",
-    "postgresql://postgres:bizzu_dev_2026@localhost:5432/plataforma",
-)
-
 ORG_SLUG = "bizzu"
+
+
+def _bizzu_database_url() -> str:
+    """URL do Postgres da Bizzu, lida do ambiente (nunca hardcoded).
+
+    Sem default: a string contém credenciais. Defina BIZZU_DATABASE_URL no
+    .env ou no ambiente antes de rodar.
+    """
+    url = os.getenv("BIZZU_DATABASE_URL")
+    if not url:
+        raise SystemExit(
+            "ERRO: variável de ambiente BIZZU_DATABASE_URL não definida.\n"
+            "      Defina-a com a string de conexão do Postgres da Bizzu, ex.:\n"
+            "        postgresql://USER:SENHA@localhost:5432/plataforma\n"
+            "      (no .env do Escuta ou exportando no shell)."
+        )
+    return url
 
 
 def _digits_only(value: str) -> str:
@@ -54,7 +67,7 @@ async def _fetch_bizzu_users() -> list[dict]:
     """Usuários da Bizzu elegíveis: telefone + whatsappOptIn, vivos."""
     import asyncpg
 
-    conn = await asyncpg.connect(BIZZU_DATABASE_URL)
+    conn = await asyncpg.connect(_bizzu_database_url())
     try:
         rows = await conn.fetch(
             '''

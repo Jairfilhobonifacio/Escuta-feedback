@@ -22,6 +22,19 @@ class Settings:
     # Segredo compartilhado p/ eventos da Bizzu (HMAC-SHA256). Sem ele o endpoint
     # /api/events/bizzu responde 503 (integração desligada).
     bizzu_webhook_secret: str | None = os.getenv("BIZZU_WEBHOOK_SECRET")
+    # Token da API pública de integração (GET /api/integration/*). Sistemas externos
+    # mandam no header X-API-Key. Sem a env, a API de integração fica DESLIGADA (503).
+    integration_api_key: str | None = os.getenv("INTEGRATION_API_KEY")
+    # Auth do PAINEL interno (admin/whatsapp/campanha/boards/tasks/playbooks/clusters/
+    # digest). Sistemas/painel mandam no header X-Panel-Key. Fail-OPEN quando ausente
+    # (libera + WARN, p/ não quebrar o piloto e a suíte de testes); fail-CLOSED quando
+    # configurada (header obrigatório, 401 sem/errado). ⚠️ OBRIGATÓRIO em produção.
+    panel_api_key: str | None = os.getenv("PANEL_API_KEY")
+    # Segredo de ORIGEM do webhook do WAHA (POST /api/webhook/waha), header
+    # X-Webhook-Secret. Fail-OPEN quando ausente (aceita + WARN, p/ não quebrar o
+    # piloto ainda não configurado); fail-CLOSED quando configurado (header obrigatório,
+    # 401 sem/errado) — impede mensagens forjadas. ⚠️ OBRIGATÓRIO em produção.
+    waha_webhook_secret: str | None = os.getenv("WAHA_WEBHOOK_SECRET")
     # LLM (Groq) — cérebro do fluxo de survey (interpretação de respostas livres,
     # opt-out, perguntas) + classificação de feedback. Sem chave = desligado e o
     # fluxo determinístico segue intacto. LLM_ENABLED=0 força OFF mesmo com chave.
@@ -68,6 +81,36 @@ class Settings:
     # (lote, manual/cron) gera embeddings. O plugue é best-effort (engole erro) e
     # NUNCA bloqueia/derruba a resposta do endpoint.
     clustering_inline_enabled: bool = os.getenv("CLUSTERING_INLINE_ENABLED", "0") == "1"
+    # RAG honesto (NO_KB_FALLBACK): quando o retrieval não traz contexto relevante
+    # (KB vazio OU melhor score abaixo do piso), o brain responde de forma HONESTA
+    # ("vou encaminhar ao time") em vez de deixar o LLM inventar um fato. LIGADO por
+    # default. NO_KB_FALLBACK_ENABLED=0 desliga o caminho honesto explícito (volta a
+    # devolver None e deixa quem chama decidir o genérico).
+    no_kb_fallback_enabled: bool = os.getenv("NO_KB_FALLBACK_ENABLED", "1") == "1"
+    # Fase D (Esteira cruzada): automações cruzadas do board — mover um card dispara as
+    # ações conectadas (concluir tarefa resolve o feedback; melhoria entregue resolve os
+    # feedbacks vinculados). Atrás de UMA flag para reversibilidade instantânea.
+    # ESTEIRA_ENABLED=0 desliga TODAS as automações cruzadas (default LIGADO). Cada plugue
+    # é best-effort e idempotente — nunca derruba o PATCH que o disparou.
+    esteira_enabled: bool = os.getenv("ESTEIRA_ENABLED", "1") == "1"
+    # Modelo de embedding (retrieval/clustering). VAZIO ("") = mantém EXATAMENTE o
+    # modelo atual (all-MiniLM-L6-v2, 384-dim) — zero regressão. Para PT, setar
+    # EMBEDDING_MODEL_NAME="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    # (também 384-dim → NÃO exige migration da coluna vector(384)); exige o modelo no
+    # cache HF (HF_HUB_OFFLINE=1) + re-gerar os vetores (reindex). Troca = passo manual.
+    embedding_model_name: str = os.getenv("EMBEDDING_MODEL_NAME", "")
+    # RAG híbrido: combina busca semântica (pgvector) + lexical (ILIKE) no retriever.
+    # OFF (default) = comportamento atual idêntico (só semântica). Quando ON, une e
+    # reordena os dois conjuntos — melhora recall em PT enquanto o embedding é inglês.
+    rag_hybrid_enabled: bool = os.getenv("RAG_HYBRID_ENABLED", "0") == "1"
+    # Fase 2 (Agente VoC): substitui a máquina de estados/determinístico pelo agente
+    # com function-calling (chat_with_tools + VoCToolRegistry + orchestrator). OFF
+    # (default) = fluxo atual BYTE-A-BYTE; liga só para validar com Groq real.
+    voc_agent_enabled: bool = os.getenv("VOC_AGENT_ENABLED", "0") == "1"
+    # Tool de envio de WhatsApp DENTRO do Agente VoC. OFF (default) = a tool é NO-OP
+    # (não envia nada). Mesmo ON, passa por 3 gates (opt-in, cooldown, alcançável).
+    # WhatsApp real só com OK explícito do dono — manter OFF até lá.
+    voc_whatsapp_tool_enabled: bool = os.getenv("VOC_WHATSAPP_TOOL_ENABLED", "0") == "1"
 
 
 settings = Settings()

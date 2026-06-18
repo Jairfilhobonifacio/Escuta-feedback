@@ -7,6 +7,7 @@ SQLite in-memory (override de get_session) + messaging fake. Nada toca Supabase/
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 import uuid
@@ -21,6 +22,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+import app.api.admin as _admin_mod  # noqa: E402
 from app.api.admin import get_brain, get_messaging  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
@@ -560,3 +562,104 @@ async def test_filtro_theme_sem_match_vazio(client, org, session):
     assert r.status_code == 200
     assert r.json()["total"] == 0
     assert r.json()["items"] == []
+
+
+# --- Esteira (Fase D, REGRA 2): melhoria entregue resolve os feedbacks ----------
+
+
+def _set_esteira(monkeypatch, enabled: bool) -> None:
+    """Liga/desliga esteira_enabled no binding `settings` do handler de admin
+    (frozen dataclass -> dataclasses.replace, padrão do projeto)."""
+    monkeypatch.setattr(
+        _admin_mod, "settings", dataclasses.replace(_admin_mod.settings, esteira_enabled=enabled)
+    )
+
+
+async def _mk_fb_acionavel(session, org, imp, action_status):
+    """FeedbackItem vinculado a `imp` com o action_status pedido."""
+    f = FeedbackItem(
+        organization_id=org.id, source="manual", type="sugestao", text="dor",
+        improvement_id=imp.id, action_status=action_status,
+        occurred_at=_dt(2026, 6, 1),
+    )
+    session.add(f)
+    await session.flush()
+    return f
+
+
+@pytest.mark.asyncio
+async def test_esteira_entregue_resolve_feedbacks_vinculados(client, org, session, monkeypatch):
+    """Flag ON + status->entregue: TODO feedback vinculado não-terminal vira 'resolvido';
+    os já terminais (resolvido/descartado) ficam intactos; feedback de OUTRA melhoria não
+    é tocado."""
+    _set_esteira(monkeypatch, True)
+    imp = Improvement(organization_id=org.id, title="Loop", status="em_andamento")
+    outra = Improvement(organization_id=org.id, title="Outra", status="ideia")
+    session.add_all([imp, outra])
+    await session.flush()
+
+    f_novo = await _mk_fb_acionavel(session, org, imp, "novo")
+    f_analise = await _mk_fb_acionavel(session, org, imp, "em_analise")
+    f_resolvido = await _mk_fb_acionavel(session, org, imp, "resolvido")
+    f_descartado = await _mk_fb_acionavel(session, org, imp, "descartado")
+    f_outra = await _mk_fb_acionavel(session, org, outra, "novo")
+    await session.commit()
+
+    r = await client.patch(f"/api/improvements/{imp.id}", json={"status": "entregue"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "entregue"
+
+    for f in (f_novo, f_analise):
+        await session.refresh(f)
+        assert f.action_status == "resolvido"  # não-terminais -> resolvidos
+    await session.refresh(f_resolvido)
+    assert f_resolvido.action_status == "resolvido"  # já estava
+    await session.refresh(f_descartado)
+    assert f_descartado.action_status == "descartado"  # terminal preservado
+    await session.refresh(f_outra)
+    assert f_outra.action_status == "novo"  # de outra melhoria, intacto
+
+
+@pytest.mark.asyncio
+async def test_esteira_entregue_flag_off_nao_mexe(client, org, session, monkeypatch):
+    """Flag OFF: entregar a melhoria NÃO resolve os feedbacks vinculados."""
+    _set_esteira(monkeypatch, False)
+    imp = Improvement(organization_id=org.id, title="Loop", status="em_andamento")
+    session.add(imp)
+    await session.flush()
+    f = await _mk_fb_acionavel(session, org, imp, "novo")
+    await session.commit()
+
+    r = await client.patch(f"/api/improvements/{imp.id}", json={"status": "entregue"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "entregue"
+
+    await session.refresh(f)
+    assert f.action_status == "novo"  # intacto
+
+
+@pytest.mark.asyncio
+async def test_esteira_entregue_idempotente_reentrega_noop(client, org, session, monkeypatch):
+    """Re-PATCH para 'entregue' (já estava entregue) não re-dispara a esteira: um feedback
+    reaberto manualmente após a 1ª entrega permanece como o operador deixou."""
+    _set_esteira(monkeypatch, True)
+    imp = Improvement(organization_id=org.id, title="Loop", status="em_andamento")
+    session.add(imp)
+    await session.flush()
+    f = await _mk_fb_acionavel(session, org, imp, "novo")
+    await session.commit()
+
+    r1 = await client.patch(f"/api/improvements/{imp.id}", json={"status": "entregue"})
+    assert r1.status_code == 200
+    await session.refresh(f)
+    assert f.action_status == "resolvido"
+
+    # operador reabre o feedback manualmente
+    f.action_status = "em_analise"
+    await session.commit()
+
+    # re-entregar (já estava entregue) NÃO re-resolve
+    r2 = await client.patch(f"/api/improvements/{imp.id}", json={"status": "entregue"})
+    assert r2.status_code == 200
+    await session.refresh(f)
+    assert f.action_status == "em_analise"

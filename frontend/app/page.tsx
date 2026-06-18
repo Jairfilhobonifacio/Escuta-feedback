@@ -1,7 +1,54 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { api, type Dashboard } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  api,
+  campanha as campanhaApi,
+  feedbacks as feedbacksApi,
+  tarefas as tarefasApi,
+  clusters as clustersApi,
+  type Dashboard,
+  type CampanhaStats,
+  type FeedbacksResponse,
+  type TarefasResponse,
+  type ClustersResponse,
+} from "@/lib/api";
+
+/** Snapshot da "Voz do cliente & Tarefas" — agrega 3 endpoints já existentes
+    (feedbacks, tarefas, clusters) num bloco compacto. Cada parte é best-effort:
+    se um endpoint falhar, aquele campo fica null e a sub-seção some sem derrubar
+    o resto da tela. Emoji em escape \u{...} (bundler Windows). */
+interface VozTarefasSnapshot {
+  feedbacks: FeedbacksResponse | null;
+  tarefas: TarefasResponse | null;
+  clusters: ClustersResponse | null;
+}
+
+/** Buckets de alcance do validador (app/domain/contacts/whatsapp.py · alcance()).
+    Ordem fixa de exibição; só `whatsapp` conta como "com WhatsApp" (celular BR
+    válido) — fixo/grupo NÃO contam. Emoji em escape \u{...} (bundler Windows). */
+const ALCANCE_META: { key: string; label: string; emoji: string; cor: string }[] = [
+  { key: "whatsapp", label: "Celular / WhatsApp", emoji: "\u{1F4AC}", cor: "var(--indigo-light)" },
+  { key: "so_email", label: "Só e-mail", emoji: "\u{2709}\u{FE0F}", cor: "var(--text-dim)" },
+  { key: "fixo", label: "Telefone fixo", emoji: "\u{260E}\u{FE0F}", cor: "var(--passive)" },
+  { key: "grupo", label: "Grupo", emoji: "\u{1F465}", cor: "var(--passive)" },
+  { key: "sem_contato", label: "Sem contato", emoji: "\u{1F6AB}", cor: "var(--text-faint)" },
+  { key: "invalido", label: "Inválido", emoji: "\u{26A0}\u{FE0F}", cor: "var(--text-faint)" },
+];
+
+/** Etapas do funil da campanha em ordem, com a cor de acento de cada uma.
+    Espelha o backend; "a contatar" recebe `faltam`. */
+const CMP_ETAPA_META: Record<string, { cor: string }> = {
+  "a contatar": { cor: "var(--text-faint)" },
+  contatado: { cor: "var(--indigo)" },
+  respondeu: { cor: "var(--indigo-light)" },
+  cortesia: { cor: "var(--passive)" },
+  reativou: { cor: "var(--gold)" },
+};
+
+function cmpPct(n: number, total: number): number {
+  return total > 0 ? (n / total) * 100 : 0;
+}
 
 function npsClass(nps: number | null): string {
   if (nps === null) return "nps-none";
@@ -112,6 +159,16 @@ function Waveform() {
 export default function DashboardPage() {
   const [data, setData] = useState<Dashboard | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Campanha & Alcance é independente do dashboard de NPS: se /campanha/stats
+  // falhar, o bloco some sem derrubar os KPIs/NPS que já funcionam.
+  const [cmp, setCmp] = useState<CampanhaStats | null>(null);
+  // Voz do cliente & Tarefas: cada endpoint é best-effort e independente — uma
+  // falha derruba só a sua sub-seção, nunca a tela.
+  const [voz, setVoz] = useState<VozTarefasSnapshot>({
+    feedbacks: null,
+    tarefas: null,
+    clusters: null,
+  });
 
   const load = useCallback(async () => {
     try {
@@ -120,6 +177,20 @@ export default function DashboardPage() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
+    try {
+      setCmp(await campanhaApi.stats());
+    } catch {
+      /* stats da campanha é best-effort: não polui o erro principal */
+    }
+    // Cada endpoint da "Voz do cliente & Tarefas" degrada sozinho (null no erro).
+    // limit: 1 — só queremos os totais/contagens, não o feed inteiro.
+    // days: 3650 — todas as dores da org (não só as recentes do default backend).
+    const [fb, tf, cl] = await Promise.all([
+      feedbacksApi.list({ limit: 1 }).catch(() => null),
+      tarefasApi.list({ limit: 1 }).catch(() => null),
+      clustersApi.list({ days: 3650 }).catch(() => null),
+    ]);
+    setVoz({ feedbacks: fb, tarefas: tf, clusters: cl });
   }, []);
 
   useEffect(() => {
@@ -127,6 +198,20 @@ export default function DashboardPage() {
     const t = setInterval(load, 30_000);
     return () => clearInterval(t);
   }, [load]);
+
+  // Maior valor entre as etapas do funil — escala as barras proporcionalmente.
+  const maxFunil = useMemo(
+    () => (cmp ? Math.max(1, ...cmp.funil.map((f) => f.count)) : 1),
+    [cmp],
+  );
+
+  // Dores (clusters): total e quantas ainda SEM melhoria (improvement_id null).
+  const dores = useMemo(() => {
+    if (!voz.clusters) return null;
+    const lista = voz.clusters.clusters;
+    const semMelhoria = lista.filter((c) => c.improvement_id === null).length;
+    return { total: lista.length, semMelhoria };
+  }, [voz.clusters]);
 
   if (err) {
     return (
@@ -210,6 +295,250 @@ export default function DashboardPage() {
 
         <Waveform />
       </div>
+
+      {cmp && (
+        <>
+          {/* Cards de números: universo + recorte com/sem WhatsApp real */}
+          <div className="cmp-cards">
+            <div className="card kpi">
+              <div className="kpi-label">Universo</div>
+              <div className="kpi-value">{cmp.universo}</div>
+              <div className="kpi-hint">clientes que cancelaram</div>
+              <div className="cmp-wa-split">
+                <span
+                  className="cmp-wa wa-on"
+                  title="Alcançáveis no WhatsApp = celular BR válido (fixo e grupo NÃO contam)"
+                >
+                  {"\u{1F4AC}"} {cmp.com_whatsapp} com WhatsApp
+                </span>
+                <span
+                  className="cmp-wa wa-off"
+                  title="Resto do universo: só e-mail, fixo, grupo, sem contato ou inválido"
+                >
+                  {"\u{2709}\u{FE0F}"} {cmp.sem_whatsapp} sem WhatsApp
+                </span>
+              </div>
+            </div>
+            <div className="card kpi">
+              <div className="kpi-label">Contatados</div>
+              <div className="kpi-value">{cmp.contatados}</div>
+              <div className="kpi-hint">
+                {cmp.universo > 0
+                  ? `${Math.round(cmpPct(cmp.contatados, cmp.universo))}% do universo`
+                  : "—"}
+              </div>
+            </div>
+            <div className="card kpi">
+              <div className="kpi-label">Responderam</div>
+              <div className="kpi-value">{cmp.responderam}</div>
+              <div className="kpi-hint">voltaram a falar com a gente</div>
+            </div>
+            <div className="card kpi">
+              <div className="kpi-label">Cortesia</div>
+              <div className="kpi-value">{cmp.cortesia}</div>
+              <div className="kpi-hint">ganharam a oferta</div>
+            </div>
+            <div className="card kpi">
+              <div className="kpi-label">Reativaram</div>
+              <div className="kpi-value cmp-reativou">{cmp.reativaram}</div>
+              <div className="kpi-hint">voltaram a assinar</div>
+            </div>
+          </div>
+
+          {/* Quebra do universo por alcance (some se a API não mandar por_alcance) */}
+          {(() => {
+            const porAlcance = cmp.por_alcance ?? {};
+            const rows = ALCANCE_META.filter((m) => (porAlcance[m.key] ?? 0) > 0).map(
+              (m) => ({ ...m, n: porAlcance[m.key] as number }),
+            );
+            if (rows.length === 0) return null;
+            return (
+              <div className="card cmp-block">
+                <div className="card-head">
+                  <div>
+                    <div className="section-title">Campanha &amp; Alcance</div>
+                    <div className="card-head-sub">
+                      como dá pra falar com cada um dos {cmp.universo} cancelados ·{" "}
+                      <strong>com WhatsApp</strong> = só celular BR válido (fixo e grupo
+                      NÃO contam)
+                    </div>
+                  </div>
+                </div>
+                <div className="cmp-pad">
+                  <ul className="cmp-canal-list">
+                    {rows.map((r) => (
+                      <li key={r.key} className="cmp-canal-row">
+                        <span className="cmp-canal-name">
+                          <span aria-hidden="true">{r.emoji} </span>
+                          {r.label}
+                        </span>
+                        <span className="cmp-alcance-meta">
+                          <span className="cmp-canal-n mono" style={{ color: r.cor }}>
+                            {r.n}
+                          </span>
+                          <span className="cmp-alcance-pct">
+                            {Math.round(cmpPct(r.n, cmp.universo))}%
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Funil da campanha — a contatar → contatado → respondeu → cortesia → reativou */}
+          {cmp.funil.length > 0 && (
+            <div className="card cmp-block">
+              <div className="card-head">
+                <div>
+                  <div className="section-title">Funil da campanha</div>
+                  <div className="card-head-sub">
+                    do universo de cancelados até a reativação · {cmp.faltam} ainda a
+                    contatar · {cmp.com_whatsapp} com WhatsApp, {cmp.sem_whatsapp} sem
+                    WhatsApp
+                  </div>
+                </div>
+              </div>
+              <div className="cmp-funnel">
+                {cmp.funil.map((f) => (
+                  <div className="cmp-fn-step" key={f.etapa}>
+                    <div className="cmp-fn-top">
+                      <span className="cmp-fn-label">{f.etapa}</span>
+                      <span className="cmp-fn-n mono">{f.count}</span>
+                    </div>
+                    <div className="cmp-fn-track">
+                      <span
+                        className="cmp-fn-fill"
+                        style={{
+                          width: `${cmpPct(f.count, maxFunil)}%`,
+                          background: CMP_ETAPA_META[f.etapa]?.cor ?? "var(--indigo)",
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Voz do cliente & Tarefas — pulso operacional puxado de endpoints já
+          existentes (feedbacks/tarefas/clusters). Cada sub-bloco degrada sozinho:
+          se o endpoint falhou, o snapshot é null e a sub-seção some. */}
+      {(voz.feedbacks || voz.tarefas || dores) && (
+        <div className="card cmp-block">
+          <div className="card-head">
+            <div>
+              <div className="section-title">Voz do cliente &amp; Tarefas</div>
+              <div className="card-head-sub">
+                fila a triar, tarefas de CS em aberto e quantas dores ainda sem
+                melhoria · pulso operacional do loop
+              </div>
+            </div>
+          </div>
+          <div className="cmp-pad" style={{ display: "grid", gap: 18 }}>
+            {/* Feedbacks — total + fila a triar (novo) e quebra por status */}
+            {voz.feedbacks && (() => {
+              const c = voz.feedbacks.counts_by_status;
+              const linhas: { label: string; n: number; cor: string }[] = [
+                { label: "Novos (a triar)", n: c.novo, cor: "var(--detractor)" },
+                { label: "Em análise", n: c.em_analise, cor: "var(--gold)" },
+                { label: "Resolvidos", n: c.resolvido, cor: "var(--indigo-light)" },
+              ];
+              return (
+                <div>
+                  <div className="hero-dist-head" style={{ marginBottom: 10 }}>
+                    <span className="hero-eyebrow">
+                      {"\u{1F4E5}"} Feedbacks
+                    </span>
+                    <span className="hero-dist-total mono">
+                      {voz.feedbacks.total} no total
+                    </span>
+                  </div>
+                  <ul className="cmp-canal-list">
+                    {linhas.map((r) => (
+                      <li key={r.label} className="cmp-canal-row">
+                        <span className="cmp-canal-name">{r.label}</span>
+                        <span className="cmp-canal-n mono" style={{ color: r.cor }}>
+                          {r.n}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
+
+            {/* Tarefas de CS — total + por status (aberta/em_andamento/concluida) */}
+            {voz.tarefas && (() => {
+              const c = voz.tarefas.counts_by_status;
+              const linhas: { label: string; n: number; cor: string }[] = [
+                { label: "Abertas", n: c.aberta, cor: "var(--gold)" },
+                { label: "Em andamento", n: c.em_andamento, cor: "var(--indigo-light)" },
+                { label: "Concluídas", n: c.concluida, cor: "var(--text-dim)" },
+              ];
+              return (
+                <div>
+                  <div className="hero-dist-head" style={{ marginBottom: 10 }}>
+                    <span className="hero-eyebrow">
+                      {"\u{2705}"} Tarefas de CS
+                    </span>
+                    <span className="hero-dist-total mono">
+                      {voz.tarefas.total} no total
+                    </span>
+                  </div>
+                  <ul className="cmp-canal-list">
+                    {linhas.map((r) => (
+                      <li key={r.label} className="cmp-canal-row">
+                        <span className="cmp-canal-name">{r.label}</span>
+                        <span className="cmp-canal-n mono" style={{ color: r.cor }}>
+                          {r.n}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
+
+            {/* Dores (clusters) — total + quantas ainda SEM melhoria vinculada */}
+            {dores && (
+              <div>
+                <div className="hero-dist-head" style={{ marginBottom: 10 }}>
+                  <span className="hero-eyebrow">
+                    {"\u{1F525}"} Dores mapeadas
+                  </span>
+                  <span className="hero-dist-total mono">
+                    {dores.total} no total
+                  </span>
+                </div>
+                <ul className="cmp-canal-list">
+                  <li className="cmp-canal-row">
+                    <span className="cmp-canal-name">Sem melhoria no roadmap</span>
+                    <span
+                      className="cmp-alcance-meta"
+                      title="Dores (clusters) que ainda não viraram melhoria (improvement_id nulo)"
+                    >
+                      <span
+                        className="cmp-canal-n mono"
+                        style={{ color: dores.semMelhoria > 0 ? "var(--detractor)" : "var(--indigo-light)" }}
+                      >
+                        {dores.semMelhoria}
+                      </span>
+                      <span className="cmp-alcance-pct">
+                        de {dores.total}
+                      </span>
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="card exit-card">
         <div className="card-head">

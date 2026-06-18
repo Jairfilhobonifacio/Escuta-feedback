@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import Integer, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import logging
@@ -23,6 +23,10 @@ import logging
 from app.config import settings
 from app.db import get_session
 from app.domain.clustering.inline import maybe_schedule_embed
+from app.domain.contacts.whatsapp import sem_whatsapp, tem_whatsapp
+# Alias: dentro de list_clientes o query param chama-se `tem_whatsapp` (str) e
+# sombreia a função homônima; usamos este alias para o validador lá dentro.
+from app.domain.contacts.whatsapp import tem_whatsapp as tem_whatsapp_fn
 from app.domain.digest.aggregator import aggregate_themes
 from app.domain.interfaces.messaging_service import IMessagingService
 from app.domain.survey.brain import SurveyBrain
@@ -73,6 +77,33 @@ async def _get_org(session: AsyncSession) -> Organization:
     if org is None:
         raise HTTPException(status_code=404, detail=f"org '{settings.default_org_slug}' não encontrada (rode o seed)")
     return org
+
+
+def _abordado_inicio(periodo: str) -> datetime | None:
+    """Início (em UTC) do recorte "abordados por período" para filtrar `abordado_em`.
+
+    - "hoje": meia-noite de HOJE no fuso America/Sao_Paulo, convertida para UTC. Se
+      zoneinfo/tzdata estiver indisponível, faz fallback para meia-noite UTC.
+    - "7d"/"30d": agora (UTC) menos 7 ou 30 dias.
+    - qualquer outro valor: None (sem recorte por período).
+    """
+    if periodo == "hoje":
+        try:
+            from zoneinfo import ZoneInfo
+
+            tz = ZoneInfo("America/Sao_Paulo")
+            agora_local = datetime.now(tz)
+            inicio_local = agora_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            return inicio_local.astimezone(timezone.utc)
+        except Exception:
+            # Sem zoneinfo/tzdata: fallback para meia-noite UTC de hoje.
+            agora = datetime.now(timezone.utc)
+            return agora.replace(hour=0, minute=0, second=0, microsecond=0)
+    if periodo == "7d":
+        return datetime.now(timezone.utc) - timedelta(days=7)
+    if periodo == "30d":
+        return datetime.now(timezone.utc) - timedelta(days=30)
+    return None
 
 
 # --- Dashboard -------------------------------------------------------------
@@ -444,12 +475,24 @@ async def contact_360(contact_id: str, session: AsyncSession = Depends(get_sessi
         )
     ).all()
 
+    # Selos de campanha do contato (win-back, persistidos em profile_data["selos"]).
+    # Inline (e não importando do campanha.py) porque campanha.py importa deste módulo —
+    # importar de volta criaria ciclo.
+    raw_selos = (contact.profile_data or {}).get("selos")
+    selos: list[str] = [str(x) for x in raw_selos if x] if isinstance(raw_selos, list) else []
+    # "Sem WhatsApp real": usa o validador canônico (celular BR válido = alcançável).
+    # Fixo/grupo/inválido/placeholder/vazio contam como sem WhatsApp.
+    sem_wa = sem_whatsapp(contact.phone)
+
     timeline: list[dict[str, Any]] = []
     for f in fitems:
         when = f.occurred_at or f.created_at
         timeline.append(
             {
                 "kind": "feedback_item",
+                # `id`/`action_status`/`abordado` permitem a ficha 360 editar o item
+                # in-place (PATCH /api/feedbacks/{id}). Itens vindos de survey não têm.
+                "id": str(f.id),
                 "source": f.source,
                 "type": f.type,
                 "score": f.score,
@@ -457,6 +500,8 @@ async def contact_360(contact_id: str, session: AsyncSession = Depends(get_sessi
                 "text": f.text,
                 "sentiment": f.sentiment,
                 "themes": f.themes,
+                "action_status": f.action_status,
+                "abordado": f.abordado,
                 "at": when.isoformat() if when else None,
             }
         )
@@ -485,6 +530,10 @@ async def contact_360(contact_id: str, session: AsyncSession = Depends(get_sessi
             "name": contact.name,
             "phone": contact.phone,
             "opt_in": contact.opt_in,
+            # Selos de campanha aplicados ao contato (chips editáveis na ficha 360).
+            "selos": selos,
+            # Sem WhatsApp real? (validador: só celular BR válido é alcançável) — chip na ficha.
+            "sem_whatsapp": sem_wa,
         },
         "partner": partner,
         "summary": {
@@ -501,6 +550,10 @@ async def contact_360(contact_id: str, session: AsyncSession = Depends(get_sessi
 # Estados válidos da AÇÃO sobre um feedback (workflow do operador). A ordem é a
 # do funil — usada também para o cabeçalho de contagem do feed.
 ACTION_STATUSES: tuple[str, ...] = ("novo", "em_analise", "planejado", "resolvido", "descartado")
+# Esteira (Fase D): estados TERMINAIS de action_status — a esteira não os reabre nem
+# os re-resolve (idempotência). 'resolvido' (fechado com tratativa) e 'descartado'
+# (fechado sem ação) são fins de linha do funil.
+_FEEDBACK_TERMINAL_STATUSES: frozenset[str] = frozenset({"resolvido", "descartado"})
 
 # Tipos de feedback aceitos no registro manual (Felipe registra o que o cliente
 # deixou por qualquer canal). Mesmo espírito do ACTION_STATUSES: validado na API,
@@ -548,6 +601,32 @@ def _theme_match_clause(theme: str, dialect: str):
         "EXISTS (SELECT 1 FROM json_each(feedback_items.themes) "
         "WHERE json_each.value = :theme)"
     ).bindparams(theme=theme)
+
+
+def _selo_match_clause(selo: str, dialect: str):
+    """Predicado SQL portável: o CONTATO juntado tem `selo` em profile_data["selos"].
+
+    Os selos de campanha vivem em `Contact.profile_data["selos"]` (array JSON) — ver
+    campanha.py. Mesma estratégia do `_theme_match_clause`, mas sobre o JSON do contato:
+
+    - Postgres: `contacts.profile_data['selos'] @> '["<selo>"]'::jsonb` (contenção JSONB,
+      match exato do elemento). O `->` na coluna JSONB devolve o sub-array como jsonb.
+    - SQLite:   `EXISTS (SELECT 1 FROM json_each(contacts.profile_data, '$.selos')
+      WHERE value = :selo)`.
+
+    Valor SEMPRE por bind param (nunca f-string em SQL). Devolve um ColumnElement
+    booleano para encaixar em `.where(...)` num SELECT que já junta `Contact`.
+    """
+    from sqlalchemy import cast, text
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    if dialect == "postgresql":
+        return Contact.profile_data["selos"].op("@>")(cast([selo], JSONB))
+    # SQLite com json1: json_each percorre o sub-array '$.selos'; igualamos o elemento.
+    return text(
+        "EXISTS (SELECT 1 FROM json_each(contacts.profile_data, '$.selos') "
+        "WHERE json_each.value = :selo)"
+    ).bindparams(selo=selo)
 
 
 def _coerce_dt(value: Any) -> datetime | None:
@@ -635,6 +714,19 @@ def _parse_iso_dt(value: Any) -> datetime | None:
         return None
 
 
+def _nps_bucket_label(nps_score: int | None) -> str | None:
+    """Faixa NPS em PT-BR a partir do score 0-10 (filtro de clientes do painel):
+    'promotor' (>=9) | 'neutro' (7-8) | 'detrator' (<=6). None quando não há score
+    (cliente sem nota nunca casa nenhum bucket)."""
+    if nps_score is None:
+        return None
+    if nps_score >= 9:
+        return "promotor"
+    if nps_score >= 7:
+        return "neutro"
+    return "detrator"
+
+
 def _partner_fields(contact: Contact, now: datetime) -> dict[str, Any]:
     """Deriva perfil/plano/plan_type/nps_score/dias_para_renovar do snapshot partner.
 
@@ -673,11 +765,25 @@ async def list_clientes(
     search: str | None = None,
     perfil: str | None = None,
     plan_type: str | None = None,
+    estado: str | None = None,
+    nps_bucket: str | None = None,
+    health_band: str | None = None,
+    tem_whatsapp: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
     """Lista rica de clientes contatáveis da org (Contact + snapshot partner +
-    agregação de feedback_items). Filtros opcionais: search (nome/whatsapp),
-    perfil, plan_type. Ordem: último feedback desc (nulls por último)."""
+    agregação de feedback_items). Ordem: último feedback desc (nulls por último).
+
+    Filtros opcionais (ausentes = comportamento idêntico ao anterior):
+    - search: trecho no nome OU no whatsapp.
+    - perfil: partner.profile (SQL JSON path), ex.: 'ativo_promotor', 'churn_pos_uso'.
+    - plan_type: partner.subscription.planType (SQL JSON path), 'mensal' | 'anual'.
+    - estado: partner.subscription.state (SQL JSON path), ex.: 'cancelled',
+      'paid_without_access', 'active_paying', 'complimentary', 'past_due'.
+    - nps_bucket: 'promotor' (score>=9) | 'neutro' (7-8) | 'detrator' (<=6) — POST-FILTER
+      sobre nps_score (None nunca casa).
+    - health_band: 'healthy' | 'watch' | 'at_risk' — POST-FILTER sobre o health.band.
+    - tem_whatsapp: 'sim' | 'nao' — POST-FILTER usando o validador (celular BR válido)."""
     from app.domain.cs.health import compute_health
 
     org = await _get_org(session)
@@ -745,6 +851,10 @@ async def list_clientes(
         stmt = stmt.where(
             Contact.profile_data["partner"]["subscription"]["planType"].as_string() == plan_type
         )
+    if estado:
+        stmt = stmt.where(
+            Contact.profile_data["partner"]["subscription"]["state"].as_string() == estado
+        )
 
     contacts = (await session.execute(stmt)).scalars().all()
 
@@ -767,12 +877,33 @@ async def list_clientes(
             subscription_state=sub_state,
             now=now,
         )
+        # POST-FILTERS (em Python, pois dependem de campos calculados/validados):
+        # nps_bucket (faixa do nps_score), health_band (banda já calculada) e
+        # tem_whatsapp (validador). None/sem-match descarta o cliente da lista.
+        if nps_bucket and _nps_bucket_label(pf["nps_score"]) != nps_bucket:
+            continue
+        if health_band and health.band != health_band:
+            continue
+        if tem_whatsapp in ("sim", "nao"):
+            quer_wa = tem_whatsapp == "sim"
+            if tem_whatsapp_fn(c.phone) != quer_wa:
+                continue
         out.append(
             {
                 "id": str(c.id),
                 "nome": c.name,
                 "whatsapp": c.phone,
                 "opt_in": c.opt_in,
+                # Tem WhatsApp REAL? Validador canônico: só celular BR válido é alcançável.
+                # Fixo/grupo/inválido/placeholder('nowa-')/vazio -> False. (alias porque o
+                # query param `tem_whatsapp` sombreia a função homônima neste escopo.)
+                "tem_whatsapp": tem_whatsapp_fn(c.phone),
+                # Estado da assinatura no snapshot partner (ex.: 'cancelled',
+                # 'active_paying'); None quando não há snapshot.
+                "estado": sub_state,
+                # Selos de campanha aplicados ao contato (camada win-back; persistidos
+                # em profile_data["selos"]). Lista de nomes, [] quando não há.
+                "selos": ((c.profile_data or {}).get("selos", []) or []),
                 **pf,
                 "ultimo_feedback_em": last.isoformat() if last else None,
                 "ultimo_feedback_tipo": last_type.get(c.id),
@@ -999,11 +1130,21 @@ def _feedback_out(
         partner=partner if isinstance(partner, dict) else None,
         now=now,
     )
+    # Selos de campanha aplicados ao CONTATO (camada win-back, persistidos em
+    # profile_data["selos"]). Lista de nomes, [] quando não há contato/selos. Inline
+    # aqui (e não importando do campanha.py) porque campanha.py importa deste módulo —
+    # importar de volta criaria ciclo.
+    selos: list[str] = []
+    if contact is not None:
+        raw_selos = (contact.profile_data or {}).get("selos")
+        if isinstance(raw_selos, list):
+            selos = [str(x) for x in raw_selos if x]
     return {
         "id": str(f.id),
         "contato_id": str(f.contact_id) if f.contact_id else None,
         "contato_nome": contact.name if contact else None,
         "contato_whatsapp": contact.phone if contact else None,
+        "selos": selos,
         "source": f.source,
         "type": f.type,
         "score": f.score,
@@ -1016,11 +1157,74 @@ def _feedback_out(
         "action_note": f.action_note,
         "assignee": f.assignee,
         "team_tag": f.team_tag,
+        "improvement_id": str(f.improvement_id) if f.improvement_id else None,
         "abordado": f.abordado,
         "abordado_em": f.abordado_em.isoformat() if f.abordado_em else None,
         "occurred_em": when.isoformat() if when else None,
         "created_em": f.created_at.isoformat() if f.created_at else None,
     }
+
+
+# Regex p/ celular BR válido na coluna phone: 11 díg (DDD+9+8) OU 13 com DDI 55. É a
+# aproximação SQL do validador `tem_whatsapp` (classe 'mobile'). Match = celular.
+_WA_MOBILE_REGEX = r"^(55)?[0-9]{2}9[0-9]{8}$"
+# Mesma intenção em sintaxe GLOB do SQLite (json1 não tem regex): 11 ou 13 dígitos com
+# o '9' do celular na posição certa. GLOB usa [0-9] como classe (igual ao regex) e é
+# case-sensitive. Dois padrões: sem DDI (11) e com DDI 55 (13).
+_WA_MOBILE_GLOB_11 = "[0-9][0-9]9[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]"
+_WA_MOBILE_GLOB_13 = "55[0-9][0-9]9[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]"
+
+
+def _wa_mobile_clause(dialect: str):
+    """Predicado SQL portável "Contact.phone é celular BR válido" (≈ validador 'mobile').
+
+    - Postgres: regex `phone ~ '^(55)?\\d{2}9\\d{8}$'` (aproximação do validador).
+    - SQLite (testes, sem regex no json1): `phone GLOB <11díg> OR phone GLOB <13díg c/ 55>`,
+      ambos ancorados naturalmente (GLOB casa a string inteira). Mesma semântica do regex
+      para os formatos só-dígitos do piloto."""
+    if dialect == "postgresql":
+        return Contact.phone.op("~")(_WA_MOBILE_REGEX)
+    return or_(
+        Contact.phone.op("GLOB")(_WA_MOBILE_GLOB_11),
+        Contact.phone.op("GLOB")(_WA_MOBILE_GLOB_13),
+    )
+
+
+def _apply_contact_filters(stmt, dialect, *, estado, perfil, plan_type, tem_whatsapp, nps_bucket_):
+    """Aplica os filtros "por tipo de cliente" sobre um SELECT que JÁ junta `Contact`.
+
+    Reusado por `base` E `counts_stmt` do feed para o total/contagens baterem com a lista.
+    - estado/perfil/plan_type/nps_bucket: JSON path no snapshot partner (mesma técnica de
+      list_clientes). `nps_bucket` recebe o rótulo PT ('promotor'/'neutro'/'detrator') e
+      vira faixa numérica sobre partner.nps.score (>=9 / 7-8 / <=6).
+    - tem_whatsapp ('sim'/'nao'): clause portável `_wa_mobile_clause` (regex no PG / GLOB no
+      SQLite), aproximação do validador (celular = match; 'nao' = NOT match, pega
+      fixo/grupo/placeholder/vazio).
+    Filtros None/desconhecidos são no-op (comportamento idêntico ao anterior)."""
+    if perfil:
+        stmt = stmt.where(Contact.profile_data["partner"]["profile"].as_string() == perfil)
+    if plan_type:
+        stmt = stmt.where(
+            Contact.profile_data["partner"]["subscription"]["planType"].as_string() == plan_type
+        )
+    if estado:
+        stmt = stmt.where(
+            Contact.profile_data["partner"]["subscription"]["state"].as_string() == estado
+        )
+    if tem_whatsapp in ("sim", "nao"):
+        match = _wa_mobile_clause(dialect)
+        stmt = stmt.where(match if tem_whatsapp == "sim" else ~match)
+    if nps_bucket_ in ("promotor", "neutro", "detrator"):
+        score = func.cast(
+            Contact.profile_data["partner"]["nps"]["score"].as_string(), Integer
+        )
+        if nps_bucket_ == "promotor":
+            stmt = stmt.where(score >= 9)
+        elif nps_bucket_ == "neutro":
+            stmt = stmt.where(score >= 7, score <= 8)
+        else:
+            stmt = stmt.where(score <= 6)
+    return stmt
 
 
 @router.get("/feedbacks")
@@ -1030,10 +1234,17 @@ async def list_feedbacks(
     source: str | None = None,
     sentiment: str | None = None,
     theme: str | None = None,
+    selo: str | None = None,
     cluster_id: str | None = None,
     assignee: str | None = None,
     team_tag: str | None = None,
     abordado: bool | None = None,
+    abordado_periodo: str | None = None,
+    estado: str | None = None,
+    perfil: str | None = None,
+    plan_type: str | None = None,
+    tem_whatsapp: str | None = None,
+    nps_bucket: str | None = None,
     search: str | None = None,
     sort: Literal["urgencia", "recente"] = "urgencia",
     limit: int = 50,
@@ -1050,6 +1261,21 @@ async def list_feedbacks(
     Filtro `theme`: drill-down da tela Temas — mantém só os feedbacks cujo array
     `themes` CONTÉM exatamente aquele tema (match exato do elemento, não substring;
     JSONB `@>` no PG / `json_each` no SQLite). Combina com os demais filtros.
+
+    Filtro `selo`: status de campanha no inbox — mantém só os feedbacks de CONTATOS
+    com aquele selo aplicado (`Contact.profile_data["selos"]`, ver campanha.py). Cada
+    item já traz `selos` (lista de nomes do contato) para a tela mostrar o estágio.
+
+    Filtros "por tipo de cliente" (sobre o CONTATO juntado; aplicados ao feed E às
+    contagens para o total bater) — todos opcionais e no-op quando ausentes:
+    - estado: partner.subscription.state (JSON path), ex.: 'cancelled', 'active_paying'.
+    - perfil: partner.profile (JSON path), ex.: 'ativo_promotor', 'churn_pos_uso'.
+    - plan_type: partner.subscription.planType (JSON path), 'mensal' | 'anual'.
+    - tem_whatsapp: 'sim' | 'nao' — regex/GLOB SQL na coluna phone (≈ validador 'mobile'):
+      celular BR de 11 ou 13 díg com o '9' na posição certa. 'nao' = NÃO casa (fixo/grupo/
+      placeholder/vazio).
+    - nps_bucket: 'promotor' (score>=9) | 'neutro' (7-8) | 'detrator' (<=6) sobre o JSON
+      partner.nps.score.
 
     Ordenação (`sort`):
     - `urgencia` (DEFAULT): score de urgência desc (ver `compute_urgencia`); empate
@@ -1079,6 +1305,9 @@ async def list_feedbacks(
         base = base.where(FeedbackItem.sentiment == sentiment)
     if theme:
         base = base.where(_theme_match_clause(theme, dialect))
+    if selo:
+        # Só feedbacks de contatos com este selo de campanha (status de campanha no inbox).
+        base = base.where(_selo_match_clause(selo, dialect))
     if cluster_id:
         base = base.where(FeedbackItem.cluster_id == uuid.UUID(cluster_id))
     if assignee:
@@ -1087,6 +1316,14 @@ async def list_feedbacks(
         base = base.where(FeedbackItem.team_tag == team_tag)
     if abordado is not None:
         base = base.where(FeedbackItem.abordado == abordado)
+    if abordado_periodo is not None:
+        inicio = _abordado_inicio(abordado_periodo)
+        if inicio is not None:
+            # "Abordados no período": só os já abordados cujo carimbo cai no recorte.
+            base = base.where(
+                FeedbackItem.abordado.is_(True),
+                FeedbackItem.abordado_em >= inicio,
+            )
     if search:
         term = f"%{search.strip().lower()}%"
         base = base.where(
@@ -1095,6 +1332,12 @@ async def list_feedbacks(
                 func.lower(func.coalesce(Contact.name, "")).like(term),
             )
         )
+    # Filtros "por tipo de cliente" (snapshot partner do CONTATO juntado): estado/perfil/
+    # plan_type/tem_whatsapp/nps_bucket. Aplicados ao `base` E ao `counts_stmt` p/ bater.
+    base = _apply_contact_filters(
+        base, dialect, estado=estado, perfil=perfil, plan_type=plan_type,
+        tem_whatsapp=tem_whatsapp, nps_bucket_=nps_bucket,
+    )
 
     total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
@@ -1132,12 +1375,23 @@ async def list_feedbacks(
         counts_stmt = counts_stmt.where(FeedbackItem.sentiment == sentiment)
     if theme:
         counts_stmt = counts_stmt.where(_theme_match_clause(theme, dialect))
+    if selo:
+        counts_stmt = counts_stmt.where(_selo_match_clause(selo, dialect))
+    if cluster_id:
+        counts_stmt = counts_stmt.where(FeedbackItem.cluster_id == uuid.UUID(cluster_id))
     if assignee:
         counts_stmt = counts_stmt.where(FeedbackItem.assignee == assignee)
     if team_tag:
         counts_stmt = counts_stmt.where(FeedbackItem.team_tag == team_tag)
     if abordado is not None:
         counts_stmt = counts_stmt.where(FeedbackItem.abordado == abordado)
+    if abordado_periodo is not None:
+        inicio = _abordado_inicio(abordado_periodo)
+        if inicio is not None:
+            counts_stmt = counts_stmt.where(
+                FeedbackItem.abordado.is_(True),
+                FeedbackItem.abordado_em >= inicio,
+            )
     if search:
         term = f"%{search.strip().lower()}%"
         counts_stmt = counts_stmt.where(
@@ -1146,6 +1400,11 @@ async def list_feedbacks(
                 func.lower(func.coalesce(Contact.name, "")).like(term),
             )
         )
+    # Mesmos filtros "por tipo de cliente" do `base` (total/contagens coerentes com a lista).
+    counts_stmt = _apply_contact_filters(
+        counts_stmt, dialect, estado=estado, perfil=perfil, plan_type=plan_type,
+        tem_whatsapp=tem_whatsapp, nps_bucket_=nps_bucket,
+    )
     counts_raw = dict((await session.execute(counts_stmt.group_by(FeedbackItem.action_status))).all())
     counts_by_status = {s: int(counts_raw.get(s, 0)) for s in ACTION_STATUSES}
 
@@ -1258,9 +1517,10 @@ async def move_feedback(
 
     # Valida a melhoria ANTES de mexer no feedback (validar-depois-mutar): assim um 404 de
     # melhoria de outra org não deixa uma mudança de status meia-aplicada na sessão.
-    # O vínculo só faz sentido ao planejar.
+    # Se vier improvement_id, valida e aplica em QUALQUER status (não ignora em silêncio);
+    # para desvincular, use o PATCH /feedbacks/{id} com improvement_id=null.
     imp = None
-    if body.status == "planejado" and body.improvement_id:
+    if body.improvement_id:
         imp = await _get_improvement(session, org, body.improvement_id)
 
     feedback.action_status = body.status
@@ -1276,15 +1536,22 @@ async def move_feedback(
     contact = None
     if feedback.contact_id is not None:
         contact = (
-            await session.execute(select(Contact).where(Contact.id == feedback.contact_id))
+            await session.execute(
+                select(Contact).where(
+                    Contact.id == feedback.contact_id,
+                    Contact.organization_id == org.id,
+                )
+            )
         ).scalar_one_or_none()
     return _feedback_out(feedback, contact)
 
 
 class FeedbackActionIn(BaseModel):
-    """PATCH parcial do feedback: ação (status/nota), flag `abordado` e edição de
-    conteúdo (text/type/score/sentiment/themes). Todos opcionais — só o que vier no
-    corpo é tocado. `model_fields_set` distingue "não enviado" de "enviado como null".
+    """PATCH parcial do feedback: ação (status/nota), flag `abordado`, atribuição
+    (assignee/team_tag), vínculo de melhoria (improvement_id) e edição de conteúdo
+    (text/type/score/sentiment/themes). Todos opcionais — só o que vier no corpo é
+    tocado. `model_fields_set` distingue "não enviado" de "enviado como null"
+    (ex.: `improvement_id=null` DESVINCULA; ausente = mantém o vínculo atual).
     """
 
     action_status: str | None = None
@@ -1297,6 +1564,7 @@ class FeedbackActionIn(BaseModel):
     themes: list[str] | None = None
     assignee: str | None = Field(default=None, max_length=120)
     team_tag: str | None = Field(default=None, max_length=60)
+    improvement_id: str | None = None
 
 
 @router.patch("/feedbacks/{feedback_id}")
@@ -1306,9 +1574,11 @@ async def update_feedback_action(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Edição parcial de um feedback: ação (status/nota), flag `abordado` (ao virar
-    True grava `abordado_em`=agora se vazio; ao virar False zera) e conteúdo
-    (text/type/score/sentiment/themes). Revalida `nps_bucket` quando type/score
-    mudam. Retorna o item no formato do feed. 422 em valores inválidos."""
+    True grava `abordado_em`=agora se vazio; ao virar False zera), atribuição
+    (assignee/team_tag), vínculo de melhoria (improvement_id; 404/422 se a melhoria
+    não existir/for de outra org, `null` desvincula — NÃO mexe no action_status) e
+    conteúdo (text/type/score/sentiment/themes). Revalida `nps_bucket` quando
+    type/score mudam. Retorna o item no formato do feed. 422 em valores inválidos."""
     org = await _get_org(session)
     try:
         fid = uuid.UUID(feedback_id)
@@ -1332,6 +1602,13 @@ async def update_feedback_action(
             status_code=422,
             detail=f"sentiment inválido: '{body.sentiment}' (use {', '.join(SENTIMENTS)})",
         )
+
+    # Vínculo de melhoria: valida ANTES de mutar (validar-depois-mutar). `null` desvincula.
+    # `_get_improvement` levanta 422 (uuid inválido) / 404 (não é da org). NÃO mexemos no
+    # action_status aqui — o vínculo é independente da esteira (decisão do operador depois).
+    imp_to_link: Improvement | None = None
+    if "improvement_id" in sent and body.improvement_id is not None:
+        imp_to_link = await _get_improvement(session, org, body.improvement_id)
 
     feedback = (
         await session.execute(
@@ -1370,6 +1647,9 @@ async def update_feedback_action(
         feedback.assignee = (body.assignee.strip() or None) if body.assignee else None
     if "team_tag" in sent:
         feedback.team_tag = (body.team_tag.strip() or None) if body.team_tag else None
+    if "improvement_id" in sent:
+        # imp_to_link já validado acima; None quando body.improvement_id é null (desvincula).
+        feedback.improvement_id = imp_to_link.id if imp_to_link is not None else None
 
     # Revalida o bucket se type ou score mudaram (ou se algum foi enviado).
     if ("score" in sent) or ("type" in sent):
@@ -1384,7 +1664,12 @@ async def update_feedback_action(
     contact = None
     if feedback.contact_id is not None:
         contact = (
-            await session.execute(select(Contact).where(Contact.id == feedback.contact_id))
+            await session.execute(
+                select(Contact).where(
+                    Contact.id == feedback.contact_id,
+                    Contact.organization_id == org.id,
+                )
+            )
         ).scalar_one_or_none()
     return _feedback_out(feedback, contact)
 
@@ -1756,7 +2041,8 @@ async def roadmap_improvements(
         for cid, label in (
             await session.execute(
                 select(FeedbackCluster.id, FeedbackCluster.label).where(
-                    FeedbackCluster.id.in_(cluster_ids)
+                    FeedbackCluster.organization_id == org.id,
+                    FeedbackCluster.id.in_(cluster_ids),
                 )
             )
         ).all():
@@ -1905,7 +2191,13 @@ async def update_improvement(
 ) -> dict[str, Any]:
     """Edita title/description/status de uma melhoria (parcial). Ao status virar
     'entregue', grava `delivered_at` (uma vez; não re-carimba se já estava entregue).
-    422 em status inválido. Retorna o item com `feedback_count`."""
+    422 em status inválido. Retorna o item com `feedback_count`.
+
+    Esteira (Fase D, atrás de settings.esteira_enabled): quando este PATCH ENTREGA a
+    melhoria (status=entregue, e ela ainda não estava entregue), TODOS os FeedbackItem
+    vinculados (improvement_id == imp.id) com action_status não-terminal passam a
+    'resolvido' num UPDATE em lote. Best-effort (não derruba o PATCH) e idempotente.
+    Prepara o 'fechar o loop' — o aviso ao cliente segue manual via /notify."""
     org = await _get_org(session)
     sent = body.model_fields_set
 
@@ -1917,6 +2209,9 @@ async def update_improvement(
 
     imp = await _get_improvement(session, org, improvement_id)
 
+    # Esteira: este PATCH está ENTREGANDO a melhoria AGORA? (status=entregue e ainda
+    # não estava entregue). Guardado p/ disparar o bulk-resolve pós-commit.
+    entregou_agora = False
     if "title" in sent and body.title is not None:
         imp.title = body.title.strip()
     if "description" in sent:
@@ -1926,6 +2221,7 @@ async def update_improvement(
         imp.status = body.status
         if body.status == "entregue" and not was_delivered:
             imp.delivered_at = datetime.now(timezone.utc)
+            entregou_agora = True
     if "cluster_id" in sent:
         imp.cluster_id = (
             await _resolve_cluster_id(session, org, body.cluster_id) if body.cluster_id else None
@@ -1936,6 +2232,33 @@ async def update_improvement(
         imp.target_date = body.target_date
 
     await session.commit()
+
+    # Esteira (Fase D, REGRA 2): melhoria entregue resolve os feedbacks vinculados.
+    # UPDATE em lote: action_status='resolvido' em TODO FeedbackItem com improvement_id
+    # == imp.id cujo action_status NÃO seja terminal (resolvido/descartado). Idempotente
+    # e best-effort — nunca derruba o PATCH.
+    if entregou_agora and settings.esteira_enabled:
+        try:
+            await session.execute(
+                update(FeedbackItem)
+                .where(
+                    FeedbackItem.organization_id == org.id,
+                    FeedbackItem.improvement_id == imp.id,
+                    FeedbackItem.action_status.not_in(_FEEDBACK_TERMINAL_STATUSES),
+                )
+                .values(action_status="resolvido")
+            )
+            await session.commit()
+        except Exception:  # noqa: BLE001 — esteira é best-effort; nunca derruba o PATCH
+            logger.exception("esteira: falha ao resolver feedbacks da melhoria %s", imp.id)
+            await session.rollback()
+            # rollback EXPIRA `imp`; recarrega in-context p/ a serialização abaixo não
+            # disparar lazy-load síncrono (MissingGreenlet/500).
+            try:
+                await session.refresh(imp)
+            except Exception:  # noqa: BLE001
+                pass
+
     count = await _feedback_count(session, org.id, imp.id)
     return _improvement_out(imp, count)
 
@@ -2056,8 +2379,9 @@ async def notify_improvement(
             "contato_nome": contact.name,
             "contato_whatsapp": contact.phone,
         }
-        phone = re.sub(r"\D", "", contact.phone or "")
-        if len(phone) < 10:
+        # Regra canônica de "sem WhatsApp" (idem ficha 360): validador — só celular BR
+        # válido é alcançável. Fixo/grupo/inválido/placeholder/vazio são pulados no envio.
+        if sem_whatsapp(contact.phone):
             skipped.append({**base_info, "reason": "sem_whatsapp"})
             continue
         if not contact.opt_in:

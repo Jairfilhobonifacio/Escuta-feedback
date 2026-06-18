@@ -50,6 +50,17 @@ Vi que você cancelou e queria entender, sem rodeio: o que te fez sair? pode ser
     body: `Oi {nome}! ${WAVE} aqui é o {seu_nome}, da Bizzu. Você ficou um tempo estudando com a gente e acabou saindo ${DASH} queria muito entender o que mudou. O que pesou na decisão de parar? e tem algo que faria você voltar? Me conta do seu jeito (texto ou áudio ${MIC}); se topar, marco uma call rápida pra te ouvir melhor ${HEART}`,
   },
   {
+    id: "oferta",
+    label: "Win-back \u{2014} oferta (responder form)",
+    body: `Oi {nome}! ${WAVE} aqui é o {seu_nome}, da Bizzu.
+
+A gente sentiu sua falta por aqui ${DASH} e quer muito te ouvir pra melhorar. Topa responder um formulário rapidinho contando o que te fez sair? São 2 minutinhos: {form_url}
+
+E como agradecimento, separei pra você: {oferta} ${HEART}
+
+Qualquer dúvida é só me chamar por aqui. Valeu demais!`,
+  },
+  {
     id: "branco",
     label: "Em branco (escrever do zero)",
     body: ``,
@@ -58,6 +69,8 @@ Vi que você cancelou e queria entender, sem rodeio: o que te fez sair? pode ser
 
 const LS_KEY = "escuta_msg_templates_v1";
 const LS_SENDER = "escuta_sender_name";
+const LS_OFERTA = "escuta_campanha_oferta";
+const LS_FORM_URL = "escuta_campanha_form_url";
 
 /** Default (código) + customizados (localStorage). */
 export function loadTemplates(): MsgTemplate[] {
@@ -90,18 +103,62 @@ export function saveSenderName(name: string): void {
   localStorage.setItem(LS_SENDER, name);
 }
 
-/** Substitui {nome}/{seu_nome} e limpa lacunas quando algum vem vazio. */
+/** Oferta da campanha win-back (ex.: "3 meses grátis"), lembrada entre abordagens. */
+export function loadOferta(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(LS_OFERTA) || "";
+}
+
+export function saveOferta(oferta: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(LS_OFERTA, oferta);
+}
+
+/** Link do formulário da campanha, lembrado entre abordagens. */
+export function loadFormUrl(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(LS_FORM_URL) || "";
+}
+
+export function saveFormUrl(url: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(LS_FORM_URL, url);
+}
+
+/** Substitui {nome}/{seu_nome}/{oferta}/{form_url} e limpa lacunas quando vazio. */
 export function fillTemplate(
   body: string,
-  vars: { nome?: string | null; seuNome?: string | null },
+  vars: {
+    nome?: string | null;
+    seuNome?: string | null;
+    oferta?: string | null;
+    formUrl?: string | null;
+  },
 ): string {
   const primeiro = (vars.nome || "").trim().split(/\s+/)[0] || "";
   const seu = (vars.seuNome || "").trim();
-  let out = body.replaceAll("{nome}", primeiro).replaceAll("{seu_nome}", seu);
+  const oferta = (vars.oferta || "").trim();
+  const formUrl = (vars.formUrl || "").trim();
+
+  let out = body;
+  // Lacunas de {oferta}/{form_url} vazios: quando o valor não veio, removemos o
+  // token JUNTO do conector ": " que o antecede (ex.: "São 2 minutinhos: {form_url}"
+  // -> "São 2 minutinhos."). Feito ANTES da substituição, sobre o token literal, é
+  // mais robusto do que caçar dois-pontos órfãos no texto já preenchido.
+  if (!oferta) out = out.replace(/[ \t]*:?[ \t]*\{oferta\}/g, "");
+  if (!formUrl) out = out.replace(/[ \t]*:?[ \t]*\{form_url\}/g, "");
+
+  out = out
+    .replaceAll("{nome}", primeiro)
+    .replaceAll("{seu_nome}", seu)
+    .replaceAll("{oferta}", oferta)
+    .replaceAll("{form_url}", formUrl);
   // sem nome do cliente: "Oi , " -> "Oi, " · "Oi ! " -> "Oi! "
   out = out.replace(/Oi , /g, "Oi, ").replace(/Oi ! /g, "Oi! ");
   // sem o nome de quem envia: "aqui é o , da" -> "aqui é da"
   out = out.replace(/aqui é o , da/g, "aqui é da");
+  // colapsa espaços duplos e 3+ quebras de linha sobrando após a limpeza.
+  out = out.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n");
   return out;
 }
 

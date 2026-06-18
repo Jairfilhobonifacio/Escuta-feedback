@@ -34,7 +34,7 @@ class WAHAService:
         """5524999214290 -> 5524999214290@c.us (idempotente)."""
         return phone if "@" in phone else f"{phone}@c.us"
 
-    async def send_text(self, chat_id: str, text: str, session: str = None) -> Dict[str, Any]:
+    async def send_text(self, chat_id: str, text: str, session: Optional[str] = None) -> Dict[str, Any]:
         payload = {
             "chatId": self._to_chat_id(chat_id),
             "text": text,
@@ -51,7 +51,7 @@ class WAHAService:
             logger.exception("WAHA sendText falhou")
             return {"error": str(exc)}
 
-    async def send_image(self, chat_id: str, image_url: str, caption: str = "", session: str = None) -> Dict[str, Any]:
+    async def send_image(self, chat_id: str, image_url: str, caption: str = "", session: Optional[str] = None) -> Dict[str, Any]:
         payload = {
             "chatId": self._to_chat_id(chat_id),
             "file": {"url": image_url},
@@ -62,7 +62,7 @@ class WAHAService:
             r = await client.post(f"{self.base_url}/api/sendImage", json=payload, headers=self._headers())
         return {"success": r.status_code < 400, "data": r.text}
 
-    async def send_audio(self, chat_id: str, audio_url: str, session: str = None) -> Dict[str, Any]:
+    async def send_audio(self, chat_id: str, audio_url: str, session: Optional[str] = None) -> Dict[str, Any]:
         payload = {
             "chatId": self._to_chat_id(chat_id),
             "file": {"url": audio_url},
@@ -72,7 +72,7 @@ class WAHAService:
             r = await client.post(f"{self.base_url}/api/sendVoice", json=payload, headers=self._headers())
         return {"success": r.status_code < 400, "data": r.text}
 
-    async def resolve_lid(self, lid: str, session: str = None) -> Optional[str]:
+    async def resolve_lid(self, lid: str, session: Optional[str] = None) -> Optional[str]:
         """Resolve um LID (ex.: '77052233408626@lid') para o telefone real.
 
         O WhatsApp identifica alguns chats (self-chat incluso) por LID em vez do
@@ -95,8 +95,56 @@ class WAHAService:
             logger.exception("WAHA resolve_lid falhou para %s", lid)
             return None
 
-    async def get_contacts(self, session: str = None) -> List[Dict[str, Any]]:
+    async def get_contacts(self, session: Optional[str] = None) -> List[Dict[str, Any]]:
         params = {"session": session or self.default_session}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             r = await client.get(f"{self.base_url}/api/contacts/all", params=params, headers=self._headers())
         return r.json() if r.status_code < 400 else []
+
+    async def get_session_status(self, session: Optional[str] = None) -> Optional[str]:
+        """Status da sessão WAHA (best-effort) — ex.: 'WORKING', 'SCAN_QR_CODE'.
+
+        GET /api/sessions/{session} -> {"name": ..., "status": "WORKING"}. Retorna a
+        string de status quando o WAHA responde, ou None quando indisponível/erro
+        (mesmo padrão dos outros métodos: try/except + log, nunca derruba).
+        """
+        sess = session or self.default_session
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                r = await client.get(
+                    f"{self.base_url}/api/sessions/{sess}", headers=self._headers()
+                )
+            if r.status_code >= 400:
+                logger.warning("WAHA session status %s: %s", r.status_code, r.text[:200])
+                return None
+            return (r.json() or {}).get("status")
+        except Exception:  # noqa: BLE001 — status é best-effort; WAHA off -> None.
+            logger.exception("WAHA get_session_status falhou")
+            return None
+
+    async def is_connected(self, session: Optional[str] = None) -> bool:
+        """True só se a sessão WAHA está plenamente conectada ('WORKING')."""
+        return (await self.get_session_status(session)) == "WORKING"
+
+    async def check_number_exists(self, phone: str, session: Optional[str] = None) -> Optional[bool]:
+        """Checa se um número está registrado no WhatsApp (best-effort).
+
+        GET /api/contacts/check-exists?phone=...&session=... — resposta típica
+        {"numberExists": true/false}. Retorna True/False quando o WAHA responde, ou
+        None quando o WAHA está indisponível/erro (mesmo padrão dos outros métodos:
+        try/except + log, nunca derruba). `phone` é só os dígitos (sem @c.us).
+        """
+        params = {"phone": str(phone).split("@", 1)[0], "session": session or self.default_session}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                r = await client.get(
+                    f"{self.base_url}/api/contacts/check-exists", params=params, headers=self._headers()
+                )
+            if r.status_code >= 400:
+                logger.warning("WAHA check-exists %s: %s", r.status_code, r.text[:200])
+                return None
+            exists = (r.json() or {}).get("numberExists")
+            return bool(exists) if exists is not None else None
+        except Exception:  # noqa: BLE001 — checagem é best-effort; WAHA off -> None.
+            logger.exception("WAHA check_number_exists falhou para %s", phone)
+            return None

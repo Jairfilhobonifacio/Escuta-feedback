@@ -27,12 +27,13 @@ from app.models.feedback import FeedbackItem  # noqa: E402
 from app.models.improvement import Improvement  # noqa: E402
 from tests.fakes import FakeMessagingService  # noqa: E402
 
-# Chaves exatas do item do feed após a Camada 2 (inclui assignee/team_tag).
+# Chaves exatas do item do feed após a Camada 2 (inclui assignee/team_tag) + `selos`
+# (status de campanha do contato no inbox — camada win-back).
 _ITEM_KEYS = {
-    "id", "contato_id", "contato_nome", "contato_whatsapp", "source", "type",
+    "id", "contato_id", "contato_nome", "contato_whatsapp", "selos", "source", "type",
     "score", "nps_bucket", "sentiment", "themes", "text", "urgencia",
-    "action_status", "action_note", "assignee", "team_tag", "abordado", "abordado_em",
-    "occurred_em", "created_em",
+    "action_status", "action_note", "assignee", "team_tag", "improvement_id",
+    "abordado", "abordado_em", "occurred_em", "created_em",
 }
 
 
@@ -425,3 +426,120 @@ async def test_post_feedback_aceita_assignee_e_team_tag(client, org, session):
     out = r.json()
     assert out["assignee"] == "marina"
     assert out["team_tag"] == "suporte"
+
+
+# --- improvement_id no PATCH (vincular/desvincular melhoria) ------------------
+
+
+@pytest.mark.asyncio
+async def test_patch_vincula_improvement_id_sem_mexer_no_status(client, org, session):
+    """PATCH com improvement_id válido vincula a melhoria e devolve no card, SEM
+    alterar o action_status (o vínculo é independente da esteira)."""
+    imp = Improvement(organization_id=org.id, title="Modo escuro", status="ideia")
+    fb = FeedbackItem(
+        organization_id=org.id, contact_id=None, source="manual", type="sugestao",
+        external_id="lk1", text="queria modo escuro", action_status="novo",
+        occurred_at=_dt(2026, 6, 1),
+    )
+    session.add_all([imp, fb])
+    await session.commit()
+
+    r = await client.patch(
+        f"/api/feedbacks/{fb.id}", json={"improvement_id": str(imp.id)}
+    )
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["improvement_id"] == str(imp.id)
+    # vincular NÃO mexe no action_status
+    assert out["action_status"] == "novo"
+    assert set(out.keys()) == _ITEM_KEYS
+
+    # o vínculo é persistido (some no GET) e conta na melhoria
+    fresh = (await client.get("/api/feedbacks")).json()["items"][0]
+    assert fresh["improvement_id"] == str(imp.id)
+    imps = (await client.get("/api/improvements")).json()
+    linked = next(i for i in imps if i["id"] == str(imp.id))
+    assert linked["feedback_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_patch_improvement_id_null_desvincula(client, org, session):
+    """PATCH com improvement_id=null desvincula a melhoria (não toca no resto)."""
+    imp = Improvement(organization_id=org.id, title="X", status="ideia")
+    session.add(imp)
+    await session.flush()
+    fb = FeedbackItem(
+        organization_id=org.id, contact_id=None, source="manual", type="sugestao",
+        external_id="lk2", text="x", action_status="planejado",
+        improvement_id=imp.id, occurred_at=_dt(2026, 6, 1),
+    )
+    session.add(fb)
+    await session.commit()
+
+    r = await client.patch(f"/api/feedbacks/{fb.id}", json={"improvement_id": None})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["improvement_id"] is None
+    # action_status preservado
+    assert out["action_status"] == "planejado"
+
+    imps = (await client.get("/api/improvements")).json()
+    linked = next(i for i in imps if i["id"] == str(imp.id))
+    assert linked["feedback_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_patch_improvement_id_inexistente_404(client, org, session):
+    """improvement_id que não existe na org -> 404 e nada é alterado."""
+    fb = FeedbackItem(
+        organization_id=org.id, contact_id=None, source="manual", type="sugestao",
+        external_id="lk3", text="x", action_status="novo", occurred_at=_dt(2026, 6, 1),
+    )
+    session.add(fb)
+    await session.commit()
+
+    r = await client.patch(
+        f"/api/feedbacks/{fb.id}", json={"improvement_id": str(uuid.uuid4())}
+    )
+    assert r.status_code == 404
+    # nada vinculou
+    fresh = (await client.get("/api/feedbacks")).json()["items"][0]
+    assert fresh["improvement_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_improvement_de_outra_org_404(client, org, session):
+    """Melhoria de OUTRA org não pode ser vinculada via PATCH: 404, nada muda."""
+    other = Organization(slug="outra", name="Outra", settings={})
+    session.add(other)
+    await session.flush()
+    imp_alheia = Improvement(organization_id=other.id, title="Alheia", status="ideia")
+    fb = FeedbackItem(
+        organization_id=org.id, contact_id=None, source="manual", type="sugestao",
+        external_id="lk4", text="x", action_status="novo", occurred_at=_dt(2026, 6, 1),
+    )
+    session.add_all([imp_alheia, fb])
+    await session.commit()
+
+    r = await client.patch(
+        f"/api/feedbacks/{fb.id}", json={"improvement_id": str(imp_alheia.id)}
+    )
+    assert r.status_code == 404
+    fresh = (await client.get("/api/feedbacks")).json()["items"][0]
+    assert fresh["improvement_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_improvement_id_invalido_422(client, org, session):
+    """improvement_id que não é UUID -> 422 (validação do _get_improvement)."""
+    fb = FeedbackItem(
+        organization_id=org.id, contact_id=None, source="manual", type="sugestao",
+        external_id="lk5", text="x", action_status="novo", occurred_at=_dt(2026, 6, 1),
+    )
+    session.add(fb)
+    await session.commit()
+
+    r = await client.patch(
+        f"/api/feedbacks/{fb.id}", json={"improvement_id": "nao-e-uuid"}
+    )
+    assert r.status_code == 422
