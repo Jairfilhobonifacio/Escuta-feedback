@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Modal from "@/components/Modal";
+import { Reveal, Stagger, StaggerItem } from "@/components/Motion";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   api,
   clusters,
@@ -281,9 +284,9 @@ function CloseLoopModal({
       </div>
 
       <div className="modal-foot">
-        <button type="button" className="btn ghost" onClick={onClose} disabled={sending}>
+        <Button variant="ghost" onClick={onClose} disabled={sending}>
           Cancelar
-        </button>
+        </Button>
         <button
           type="button"
           className="btn btn-wa"
@@ -349,15 +352,15 @@ function PendingPainRow({
       )}
 
       <div className="imp-actions">
-        <button
-          type="button"
-          className="btn sm imp-close-loop"
+        <Button
+          size="sm"
+          className="imp-close-loop"
           onClick={onPull}
           disabled={busy}
           title="Criar uma melhoria a partir desta dor e vincular os feedbacks"
         >
           {busy ? "Puxando…" : `${EMOJI_PULL} Puxar para o roadmap`}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -411,18 +414,17 @@ function PullFromThemes({
         </div>
       ) : (
         !error && (
-          <div className="imp-list" style={{ margin: "0 -20px -18px" }}>
-            {pains.map((c, i) => (
-              <PendingPainRow
-                key={c.id}
-                cluster={c}
-                busy={busyId === c.id}
-                onPull={() => onPull(c)}
-                className="reveal"
-                style={{ ["--i" as string]: i } as React.CSSProperties}
-              />
+          <Stagger className="imp-list" style={{ margin: "0 -20px -18px" }}>
+            {pains.map((c) => (
+              <StaggerItem key={c.id}>
+                <PendingPainRow
+                  cluster={c}
+                  busy={busyId === c.id}
+                  onPull={() => onPull(c)}
+                />
+              </StaggerItem>
             ))}
-          </div>
+          </Stagger>
         )
       )}
     </div>
@@ -712,34 +714,35 @@ export default function MelhoriasPage() {
             </div>
           ) : (
             !err && (
-              <div className="card imp-list">
-                {items.map((imp, i) => (
-                  <ImprovementCard
-                    key={imp.id}
-                    imp={imp}
-                    busy={busyId === imp.id}
-                    onChangeStage={(s) => changeStage(imp, s)}
-                    onCloseLoop={() => openCloseLoop(imp)}
-                    className="reveal"
-                    style={{ ["--i" as string]: i } as React.CSSProperties}
-                  />
+              <Stagger className="card imp-list">
+                {items.map((imp) => (
+                  <StaggerItem key={imp.id}>
+                    <ImprovementCard
+                      imp={imp}
+                      busy={busyId === imp.id}
+                      onChangeStage={(s) => changeStage(imp, s)}
+                      onCloseLoop={() => openCloseLoop(imp)}
+                    />
+                  </StaggerItem>
                 ))}
-              </div>
+              </Stagger>
             )
           )}
         </div>
 
         {/* ---- direita: puxar dos temas + criar melhoria ---- */}
         <div className="imp-side">
-          <PullFromThemes
-            pains={pains}
-            loading={painsLoading}
-            error={painsErr}
-            busyId={pullingId}
-            onPull={pullFromCluster}
-          />
+          <Reveal>
+            <PullFromThemes
+              pains={pains}
+              loading={painsLoading}
+              error={painsErr}
+              busyId={pullingId}
+              onPull={pullFromCluster}
+            />
+          </Reveal>
 
-          <div className="card" style={{ padding: "18px 20px" }}>
+          <Reveal className="card" style={{ padding: "18px 20px" }} delay={0.05}>
             <h2 className="section-title">Nova melhoria</h2>
           <p className="section-sub">
             Registre algo que você vai construir. Vincule a dores depois pela aba Temas.
@@ -747,7 +750,7 @@ export default function MelhoriasPage() {
           <form onSubmit={createImprovement}>
             <div className="field">
               <label>Título</label>
-              <input
+              <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="ex.: Reduzir tempo de carregamento do simulado"
@@ -778,7 +781,7 @@ export default function MelhoriasPage() {
               </div>
               <div className="field">
                 <label>Data-alvo</label>
-                <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
+                <Input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
               </div>
             </div>
             <div className="field">
@@ -791,11 +794,11 @@ export default function MelhoriasPage() {
                 ))}
               </select>
             </div>
-            <button className="btn" disabled={saving || !title.trim()}>
+            <Button type="submit" disabled={saving || !title.trim()}>
               {saving ? "Criando…" : "Criar melhoria"}
-            </button>
+            </Button>
           </form>
-          </div>
+          </Reveal>
         </div>
       </div>
 

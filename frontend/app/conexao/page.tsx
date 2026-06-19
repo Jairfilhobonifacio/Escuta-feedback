@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Reveal } from "@/components/Motion";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   whatsapp as wa,
   type WhatsappStatus,
@@ -9,8 +12,9 @@ import {
 
 /* Conexão do WhatsApp (WAHA) — gerencia o pareamento dentro do Escuta:
    ver status, conectar escaneando o QR, desconectar e reiniciar. Espelha o que
-   antes só dava para fazer via curl/dashboard externo. Reusa o design system
-   (card, badge, btn, page-head, modal) — identidade dark editorial Bizzu.
+   antes só dava para fazer via curl/dashboard externo. Modernizado para a UI
+   premium (light Bizzu): grid de 2 colunas — card de status + QR à esquerda,
+   guia passo-a-passo persistente à direita — para preencher e guiar.
    Emoji em .tsx só via \u{...} (o bundler do Next no Windows corrompe literais). */
 
 const EMOJI_OK = "\u{2705}"; // ✅ conectado
@@ -20,24 +24,27 @@ const EMOJI_PHONE = "\u{1F4F1}"; // 📱 aparelho
 const STATUS_EVERY = 4_000;
 const QR_EVERY = 3_500;
 
-/** Mapa de cada estado da sessão para rótulo + classe de badge do design system. */
-function statusBadge(status: WhatsappSessionStatus, conectado: boolean) {
+/** Mapa de cada estado da sessão para rótulo + variant de badge do design system. */
+function statusBadge(
+  status: WhatsappSessionStatus,
+  conectado: boolean,
+): { label: string; variant: "positive" | "neutral" | "negative" } {
   if (conectado || status === "WORKING")
-    return { label: "Conectado", cls: "promoter" };
+    return { label: "Conectado", variant: "positive" };
   switch (status) {
     case "SCAN_QR_CODE":
-      return { label: "Escaneie o QR", cls: "passive" };
+      return { label: "Escaneie o QR", variant: "neutral" };
     case "STARTING":
-      return { label: "Iniciando…", cls: "passive" };
+      return { label: "Iniciando\u{2026}", variant: "neutral" };
     case "STOPPED":
-      return { label: "Parado", cls: "neutral" };
+      return { label: "Parado", variant: "neutral" };
     case "FAILED":
-      return { label: "Falhou", cls: "detractor" };
+      return { label: "Falhou", variant: "negative" };
     case null:
     case undefined:
-      return { label: "Desligado", cls: "neutral" };
+      return { label: "Desligado", variant: "neutral" };
     default:
-      return { label: String(status), cls: "neutral" };
+      return { label: String(status), variant: "neutral" };
   }
 }
 
@@ -185,7 +192,7 @@ export default function ConexaoPage() {
         await loadStatus();
       } else {
         // reiniciou: provavelmente pedirá QR de novo — volta ao polling.
-        setFlash({ kind: "ok", msg: "Sessão reiniciada. Aguardando o QR…" });
+        setFlash({ kind: "ok", msg: "Sessão reiniciada. Aguardando o QR\u{2026}" });
         pollingRef.current = true;
         setPolling(true);
         pollQrOnce();
@@ -215,9 +222,9 @@ export default function ConexaoPage() {
             sessão.
           </div>
         </div>
-        <span className={`badge ${badge.cls}`}>
+        <Badge variant={badge.variant} className="px-2.5 py-1 text-[11.5px]">
           {conectado ? `${EMOJI_OK} ${badge.label}` : badge.label}
-        </span>
+        </Badge>
       </div>
 
       {statusErr && !loadedOnce && (
@@ -229,194 +236,272 @@ export default function ConexaoPage() {
 
       {flash && <div className={`flash ${flash.kind}`}>{flash.msg}</div>}
 
-      <div className="card conn-card">
-        {/* ---- cabeçalho de status do card ---- */}
-        <div className="conn-head">
-          <div className="conn-head-info">
-            <div className="conn-head-title">Status da sessão</div>
-            <div className="conn-head-sub">
-              {!loadedOnce ? (
-                <span className="sk-line w-80" style={{ display: "block", maxWidth: 280, margin: "4px 0 2px" }} />
-              ) : conectado ? (
-                <>
-                  {EMOJI_OK} O WhatsApp está conectado e recebendo mensagens.
-                </>
-              ) : aguardandoScan ? (
-                "Aguardando você escanear o QR code abaixo."
-              ) : desligado ? (
-                "A sessão está desligada. Clique em Conectar para gerar o QR code."
-              ) : (
-                <>
-                  Estado atual:{" "}
-                  <span className="mono">{status?.status ?? "—"}</span>
-                </>
-              )}
-            </div>
-            {status?.session && (
-              <div className="conn-head-meta">
-                <span className="mono">{status.session}</span>
-                {status.base_url && (
-                  <>
-                    {" · "}
-                    <span className="mono">{status.base_url}</span>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-          <span className={`badge ${badge.cls}`}>{badge.label}</span>
-        </div>
-
-        {/* ---- corpo: QR / conectado / desligado ---- */}
-        <div className="conn-body" aria-busy={!loadedOnce}>
-          {!loadedOnce ? (
-            <div className="conn-state" aria-hidden>
-              <div className="sk-circle sk-lg" style={{ ["--sk-size" as string]: "60px", margin: "0 auto 16px" }} />
-              <div className="sk-line sk-lg w-50" style={{ maxWidth: 200, margin: "0 auto 12px" }} />
-              <div className="sk-line w-80" style={{ maxWidth: 340, margin: "0 auto 7px" }} />
-              <div className="sk-line w-60" style={{ maxWidth: 260, margin: "0 auto" }} />
-            </div>
-          ) : conectado ? (
-            <div className="conn-state">
-              <div className="conn-orb conn-orb-ok" aria-hidden>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-              </div>
-              <div className="conn-state-title">Conectado</div>
-              <p className="conn-state-text">
-                Tudo certo. As conversas e o envio 1:1 já funcionam no{" "}
-                <b>Chat</b>. Você não precisa fazer mais nada aqui.
-              </p>
-            </div>
-          ) : iniciando ? (
-            <div className="conn-state">
-              <div className="conn-orb conn-orb-busy" aria-hidden>
-                <span className="conn-spinner conn-spinner-lg" />
-              </div>
-              <div className="conn-state-title">Iniciando a sessão…</div>
-              <p className="conn-state-text">
-                Subindo a conexão com o WhatsApp. Em instantes o <b>QR code</b> aparece
-                aqui para você parear o aparelho.
-              </p>
-            </div>
-          ) : falhou ? (
-            <div className="conn-state">
-              <div className="conn-orb conn-orb-fail" aria-hidden>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 9v4" />
-                  <path d="M12 17h.01" />
-                  <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
-                </svg>
-              </div>
-              <div className="conn-state-title">A sessão falhou</div>
-              <p className="conn-state-text">
-                Algo travou a conexão. Clique em <b>Reiniciar</b> para subir a sessão de
-                novo — pode ser preciso escanear o QR outra vez.
-              </p>
-            </div>
-          ) : aguardandoScan ? (
-            <div className="conn-qr-wrap">
-              <div className="conn-qr-box">
-                {qr ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={qr} alt="QR code para conectar o WhatsApp" className="conn-qr-img" />
-                ) : (
-                  <div className="conn-qr-pending">
-                    <div className="conn-spinner" aria-hidden />
-                    <span>Gerando QR code…</span>
+      <div className="conn-grid">
+        {/* ====== COLUNA ESQUERDA: card de status + QR ====== */}
+        <Reveal className="conn-col">
+          <div className="card conn-card">
+            {/* ---- cabeçalho de status do card ---- */}
+            <div className="conn-head">
+              <div className="conn-head-info">
+                <div className="conn-head-title">Status da sessão</div>
+                <div className="conn-head-sub">
+                  {!loadedOnce ? (
+                    <span className="sk-line w-80" style={{ display: "block", maxWidth: 280, margin: "4px 0 2px" }} />
+                  ) : conectado ? (
+                    <>
+                      {EMOJI_OK} O WhatsApp está conectado e recebendo mensagens.
+                    </>
+                  ) : aguardandoScan ? (
+                    "Aguardando você escanear o QR code abaixo."
+                  ) : desligado ? (
+                    "A sessão está desligada. Clique em Conectar para gerar o QR code."
+                  ) : (
+                    <>
+                      Estado atual:{" "}
+                      <span className="mono">{status?.status ?? "—"}</span>
+                    </>
+                  )}
+                </div>
+                {status?.session && (
+                  <div className="conn-head-meta">
+                    <span className="mono">{status.session}</span>
+                    {status.base_url && (
+                      <>
+                        {" · "}
+                        <span className="mono">{status.base_url}</span>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
-              <div className="conn-qr-help">
-                <span className="conn-live">
-                  <span className="conn-live-dot" aria-hidden />
-                  atualiza sozinho
-                </span>
-                <div className="conn-qr-help-title">
-                  {EMOJI_PHONE} Como conectar
-                </div>
-                <ol className="conn-steps">
-                  <li>Abra o <b>WhatsApp</b> no seu celular.</li>
-                  <li>
-                    Toque em <b>Aparelhos conectados</b> (Configurações ou menu
-                    de 3 pontos).
-                  </li>
-                  <li>
-                    Toque em <b>Conectar aparelho</b> e aponte a câmera para o QR
-                    ao lado.
-                  </li>
-                </ol>
-                <p className="conn-qr-note">
-                  O código atualiza sozinho a cada poucos segundos. Assim que o
-                  WhatsApp parear, esta tela mostra <b>Conectado</b>{" "}
-                  automaticamente.
-                </p>
-              </div>
+              <Badge variant={badge.variant}>{badge.label}</Badge>
             </div>
-          ) : (
-            <div className="conn-state">
-              <div className="conn-orb conn-orb-idle" aria-hidden>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+
+            {/* ---- corpo: QR / conectado / desligado ---- */}
+            <div className="conn-body" aria-busy={!loadedOnce}>
+              {!loadedOnce ? (
+                <div className="conn-state" aria-hidden>
+                  <div className="sk-circle sk-lg" style={{ ["--sk-size" as string]: "60px", margin: "0 auto 16px" }} />
+                  <div className="sk-line sk-lg w-50" style={{ maxWidth: 200, margin: "0 auto 12px" }} />
+                  <div className="sk-line w-80" style={{ maxWidth: 340, margin: "0 auto 7px" }} />
+                  <div className="sk-line w-60" style={{ maxWidth: 260, margin: "0 auto" }} />
+                </div>
+              ) : conectado ? (
+                <div className="conn-state">
+                  <div className="conn-orb conn-orb-ok" aria-hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                  </div>
+                  <div className="conn-state-title">Conectado</div>
+                  <p className="conn-state-text">
+                    Tudo certo. As conversas e o envio 1:1 já funcionam no{" "}
+                    <b>Chat</b>. Você não precisa fazer mais nada aqui.
+                  </p>
+                </div>
+              ) : iniciando ? (
+                <div className="conn-state">
+                  <div className="conn-orb conn-orb-busy" aria-hidden>
+                    <span className="conn-spinner conn-spinner-lg" />
+                  </div>
+                  <div className="conn-state-title">Iniciando a sessão{"\u{2026}"}</div>
+                  <p className="conn-state-text">
+                    Subindo a conexão com o WhatsApp. Em instantes o <b>QR code</b> aparece
+                    aqui para você parear o aparelho.
+                  </p>
+                </div>
+              ) : falhou ? (
+                <div className="conn-state">
+                  <div className="conn-orb conn-orb-fail" aria-hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 9v4" />
+                      <path d="M12 17h.01" />
+                      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+                    </svg>
+                  </div>
+                  <div className="conn-state-title">A sessão falhou</div>
+                  <p className="conn-state-text">
+                    Algo travou a conexão. Clique em <b>Reiniciar</b> para subir a sessão de
+                    novo — pode ser preciso escanear o QR outra vez.
+                  </p>
+                </div>
+              ) : aguardandoScan ? (
+                <div className="conn-qr-wrap">
+                  <div className="conn-qr-box">
+                    {qr ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={qr} alt="QR code para conectar o WhatsApp" className="conn-qr-img" />
+                    ) : (
+                      <div className="conn-qr-pending">
+                        <div className="conn-spinner" aria-hidden />
+                        <span>Gerando QR code{"\u{2026}"}</span>
+                      </div>
+                    )}
+                  </div>
+                  <span className="conn-live">
+                    <span className="conn-live-dot" aria-hidden />
+                    atualiza sozinho
+                  </span>
+                  <p className="conn-qr-note">
+                    O código atualiza sozinho a cada poucos segundos. Assim que o
+                    WhatsApp parear, esta tela mostra <b>Conectado</b>{" "}
+                    automaticamente. Siga o passo-a-passo ao lado.
+                  </p>
+                </div>
+              ) : (
+                <div className="conn-state">
+                  <div className="conn-orb conn-orb-idle" aria-hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="5" y="2" width="14" height="20" rx="3" />
+                      <path d="M11 18h2" />
+                    </svg>
+                  </div>
+                  <div className="conn-state-title">WhatsApp desconectado</div>
+                  <p className="conn-state-text">
+                    {desligado
+                      ? "A sessão está desligada. Clique em Conectar para gerar o QR code e parear um aparelho."
+                      : "A sessão não está ativa. Clique em Conectar para iniciar e gerar o QR code."}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* ---- ações ---- */}
+            <div className="conn-actions">
+              {!conectado && (
+                <Button
+                  variant="accent"
+                  onClick={conectar}
+                  disabled={busy !== null}
+                >
+                  {busy === "start"
+                    ? "Conectando\u{2026}"
+                    : aguardandoScan
+                      ? "Gerar novo QR"
+                      : "Conectar"}
+                </Button>
+              )}
+              {conectado && (
+                <Button
+                  variant="outline"
+                  onClick={() => setConfirm("stop")}
+                  disabled={busy !== null}
+                >
+                  {busy === "stop" ? "Desconectando\u{2026}" : "Desconectar"}
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                onClick={() => setConfirm("restart")}
+                disabled={busy !== null}
+              >
+                {busy === "restart" ? "Reiniciando\u{2026}" : "Reiniciar"}
+              </Button>
+              {!conectado && aguardandoScan && (
+                <Button
+                  variant="ghost"
+                  onClick={() => setConfirm("stop")}
+                  disabled={busy !== null}
+                >
+                  Cancelar
+                </Button>
+              )}
+            </div>
+          </div>
+        </Reveal>
+
+        {/* ====== COLUNA DIREITA: guia passo-a-passo + dicas (persistente) ====== */}
+        <Reveal delay={0.08} className="conn-col">
+          <div className="card conn-help-card">
+            <div className="conn-help-head">
+              <span className="conn-help-ico" aria-hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="5" y="2" width="14" height="20" rx="3" />
                   <path d="M11 18h2" />
                 </svg>
+              </span>
+              <div>
+                <div className="conn-help-title">
+                  {EMOJI_PHONE} Como conectar
+                </div>
+                <div className="conn-help-sub">
+                  Quatro passos no seu celular — leva menos de um minuto.
+                </div>
               </div>
-              <div className="conn-state-title">WhatsApp desconectado</div>
-              <p className="conn-state-text">
-                {desligado
-                  ? "A sessão está desligada. Clique em Conectar para gerar o QR code e parear um aparelho."
-                  : "A sessão não está ativa. Clique em Conectar para iniciar e gerar o QR code."}
-              </p>
             </div>
-          )}
-        </div>
 
-        {/* ---- ações ---- */}
-        <div className="conn-actions">
-          {!conectado && (
-            <button
-              type="button"
-              className="btn"
-              onClick={conectar}
-              disabled={busy !== null}
-            >
-              {busy === "start"
-                ? "Conectando…"
-                : aguardandoScan
-                  ? "Gerar novo QR"
-                  : "Conectar"}
-            </button>
-          )}
-          {conectado && (
-            <button
-              type="button"
-              className="btn danger"
-              onClick={() => setConfirm("stop")}
-              disabled={busy !== null}
-            >
-              {busy === "stop" ? "Desconectando…" : "Desconectar"}
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn ghost"
-            onClick={() => setConfirm("restart")}
-            disabled={busy !== null}
-          >
-            {busy === "restart" ? "Reiniciando…" : "Reiniciar"}
-          </button>
-          {!conectado && aguardandoScan && (
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => setConfirm("stop")}
-              disabled={busy !== null}
-            >
-              Cancelar
-            </button>
-          )}
-        </div>
+            <ol className="conn-steps">
+              <li>
+                <span className="conn-step-n" aria-hidden>1</span>
+                <span className="conn-step-tx">
+                  Abra o <b>WhatsApp</b> no seu celular.
+                </span>
+              </li>
+              <li>
+                <span className="conn-step-n" aria-hidden>2</span>
+                <span className="conn-step-tx">
+                  Toque em <b>Aparelhos conectados</b> (Configurações, ou no menu
+                  de 3 pontos no Android).
+                </span>
+              </li>
+              <li>
+                <span className="conn-step-n" aria-hidden>3</span>
+                <span className="conn-step-tx">
+                  Toque em <b>Conectar aparelho</b>.
+                </span>
+              </li>
+              <li>
+                <span className="conn-step-n" aria-hidden>4</span>
+                <span className="conn-step-tx">
+                  Aponte a câmera para o <b>QR code</b>{" "}
+                  {aguardandoScan ? "ao lado" : "que aparece ao clicar em Conectar"}.
+                </span>
+              </li>
+            </ol>
+
+            <div className="conn-tips">
+              <div className="conn-tips-title">Dicas</div>
+              <ul className="conn-tips-list">
+                <li>
+                  <span className="conn-tip-dot" aria-hidden />
+                  O QR <b>expira rápido</b> — se passar do tempo, é só clicar em
+                  <b> Gerar novo QR</b>.
+                </li>
+                <li>
+                  <span className="conn-tip-dot" aria-hidden />
+                  Deixe o celular <b>conectado à internet</b> para a sessão se
+                  manter ativa.
+                </li>
+                <li>
+                  <span className="conn-tip-dot" aria-hidden />
+                  Travou? <b>Reiniciar</b> sobe a sessão de novo (pode pedir o QR
+                  outra vez).
+                </li>
+              </ul>
+            </div>
+
+            <div className={`conn-help-foot ${conectado ? "ok" : ""}`}>
+              {conectado ? (
+                <>
+                  <span className="conn-foot-ico" aria-hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                  </span>
+                  Conectado — pode usar o Chat e as Pesquisas normalmente.
+                </>
+              ) : (
+                <>
+                  <span className="conn-foot-ico" aria-hidden>
+                    <span className="conn-live-dot" />
+                  </span>
+                  Esta tela detecta o pareamento sozinha — não feche a aba durante
+                  o processo.
+                </>
+              )}
+            </div>
+          </div>
+        </Reveal>
       </div>
 
       {/* ---- modal de confirmação (desconectar / reiniciar) ---- */}
@@ -463,26 +548,39 @@ export default function ConexaoPage() {
               </p>
             </div>
             <div className="modal-foot">
-              <button type="button" className="btn ghost" onClick={() => setConfirm(null)}>
+              <Button variant="ghost" onClick={() => setConfirm(null)}>
                 Cancelar
-              </button>
-              <button
-                type="button"
-                className={`btn ${confirm === "stop" ? "danger" : ""}`}
+              </Button>
+              <Button
+                variant={confirm === "stop" ? "destructive" : "default"}
                 onClick={confirm === "stop" ? desconectar : reiniciar}
               >
                 {confirm === "stop" ? "Desconectar" : "Reiniciar"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ---- estilos locais (padrão dark do painel) ---- */}
+      {/* ---- estilos locais (padrão claro do painel) ---- */}
       <style jsx>{`
-        .conn-card {
+        /* grid de 2 colunas: status/QR + ajuda (preenche o espaço) */
+        .conn-grid {
+          display: grid;
+          grid-template-columns: 1.15fr 0.85fr;
+          gap: 20px;
+          align-items: stretch;
+        }
+        .conn-col {
+          display: flex;
+          min-width: 0;
+        }
+        .conn-card,
+        .conn-help-card {
           overflow: hidden;
-          max-width: 760px;
+          width: 100%;
+          display: flex;
+          flex-direction: column;
         }
         .conn-head {
           display: flex;
@@ -512,18 +610,16 @@ export default function ConexaoPage() {
           margin-top: 7px;
         }
         .conn-body {
-          padding: 26px 22px;
+          padding: 30px 22px;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
         }
         /* estado simples (conectado / desligado) */
         .conn-state {
           text-align: center;
           padding: 14px 12px 4px;
-        }
-        .conn-big {
-          font-size: 42px;
-          line-height: 1;
-          margin-bottom: 14px;
-          opacity: 0.92;
         }
         .conn-state-title {
           font-family: var(--font-display);
@@ -543,9 +639,9 @@ export default function ConexaoPage() {
         /* orbe de estado — disco tingido pela marca, com glow e halo */
         .conn-orb {
           position: relative;
-          width: 64px;
-          height: 64px;
-          margin: 0 auto 18px;
+          width: 72px;
+          height: 72px;
+          margin: 0 auto 20px;
           display: grid;
           place-items: center;
           border-radius: 50%;
@@ -553,8 +649,8 @@ export default function ConexaoPage() {
           box-shadow: var(--edge);
         }
         .conn-orb svg {
-          width: 28px;
-          height: 28px;
+          width: 30px;
+          height: 30px;
           display: block;
           position: relative;
           z-index: 1;
@@ -609,16 +705,17 @@ export default function ConexaoPage() {
           border-width: 3px;
           border-top-color: var(--gold-soft);
         }
-        /* QR */
+        /* QR — agora centralizado na coluna (a ajuda fica no card ao lado) */
         .conn-qr-wrap {
-          display: grid;
-          grid-template-columns: 232px 1fr;
-          gap: 28px;
+          display: flex;
+          flex-direction: column;
           align-items: center;
+          text-align: center;
+          gap: 16px;
         }
         .conn-qr-box {
-          width: 232px;
-          height: 232px;
+          width: 244px;
+          height: 244px;
           display: grid;
           place-items: center;
           padding: 12px;
@@ -628,13 +725,13 @@ export default function ConexaoPage() {
           box-shadow: var(--shadow-pop), 0 0 0 6px rgba(108, 92, 231, 0.08);
           overflow: hidden;
         }
-        .conn-qr-img { border-radius: var(--radius-xs); }
         .conn-qr-img {
           width: 100%;
           height: 100%;
           object-fit: contain;
           display: block;
           outline: none;
+          border-radius: var(--radius-xs);
         }
         .conn-qr-pending {
           display: flex;
@@ -675,7 +772,6 @@ export default function ConexaoPage() {
           border: 1px solid var(--promoter-line);
           border-radius: 999px;
           padding: 4px 10px;
-          margin-bottom: 14px;
         }
         .conn-live-dot {
           width: 7px;
@@ -693,33 +789,12 @@ export default function ConexaoPage() {
         @media (prefers-reduced-motion: reduce) {
           .conn-live-dot { animation: none; }
         }
-        .conn-qr-help-title {
-          font-family: var(--font-display);
-          font-size: 15px;
-          font-weight: 600;
-          letter-spacing: -0.3px;
-          color: var(--text);
-          margin-bottom: 12px;
-        }
-        .conn-steps {
-          margin: 0;
-          padding-left: 20px;
-          display: flex;
-          flex-direction: column;
-          gap: 9px;
-          font-size: 13.5px;
-          color: var(--text-dim);
-          line-height: 1.5;
-        }
-        .conn-steps b {
-          color: var(--text);
-          font-weight: 600;
-        }
         .conn-qr-note {
           font-size: 12.5px;
           color: var(--text-faint);
           line-height: 1.55;
-          margin: 14px 0 0;
+          margin: 0;
+          max-width: 40ch;
           text-wrap: pretty;
         }
         .conn-qr-note b {
@@ -735,11 +810,150 @@ export default function ConexaoPage() {
           padding: 16px 22px 18px;
           border-top: 1px solid var(--charcoal);
         }
-        @media (max-width: 620px) {
-          .conn-qr-wrap {
+
+        /* ===== card de ajuda (coluna direita) ===== */
+        .conn-help-card {
+          background:
+            linear-gradient(180deg, rgba(108, 92, 231, 0.04), transparent 30%),
+            var(--ink-800);
+        }
+        .conn-help-head {
+          display: flex;
+          align-items: flex-start;
+          gap: 13px;
+          padding: 20px 22px 16px;
+          border-bottom: 1px solid var(--charcoal);
+        }
+        .conn-help-ico {
+          flex-shrink: 0;
+          width: 40px;
+          height: 40px;
+          display: grid;
+          place-items: center;
+          border-radius: var(--radius-sm);
+          color: var(--indigo-light);
+          background: var(--promoter-soft);
+          border: 1px solid var(--promoter-line);
+        }
+        .conn-help-ico svg { width: 20px; height: 20px; }
+        .conn-help-title {
+          font-family: var(--font-display);
+          font-size: 16px;
+          font-weight: 600;
+          letter-spacing: -0.3px;
+          color: var(--text);
+        }
+        .conn-help-sub {
+          font-size: 12.5px;
+          color: var(--text-faint);
+          margin-top: 3px;
+          line-height: 1.5;
+        }
+        .conn-steps {
+          list-style: none;
+          margin: 0;
+          padding: 18px 22px 6px;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .conn-steps li {
+          display: flex;
+          align-items: flex-start;
+          gap: 13px;
+          padding: 11px 0;
+          font-size: 13.5px;
+          color: var(--text-dim);
+          line-height: 1.5;
+          border-bottom: 1px solid var(--charcoal);
+        }
+        .conn-steps li:last-child { border-bottom: none; }
+        .conn-steps b {
+          color: var(--text);
+          font-weight: 600;
+        }
+        .conn-step-n {
+          flex-shrink: 0;
+          width: 24px;
+          height: 24px;
+          display: grid;
+          place-items: center;
+          border-radius: 50%;
+          font-family: var(--mono);
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--indigo-light);
+          background: var(--promoter-soft);
+          border: 1px solid var(--promoter-line);
+        }
+        .conn-step-tx { padding-top: 2px; text-wrap: pretty; }
+        /* dicas */
+        .conn-tips {
+          margin: 8px 22px 0;
+          padding: 14px 16px;
+          background: var(--ink);
+          border: 1px solid var(--charcoal);
+          border-radius: var(--radius-sm);
+        }
+        .conn-tips-title {
+          font-size: 10.5px;
+          font-weight: 700;
+          letter-spacing: 1px;
+          text-transform: uppercase;
+          color: var(--text-faint);
+          margin-bottom: 10px;
+        }
+        .conn-tips-list {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 9px;
+        }
+        .conn-tips-list li {
+          display: flex;
+          align-items: flex-start;
+          gap: 9px;
+          font-size: 12.5px;
+          color: var(--text-dim);
+          line-height: 1.5;
+          text-wrap: pretty;
+        }
+        .conn-tips-list b { color: var(--text); font-weight: 600; }
+        .conn-tip-dot {
+          flex-shrink: 0;
+          width: 5px;
+          height: 5px;
+          margin-top: 7px;
+          border-radius: 50%;
+          background: var(--gold-fill);
+        }
+        .conn-help-foot {
+          margin-top: auto;
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          padding: 14px 22px 18px;
+          font-size: 12.5px;
+          color: var(--text-faint);
+          line-height: 1.45;
+          text-wrap: pretty;
+        }
+        .conn-help-foot.ok { color: var(--indigo-light); }
+        .conn-foot-ico {
+          flex-shrink: 0;
+          display: grid;
+          place-items: center;
+          width: 16px;
+          height: 16px;
+          color: var(--indigo-light);
+        }
+        .conn-foot-ico svg { width: 16px; height: 16px; }
+
+        @media (max-width: 900px) {
+          .conn-grid {
             grid-template-columns: 1fr;
-            justify-items: center;
-            gap: 22px;
           }
         }
       `}</style>

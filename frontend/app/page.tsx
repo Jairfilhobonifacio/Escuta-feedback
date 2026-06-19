@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Reveal, Stagger, StaggerItem } from "@/components/Motion";
 import {
   api,
   campanha as campanhaApi,
@@ -292,7 +293,7 @@ export default function DashboardPage() {
         <span className="refresh-note">atualiza a cada 30s</span>
       </div>
 
-      <div className="card hero-nps">
+      <Reveal className="card hero-nps">
         <div className="hero-gauge">
           <NpsGauge nps={k.nps} />
           <div className="hero-gauge-center">
@@ -340,13 +341,13 @@ export default function DashboardPage() {
         </div>
 
         <Waveform />
-      </div>
+      </Reveal>
 
       {cmp && (
         <>
           {/* Cards de números: universo + recorte com/sem WhatsApp real */}
-          <div className="cmp-cards reveal-stagger">
-            <div className="card kpi reveal">
+          <Stagger className="cmp-cards" delayChildren={0.08}>
+            <StaggerItem className="card kpi">
               <div className="kpi-label">Universo</div>
               <div className="kpi-value">{cmp.universo}</div>
               <div className="kpi-hint">clientes que cancelaram</div>
@@ -364,8 +365,8 @@ export default function DashboardPage() {
                   {"\u{2709}\u{FE0F}"} {cmp.sem_whatsapp} sem WhatsApp
                 </span>
               </div>
-            </div>
-            <div className="card kpi reveal">
+            </StaggerItem>
+            <StaggerItem className="card kpi">
               <div className="kpi-label">Contatados</div>
               <div className="kpi-value">{cmp.contatados}</div>
               <div className="kpi-hint">
@@ -373,23 +374,23 @@ export default function DashboardPage() {
                   ? `${Math.round(cmpPct(cmp.contatados, cmp.universo))}% do universo`
                   : "—"}
               </div>
-            </div>
-            <div className="card kpi reveal">
+            </StaggerItem>
+            <StaggerItem className="card kpi">
               <div className="kpi-label">Responderam</div>
               <div className="kpi-value">{cmp.responderam}</div>
               <div className="kpi-hint">voltaram a falar com a gente</div>
-            </div>
-            <div className="card kpi reveal">
+            </StaggerItem>
+            <StaggerItem className="card kpi">
               <div className="kpi-label">Cortesia</div>
               <div className="kpi-value">{cmp.cortesia}</div>
               <div className="kpi-hint">ganharam a oferta</div>
-            </div>
-            <div className="card kpi reveal">
+            </StaggerItem>
+            <StaggerItem className="card kpi">
               <div className="kpi-label">Reativaram</div>
               <div className="kpi-value cmp-reativou">{cmp.reativaram}</div>
               <div className="kpi-hint">voltaram a assinar</div>
-            </div>
-          </div>
+            </StaggerItem>
+          </Stagger>
 
           {/* Quebra do universo por alcance (some se a API não mandar por_alcance) */}
           {(() => {
@@ -399,7 +400,7 @@ export default function DashboardPage() {
             );
             if (rows.length === 0) return null;
             return (
-              <div className="card cmp-block">
+              <Reveal className="card cmp-block">
                 <div className="card-head">
                   <div>
                     <div className="section-title">Campanha &amp; Alcance</div>
@@ -411,13 +412,9 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="cmp-pad">
-                  <ul className="cmp-canal-list">
-                    {rows.map((r, i) => (
-                      <li
-                        key={r.key}
-                        className="cmp-canal-row reveal"
-                        style={{ ["--i" as string]: i } as React.CSSProperties}
-                      >
+                  <ul className="cmp-canal-list reveal-stagger">
+                    {rows.map((r) => (
+                      <li key={r.key} className="cmp-canal-row reveal">
                         <span className="cmp-canal-name">
                           <span aria-hidden="true">{r.emoji} </span>
                           {r.label}
@@ -434,13 +431,13 @@ export default function DashboardPage() {
                     ))}
                   </ul>
                 </div>
-              </div>
+              </Reveal>
             );
           })()}
 
           {/* Funil da campanha — a contatar → contatado → respondeu → cortesia → reativou */}
           {cmp.funil.length > 0 && (
-            <div className="card cmp-block">
+            <Reveal className="card cmp-block">
               <div className="card-head">
                 <div>
                   <div className="section-title">Funil da campanha</div>
@@ -451,13 +448,9 @@ export default function DashboardPage() {
                   </div>
                 </div>
               </div>
-              <div className="cmp-funnel">
-                {cmp.funil.map((f, i) => (
-                  <div
-                    className="cmp-fn-step reveal"
-                    key={f.etapa}
-                    style={{ ["--i" as string]: i } as React.CSSProperties}
-                  >
+              <div className="cmp-funnel reveal-stagger">
+                {cmp.funil.map((f) => (
+                  <div className="cmp-fn-step reveal" key={f.etapa}>
                     <div className="cmp-fn-top">
                       <span className="cmp-fn-label">{f.etapa}</span>
                       <span className="cmp-fn-n mono">{f.count}</span>
@@ -474,7 +467,7 @@ export default function DashboardPage() {
                   </div>
                 ))}
               </div>
-            </div>
+            </Reveal>
           )}
         </>
       )}
@@ -483,7 +476,7 @@ export default function DashboardPage() {
           existentes (feedbacks/tarefas/clusters). Cada sub-bloco degrada sozinho:
           se o endpoint falhou, o snapshot é null e a sub-seção some. */}
       {(voz.feedbacks || voz.tarefas || dores) && (
-        <div className="card cmp-block">
+        <Reveal className="card cmp-block">
           <div className="card-head">
             <div>
               <div className="section-title">Voz do cliente &amp; Tarefas</div>
@@ -591,10 +584,10 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        </div>
+        </Reveal>
       )}
 
-      <div className="card exit-card">
+      <Reveal className="card exit-card">
         <div className="card-head">
           <div>
             <div className="section-title">Motivos de cancelamento</div>
@@ -635,9 +628,9 @@ export default function DashboardPage() {
             ))}
           </ul>
         )}
-      </div>
+      </Reveal>
 
-      <div className="card">
+      <Reveal className="card" delay={0.05}>
         <div className="card-head">
           <div className="section-title">Respostas recentes</div>
         </div>
@@ -714,7 +707,7 @@ export default function DashboardPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </Reveal>
     </div>
   );
 }

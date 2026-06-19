@@ -12,6 +12,8 @@ import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import AbordarModal, { waIcon } from "@/components/AbordarModal";
+import { Stagger, StaggerItem } from "@/components/Motion";
+import { Button } from "@/components/ui/button";
 import {
   api,
   campanha as campanhaApi,
@@ -298,12 +300,12 @@ function EditFeedbackModal({
           {error && <div className="flash err" style={{ marginBottom: 0 }}>{error}</div>}
         </div>
         <div className="modal-foot">
-          <button type="button" className="btn ghost" onClick={onCancel} disabled={saving}>
+          <Button variant="ghost" type="button" onClick={onCancel} disabled={saving}>
             Cancelar
-          </button>
-          <button type="submit" className="btn" disabled={saving}>
+          </Button>
+          <Button type="submit" disabled={saving}>
             {saving ? "Salvando…" : "Salvar alterações"}
-          </button>
+          </Button>
         </div>
       </form>
     </Modal>
@@ -606,12 +608,12 @@ function CreateFeedbackModal({
           {error && <div className="flash err" style={{ marginBottom: 0 }}>{error}</div>}
         </div>
         <div className="modal-foot">
-          <button type="button" className="btn ghost" onClick={onCancel} disabled={saving}>
+          <Button variant="ghost" type="button" onClick={onCancel} disabled={saving}>
             Cancelar
-          </button>
-          <button type="submit" className="btn" disabled={saving}>
+          </Button>
+          <Button type="submit" disabled={saving}>
             {saving ? "Criando…" : "Criar feedback"}
-          </button>
+          </Button>
         </div>
       </form>
     </Modal>
@@ -1162,9 +1164,9 @@ export default function FeedbacksPage() {
         </div>
         <div className="page-head-actions">
           {!loading && <span className="refresh-note">{total} no total</span>}
-          <button type="button" className="btn" onClick={() => setCreating(true)}>
+          <Button onClick={() => setCreating(true)}>
             <span aria-hidden>＋</span> Novo feedback
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1357,21 +1359,17 @@ export default function FeedbacksPage() {
             </p>
             {!status && !hasFilters && (
               <div className="empty-cta">
-                <button type="button" className="btn" onClick={() => setCreating(true)}>
+                <Button onClick={() => setCreating(true)}>
                   <span aria-hidden>＋</span> Adicionar o primeiro
-                </button>
+                </Button>
               </div>
             )}
           </div>
         </div>
       ) : (
-        <div className="feed reveal-stagger">
-          {visible.map((fb, i) => (
-            <div
-              key={fb.id}
-              className="reveal"
-              style={{ ["--i" as string]: i } as React.CSSProperties}
-            >
+        <Stagger className="feed">
+          {visible.map((fb) => (
+            <StaggerItem key={fb.id}>
               <FeedbackCard
                 fb={fb}
                 onPatched={onPatched}
@@ -1380,16 +1378,16 @@ export default function FeedbacksPage() {
                 onAbordar={setAbordando}
                 onSelosChanged={onSelosChanged}
               />
-            </div>
+            </StaggerItem>
           ))}
-        </div>
+        </Stagger>
       )}
 
       {hasMore && !status && (
         <div className="load-more">
-          <button className="btn ghost" onClick={loadMore} disabled={loadingMore}>
+          <Button variant="ghost" onClick={loadMore} disabled={loadingMore}>
             {loadingMore ? "Carregando…" : "Carregar mais"}
-          </button>
+          </Button>
         </div>
       )}
 

@@ -22,6 +22,7 @@ from app.api._security import require_panel_key
 from app.api.admin import router as admin_router
 from app.api.boards import router as boards_router
 from app.api.campanha import router as campanha_router
+from app.api.central import router as central_router
 from app.api.clusters import router as clusters_router
 from app.api.digest import router as digest_router
 from app.api.events import router as events_router
@@ -87,6 +88,7 @@ app.include_router(playbooks_router, prefix="/api", dependencies=_panel)
 app.include_router(tasks_router, prefix="/api", dependencies=_panel)
 app.include_router(clusters_router, prefix="/api", dependencies=_panel)
 app.include_router(campanha_router, prefix="/api", dependencies=_panel)
+app.include_router(central_router, prefix="/api", dependencies=_panel)
 app.include_router(boards_router, prefix="/api", dependencies=_panel)
 app.include_router(whatsapp_router, prefix="/api", dependencies=_panel)
 app.include_router(integration_router, prefix="/api")

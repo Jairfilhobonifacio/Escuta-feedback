@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { Reveal } from "@/components/Motion";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import {
   api,
   type Playbook,
@@ -349,7 +355,7 @@ export default function PlaybooksPage() {
 
   return (
     <div>
-      <div className="page-head">
+      <Reveal className="page-head">
         <div>
           <h1 className="page-title">Playbooks</h1>
           <div className="page-sub">
@@ -358,13 +364,13 @@ export default function PlaybooksPage() {
           </div>
         </div>
         {!loading && <span className="refresh-note">{playbooks.length} regras</span>}
-      </div>
+      </Reveal>
 
       {flash && <div className={`flash ${flash.kind}`}>{flash.msg}</div>}
 
       <div className="two-col">
         {/* Lista de regras */}
-        <div className="card" aria-busy={loading || undefined}>
+        <Reveal delay={0.05} className="card" aria-busy={loading || undefined}>
           {loading && playbooks.length === 0 &&
             Array.from({ length: 3 }).map((_, i) => <SkeletonItem key={i} />)}
           {!loading && playbooks.length === 0 && (
@@ -375,9 +381,7 @@ export default function PlaybooksPage() {
                 Crie um playbook para que um gatilho vire tarefa de CS ou alerta — sem ninguém precisar lembrar.
               </p>
               <div className="empty-cta">
-                <button type="button" className="btn" onClick={focusForm}>
-                  Criar playbook
-                </button>
+                <Button onClick={focusForm}>Criar playbook</Button>
               </div>
             </div>
           )}
@@ -389,9 +393,9 @@ export default function PlaybooksPage() {
             >
               <div className="survey-name">
                 {p.name}
-                <span className={`badge ${p.enabled ? "promoter" : "neutral"}`}>
+                <Badge variant={p.enabled ? "positive" : "neutral"}>
                   {p.enabled ? "ativo" : "inativo"}
-                </span>
+                </Badge>
               </div>
               <div className="survey-q">
                 <b>{ruleSummary(p)}</b>
@@ -413,9 +417,9 @@ export default function PlaybooksPage() {
                 >
                   {togglingId === p.id ? "…" : p.enabled ? "Ativo" : "Inativo"}
                 </button>
-                <button type="button" className="btn ghost sm" onClick={() => startEdit(p)}>
+                <Button variant="ghost" size="sm" onClick={() => startEdit(p)}>
                   Editar
-                </button>
+                </Button>
                 <button
                   type="button"
                   className="icon-btn danger"
@@ -423,36 +427,36 @@ export default function PlaybooksPage() {
                   title="Excluir regra"
                   aria-label="Excluir regra"
                 >
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-                    strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                    <path d="M10 11v6M14 11v6" />
-                  </svg>
+                  <Trash2 size={15} strokeWidth={1.7} aria-hidden />
                 </button>
               </div>
             </div>
           ))}
-        </div>
+        </Reveal>
 
         {/* Form criar / editar */}
-        <div className="card" style={{ padding: "18px 20px" }}>
-          <h2 className="section-title">{isEditing ? "Editar regra" : "Nova regra"}</h2>
-          <p className="section-sub">
-            {isEditing
-              ? `Ajustando "${editingName ?? ""}".`
-              : "Defina o gatilho, o que ele observa e a ação a tomar."}
-          </p>
-          <form onSubmit={submit}>
-            <div className="field">
-              <label>Nome da regra</label>
-              <input
-                ref={nameRef}
-                value={form.name}
-                onChange={(e) => set("name", e.target.value)}
-                placeholder="ex.: Resgatar contas em risco"
-                required
-              />
-            </div>
+        <Reveal delay={0.1}>
+          <Card>
+            <CardHeader>
+              <CardTitle>{isEditing ? "Editar regra" : "Nova regra"}</CardTitle>
+              <CardDescription>
+                {isEditing
+                  ? `Ajustando "${editingName ?? ""}".`
+                  : "Defina o gatilho, o que ele observa e a ação a tomar."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={submit}>
+                <div className="field">
+                  <label>Nome da regra</label>
+                  <Input
+                    ref={nameRef}
+                    value={form.name}
+                    onChange={(e) => set("name", e.target.value)}
+                    placeholder="ex.: Resgatar contas em risco"
+                    required
+                  />
+                </div>
 
             <div className="field">
               <label>Gatilho</label>
@@ -484,7 +488,7 @@ export default function PlaybooksPage() {
               <>
                 <div className="field">
                   <label>Título da tarefa (use {"{nome}"})</label>
-                  <input
+                  <Input
                     value={form.title}
                     onChange={(e) => set("title", e.target.value)}
                     placeholder="ex.: Abordar {nome}"
@@ -501,7 +505,7 @@ export default function PlaybooksPage() {
                   </div>
                   <div className="field">
                     <label>SLA (horas)</label>
-                    <input
+                    <Input
                       type="number" min={1} inputMode="numeric"
                       value={form.sla_hours}
                       onChange={(e) => set("sla_hours", e.target.value)}
@@ -512,36 +516,38 @@ export default function PlaybooksPage() {
               </>
             )}
 
-            <div className="field">
-              <label>Dono padrão</label>
-              <input
-                value={form.owner}
-                onChange={(e) => set("owner", e.target.value)}
-                placeholder="ex.: cs (slug/telefone/e-mail do responsável)"
-              />
-            </div>
+                <div className="field">
+                  <label>Dono padrão</label>
+                  <Input
+                    value={form.owner}
+                    onChange={(e) => set("owner", e.target.value)}
+                    placeholder="ex.: cs (slug/telefone/e-mail do responsável)"
+                  />
+                </div>
 
-            <label className="check-row" style={{ marginBottom: 16 }}>
-              <input
-                type="checkbox"
-                checked={form.enabled}
-                onChange={(e) => set("enabled", e.target.checked)}
-              />
-              <span>Regra ativa</span>
-            </label>
+                <label className="check-row" style={{ marginBottom: 16 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.enabled}
+                    onChange={(e) => set("enabled", e.target.checked)}
+                  />
+                  <span>Regra ativa</span>
+                </label>
 
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn" disabled={saving}>
-                {saving ? "Salvando…" : isEditing ? "Salvar alterações" : "Criar regra"}
-              </button>
-              {isEditing && (
-                <button type="button" className="btn ghost" onClick={startCreate} disabled={saving}>
-                  Cancelar
-                </button>
-              )}
-            </div>
-          </form>
-        </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Button type="submit" disabled={saving}>
+                    {saving ? "Salvando…" : isEditing ? "Salvar alterações" : "Criar regra"}
+                  </Button>
+                  {isEditing && (
+                    <Button type="button" variant="ghost" onClick={startCreate} disabled={saving}>
+                      Cancelar
+                    </Button>
+                  )}
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </Reveal>
       </div>
 
       {deleting && (

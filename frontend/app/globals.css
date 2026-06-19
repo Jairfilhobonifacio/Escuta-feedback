@@ -1,45 +1,55 @@
+/* ===== Tailwind (camada de utilitários para os componentes novos) ===========
+   Com `preflight: false` (ver tailwind.config.ts), @tailwind base fica quase
+   vazio — NÃO reseta o CSS legado abaixo. As 3 diretivas precisam vir antes das
+   regras próprias para que os utilitários tenham a especificidade certa. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* ===== Escuta — design tokens (identidade Bizzu) ============================
-   Reskin completo: dark, editorial, premium (refs Linear / Vercel / Bloomberg).
-   Fundo Void quase-preto azulado, marca Indigo, valor em Gold, dados em mono.
-   Os NOMES de classe são preservados — só o visual muda. */
+   Tema CLARO, editorial, premium (refs Linear / Vercel / Monocle).
+   Fundo off-white levemente tingido de indigo, marca Indigo, valor em Gold,
+   dados em mono. Os NOMES de classe e de variável são preservados — vira light
+   só mudando os VALORES dos tokens; as 15 telas acompanham automaticamente. */
 
 :root {
-  /* --- paleta Bizzu (cores de marca preservadas; neutros levemente tingidos
-     na direção do indigo para coesão subconsciente) --- */
-  --void: #0a090e;       /* fundo principal — quase-preto, leve viés violeta */
-  --ink: #131217;        /* superfície base */
-  --ink-800: #19181f;    /* cards (camada 2) */
-  --ink-700: #211f29;    /* superfície elevada / hover (camada 3) */
-  --charcoal: #2a2833;   /* bordas, divisores */
-  --charcoal-2: #403d4d; /* bordas fortes, traços */
+  /* --- paleta Bizzu (cores de marca preservadas; neutros tingidos na direção
+     do indigo para coesão subconsciente — NUNCA branco/preto puros) --- */
+  --void: #f6f6fb;       /* fundo principal — off-white com leve viés indigo */
+  --ink: #eef0f7;        /* superfície base / trilhos (camada 1) */
+  --ink-800: #ffffff;    /* cards (camada 2) — branco quase puro */
+  --ink-700: #eceef6;    /* superfície elevada / hover (camada 3) */
+  --charcoal: #e4e5f0;   /* bordas, divisores — cinza claro tingido de indigo */
+  --charcoal-2: #cfd0e0; /* bordas fortes, traços */
 
   --indigo: #6c5ce7;        /* marca, links, dados, confiança */
   --indigo-deep: #5b4bcf;   /* hover/ênfase */
-  --indigo-light: #b3a4fc;  /* texto/acento sobre dark (mais luminoso) */
-  --indigo-glow: rgba(108, 92, 231, 0.20);
+  --indigo-light: #5a49c9;  /* texto/acento de marca sobre claro (escurecido p/ AA) */
+  --indigo-glow: rgba(108, 92, 231, 0.16);
 
-  --gold: #f5a623;        /* valor, ação, o que importa */
-  --gold-soft: #fbbf24;
+  --gold: #b3760a;        /* valor/ação como TEXTO sobre claro (AA; o âmbar puro #f5a623 não passa) */
+  --gold-soft: #946105;   /* gold ainda mais escuro p/ números/realces sobre claro */
+  --gold-fill: #f5a623;   /* âmbar puro p/ PREENCHIMENTOS (barras, pontos, gradientes) */
   --gold-glow: rgba(245, 166, 35, 0.16);
 
-  /* texto (off-white levemente tingido, nunca branco puro) */
-  --text: #f6f5fb;
-  --text-dim: #a6a3b4;
-  --text-faint: #75727f;
-  --text-ghost: #54525e;
+  /* texto (quase-preto tingido de indigo, nunca #000) */
+  --text: #1a1830;
+  --text-dim: #56546b;
+  --text-faint: #82809a;
+  --text-ghost: #a9a7bd;
 
   /* indicadores de dados/sentimento — adaptados à marca, sem verde vivo:
      promotor/positivo = indigo · neutro/passivo = gold · detrator/negativo
-     = vermelho dessaturado editorial. */
+     = vermelho dessaturado editorial. Todos com contraste AA no claro. */
   --promoter: #6c5ce7;
-  --promoter-soft: rgba(108, 92, 231, 0.16);
-  --promoter-line: rgba(108, 92, 231, 0.35);
-  --passive: #f5a623;
-  --passive-soft: rgba(245, 166, 35, 0.14);
-  --passive-line: rgba(245, 166, 35, 0.32);
-  --detractor: #e06666;       /* vermelho dessaturado, não neon */
-  --detractor-soft: rgba(224, 102, 102, 0.14);
-  --detractor-line: rgba(224, 102, 102, 0.34);
+  --promoter-soft: rgba(108, 92, 231, 0.10);
+  --promoter-line: rgba(108, 92, 231, 0.28);
+  --passive: #f5a623;     /* fill (ponto/barra/segmento) */
+  --passive-soft: rgba(245, 166, 35, 0.13);
+  --passive-line: rgba(245, 166, 35, 0.34);
+  --detractor: #cf4d4d;       /* vermelho dessaturado, AA sobre claro */
+  --detractor-soft: rgba(207, 77, 77, 0.10);
+  --detractor-line: rgba(207, 77, 77, 0.30);
 
   /* fallbacks: caso next/font falhe, ainda cai num stack sensato */
   --font: var(--font-body, "Inter", system-ui, -apple-system, sans-serif);
@@ -50,21 +60,57 @@
   --radius-sm: 11px;
   --radius-xs: 8px;
 
-  /* profundidade premium: a luz vem de cima (highlight hairline no topo) */
-  --hairline: rgba(255, 255, 255, 0.055);
+  /* profundidade: a luz vem de cima — no claro, o "hairline" superior é um leve
+     branco que destaca a borda de topo das superfícies (discreto, não um traço). */
+  --hairline: rgba(255, 255, 255, 0.6);
   --edge: inset 0 1px 0 var(--hairline);
 
-  /* sombras em camadas, spread negativo para foco no objeto */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -10px rgba(0, 0, 0, 0.5);
-  --shadow-pop: 0 22px 56px -16px rgba(0, 0, 0, 0.62), 0 3px 10px rgba(0, 0, 0, 0.4);
+  /* sombras suaves e realistas (luz de cima), tingidas de indigo em vez de preto
+     puro — caras, discretas, sem fazer o card "flutuar" demais. */
+  --shadow-sm: 0 1px 2px rgba(26, 24, 48, 0.06);
+  --shadow: 0 1px 2px rgba(26, 24, 48, 0.05), 0 10px 28px -12px rgba(26, 24, 48, 0.14);
+  --shadow-pop: 0 18px 48px -16px rgba(26, 24, 48, 0.22), 0 3px 10px rgba(26, 24, 48, 0.08);
   --ring-indigo: 0 0 0 3px var(--indigo-glow);
 
-  /* gradientes de marca reutilizáveis */
+  /* gradientes de marca reutilizáveis (preenchimentos — cor viva permitida) */
   --grad-indigo: linear-gradient(135deg, #7c6cf0, var(--indigo-deep));
-  --grad-gold: linear-gradient(135deg, var(--gold-soft), var(--gold));
+  --grad-gold: linear-gradient(135deg, var(--gold-fill), #e0930f);
 
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* --- escala de espaçamento Bizzu (ritmo) -----------------------------------
+     Base 4px, progressão suave. UMA fonte de verdade p/ gaps, paddings e
+     margens — ritmo coeso em vez de números soltos por toda parte. Os passos
+     largos (--s-7+) usam clamp() para abrir respiro em telas grandes sem
+     espremer no mobile. "Apertado onde agrupa, generoso onde separa." */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: clamp(24px, 2.4vw, 32px);   /* gaps de grid / respiro entre cards */
+  --s-8: clamp(28px, 3vw, 40px);     /* padding lateral do conteúdo / hero */
+  --s-9: clamp(36px, 4vw, 56px);     /* separação generosa entre seções */
+
+  /* paddings internos canônicos (cards, células, toolbars) — vetor x/y */
+  --pad-card-y: clamp(18px, 1.6vw, 22px);
+  --pad-card-x: clamp(20px, 1.8vw, 26px);
+
+  /* ritmo vertical entre blocos de conteúdo (grids, cards, tabelas no .main) */
+  --rhythm: clamp(18px, 1.8vw, 24px);
+
+  /* --- profundidade própria dos botões (assinatura Bizzu) --------------------
+     Botão sólido = gradiente de marca + realce de luz no topo por dentro
+     (inset) + sombra colorida tingida pela própria cor (não preto). Dá um
+     relevo "premium/tátil" que NÃO parece shadcn cru. Cada cor traz sua sombra. */
+  --btn-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.28);      /* luz de cima, por dentro */
+  --btn-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.06);     /* contorno interno sutil */
+  --btn-indigo-shadow: 0 1px 1px rgba(26, 24, 48, 0.10), 0 6px 16px -6px rgba(108, 92, 231, 0.55);
+  --btn-indigo-shadow-hover: 0 2px 3px rgba(26, 24, 48, 0.12), 0 12px 26px -8px rgba(108, 92, 231, 0.62);
+  --btn-gold-shadow: 0 1px 1px rgba(80, 50, 0, 0.12), 0 6px 16px -6px rgba(245, 166, 35, 0.55);
+  --btn-gold-shadow-hover: 0 2px 3px rgba(80, 50, 0, 0.14), 0 12px 26px -8px rgba(245, 166, 35, 0.62);
+  --btn-danger-shadow: 0 1px 1px rgba(26, 24, 48, 0.10), 0 6px 16px -6px rgba(207, 77, 77, 0.5);
 }
 
 * { box-sizing: border-box; }
@@ -75,7 +121,7 @@ html {
   scroll-behavior: smooth;
 }
 
-/* scrollbar discreta, alinhada ao void (Firefox + WebKit) */
+/* scrollbar discreta, alinhada ao fundo claro (Firefox + WebKit) */
 * { scrollbar-width: thin; scrollbar-color: var(--charcoal-2) transparent; }
 ::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -83,7 +129,7 @@ html {
   background: var(--charcoal-2); border-radius: 999px;
   border: 3px solid var(--void); background-clip: padding-box;
 }
-::-webkit-scrollbar-thumb:hover { background: var(--text-ghost); background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-faint); background-clip: padding-box; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -99,19 +145,22 @@ html, body {
   line-height: 1.6;
 }
 
-/* o void respira um leve glow indigo no topo (assinatura editorial discreta) */
+/* o fundo claro respira um leve tom indigo/gold nas quinas (assinatura editorial
+   discreta). No claro os glows são bem mais suaves — só uma tintura ambiente. */
 body {
   background-image:
-    radial-gradient(900px 480px at 78% -8%, var(--indigo-glow), transparent 60%),
-    radial-gradient(700px 420px at -6% 4%, var(--gold-glow), transparent 55%);
+    radial-gradient(900px 480px at 78% -8%, rgba(108, 92, 231, 0.07), transparent 60%),
+    radial-gradient(700px 420px at -6% 4%, rgba(245, 166, 35, 0.06), transparent 55%);
   background-attachment: fixed;
 }
 
 a { color: inherit; text-decoration: none; }
 
-::selection { background: var(--indigo); color: var(--text); }
+::selection { background: var(--indigo); color: #fff; }
 
-img { outline: 1px solid rgba(255, 255, 255, 0.1); outline-offset: -1px; }
+/* moldura sutil em imagens — no claro, uma borda escura translúcida (no dark era
+   branca). Mantém a definição de bordas sem hairline claro fora de lugar. */
+img { outline: 1px solid rgba(26, 24, 48, 0.08); outline-offset: -1px; }
 
 /* números/dados = mono com tabular-nums, em toda a UI */
 .mono, table td.mono, .kpi-value, .score-pill, .tab-count,
@@ -125,13 +174,13 @@ img { outline: 1px solid rgba(255, 255, 255, 0.1); outline-offset: -1px; }
 .shell { display: flex; min-height: 100vh; }
 
 .sidebar {
-  width: 248px;
+  width: 256px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, #0c0c0f 0%, var(--void) 100%);
+  background: linear-gradient(180deg, #ffffff 0%, var(--ink) 100%);
   border-right: 1px solid var(--charcoal);
   display: flex;
   flex-direction: column;
-  padding: 22px 16px;
+  padding: var(--s-6) var(--s-4) var(--s-5);
   position: sticky;
   top: 0;
   height: 100vh;
@@ -140,10 +189,10 @@ img { outline: 1px solid rgba(255, 255, 255, 0.1); outline-offset: -1px; }
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 4px 8px 20px;
+  gap: var(--s-3);
+  padding: var(--s-1) var(--s-2) var(--s-5);
   border-bottom: 1px solid var(--charcoal);
-  margin-bottom: 16px;
+  margin-bottom: var(--s-5);
 }
 
 .brand-mark {
@@ -164,7 +213,7 @@ img { outline: 1px solid rgba(255, 255, 255, 0.1); outline-offset: -1px; }
   right: -2px; bottom: -2px;
   width: 9px; height: 9px;
   border-radius: 50%;
-  background: var(--gold);
+  background: var(--gold-fill);
   border: 2px solid var(--void);
 }
 
@@ -182,8 +231,8 @@ img { outline: 1px solid rgba(255, 255, 255, 0.1); outline-offset: -1px; }
 .nav { display: flex; flex-direction: column; gap: 2px; }
 
 .nav a {
-  display: flex; align-items: center; gap: 11px;
-  padding: 10px 12px;
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: 9px var(--s-3);
   border-radius: var(--radius-sm);
   color: var(--text-dim);
   font-size: 14px; font-weight: 500;
@@ -219,29 +268,34 @@ img { outline: 1px solid rgba(255, 255, 255, 0.1); outline-offset: -1px; }
 .nav a.feature { color: var(--text); font-weight: 600; }
 .nav a.feature .ico { opacity: 1; color: var(--gold); }
 .nav a.feature.active { background: var(--gold-glow); }
-.nav a.feature.active::before { background: var(--gold); }
+.nav a.feature.active::before { background: var(--gold-fill); }
 
 .sidebar-foot {
   margin-top: auto;
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 14px 10px 2px;
+  display: flex; flex-direction: column; gap: var(--s-1);
+  padding: var(--s-4) var(--s-3) var(--s-1);
   border-top: 1px solid var(--charcoal);
 }
 .brand-by {
   font-family: var(--font-display);
   font-size: 15px; font-weight: 700;
-  color: var(--text); letter-spacing: -0.5px;
+  color: var(--text-dim); letter-spacing: -0.5px;
 }
-.brand-by-dot { color: var(--gold); }
+/* "Bizzu." é a marca: peso e tinta de marca + ponto gold como assinatura */
+.brand-by b, .brand-by strong { color: var(--text); font-weight: 700; }
+.brand-by-dot { color: var(--gold-fill); font-weight: 700; }
 .sidebar-foot-meta {
   font-size: 11px; color: var(--text-ghost); line-height: 1.5;
 }
 
-.main { flex: 1; padding: 38px 44px 72px; max-width: 1240px; }
+.main {
+  flex: 1; max-width: 1240px;
+  padding: var(--s-8) var(--s-8) calc(var(--s-9) + var(--s-6));
+}
 
 .page-head {
   display: flex; align-items: flex-end; justify-content: space-between;
-  gap: 16px; margin-bottom: 30px;
+  gap: var(--s-4); margin-bottom: var(--s-7);
 }
 .page-title {
   font-family: var(--font-display);
@@ -266,12 +320,12 @@ img { outline: 1px solid rgba(255, 255, 255, 0.1); outline-offset: -1px; }
 .kpi-grid {
   display: grid;
   grid-template-columns: 1.25fr repeat(4, 1fr);
-  gap: 14px;
-  margin-bottom: 18px;
+  gap: var(--s-4);
+  margin-bottom: var(--rhythm);
 }
 
 .kpi {
-  padding: 20px 22px; position: relative; overflow: hidden;
+  padding: var(--pad-card-y) var(--pad-card-x); position: relative; overflow: hidden;
   transition-property: transform, box-shadow, border-color;
   transition-duration: 180ms; transition-timing-function: var(--ease);
 }
@@ -298,16 +352,16 @@ img { outline: 1px solid rgba(255, 255, 255, 0.1); outline-offset: -1px; }
 .kpi-nps::before {
   content: "";
   position: absolute; left: 0; right: 0; top: 0; height: 2px;
-  background: linear-gradient(90deg, var(--gold), transparent 70%);
+  background: linear-gradient(90deg, var(--gold-fill), transparent 70%);
 }
-.kpi-nps .kpi-value { font-size: 46px; line-height: 1; color: var(--gold); }
+.kpi-nps .kpi-value { font-size: 46px; line-height: 1; color: var(--gold-soft); }
 .nps-good { color: var(--indigo-light) !important; }
 .nps-mid { color: var(--gold) !important; }
 .nps-bad { color: var(--detractor) !important; }
 .nps-none { color: var(--text-ghost) !important; }
 
 /* distribuição */
-.dist { padding: 18px 22px 20px; margin-bottom: 18px; }
+.dist { padding: var(--pad-card-y) var(--pad-card-x); margin-bottom: var(--rhythm); }
 .dist-bar {
   display: flex; height: 12px; border-radius: 999px; overflow: hidden;
   background: var(--ink); margin-top: 14px;
@@ -328,9 +382,9 @@ img { outline: 1px solid rgba(255, 255, 255, 0.1); outline-offset: -1px; }
 .hero-nps {
   display: grid;
   grid-template-columns: minmax(230px, 320px) 1fr;
-  gap: 38px;
-  padding: 28px 32px 30px;
-  margin-bottom: 18px;
+  gap: var(--s-8);
+  padding: var(--s-7) var(--s-8);
+  margin-bottom: var(--rhythm);
   position: relative;
   overflow: hidden;
   border-color: var(--charcoal-2);
@@ -347,7 +401,7 @@ img { outline: 1px solid rgba(255, 255, 255, 0.1); outline-offset: -1px; }
   fill: none; stroke-width: 16; stroke-linecap: round;
   filter: drop-shadow(0 3px 12px rgba(108, 92, 231, 0.3));
 }
-.gauge-dot { fill: var(--text); stroke: var(--void); stroke-width: 4; }
+.gauge-dot { fill: var(--indigo); stroke: #fff; stroke-width: 4; }
 
 .hero-gauge-center {
   position: absolute; left: 0; right: 0; bottom: 14px;
@@ -444,7 +498,7 @@ tbody tr:last-child td { border-bottom: none; }
 tbody tr {
   transition: background-color 120ms var(--ease);
 }
-tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.014); }
+tbody tr:nth-child(even) { background: rgba(26, 24, 48, 0.018); }
 tbody tr:hover { background: var(--ink-700); }
 
 .mono { font-family: var(--mono); font-size: 12.5px; }
@@ -472,7 +526,7 @@ tbody tr:hover { background: var(--ink-700); }
 .health-num { font-family: var(--mono); font-size: 12.5px; font-weight: 600; min-width: 22px; text-align: right; }
 .health.h-ok .health-bar span { background: linear-gradient(90deg, var(--indigo), var(--indigo-light)); }
 .health.h-ok .health-num { color: var(--indigo-light); }
-.health.h-watch .health-bar span { background: linear-gradient(90deg, var(--passive), var(--gold-soft)); }
+.health.h-watch .health-bar span { background: linear-gradient(90deg, var(--passive), var(--gold-fill)); }
 .health.h-watch .health-num { color: var(--gold-soft); }
 .health.h-risk .health-bar span { background: linear-gradient(90deg, var(--detractor), #eb9090); }
 .health.h-risk .health-num { color: var(--detractor); }
@@ -504,7 +558,7 @@ tbody tr:hover { background: var(--ink-700); }
 .badge.promoter { background: var(--promoter-soft); color: var(--indigo-light); border-color: var(--promoter-line); }
 .badge.passive { background: var(--passive-soft); color: var(--gold-soft); border-color: var(--passive-line); }
 .badge.detractor { background: var(--detractor-soft); color: var(--detractor); border-color: var(--detractor-line); }
-.badge.neutral { background: rgba(113, 113, 122, 0.12); color: var(--text-dim); border-color: var(--charcoal-2); }
+.badge.neutral { background: rgba(86, 84, 107, 0.08); color: var(--text-dim); border-color: var(--charcoal-2); }
 .badge.open { background: var(--promoter-soft); color: var(--indigo-light); border-color: var(--promoter-line); }
 
 /* tipo de pesquisa (discreto, outline) */
@@ -552,30 +606,35 @@ tbody tr:hover { background: var(--ink-700); }
 
 /* ===== forms & buttons ====================================================== */
 
+/* Botão legado (.btn) — MESMA assinatura tátil Bizzu do componente <Button>:
+   gradiente de marca + realce de luz no topo (inset sheen) + sombra colorida.
+   Mantém os nomes/uso atuais (.btn / .btn.ghost / .btn.sm / .danger / .btn-wa). */
 .btn {
   display: inline-flex; align-items: center; gap: 7px;
-  background: var(--grad-indigo); color: var(--text);
-  border: 1px solid transparent; border-radius: var(--radius-sm);
-  box-shadow: var(--edge);
-  padding: 10px 17px; font-size: 13.5px; font-weight: 600;
+  background-image: var(--grad-indigo); color: #fff;
+  border: 1px solid var(--indigo-deep); border-radius: var(--radius-sm);
+  box-shadow: var(--btn-sheen), var(--btn-indigo-shadow);
+  padding: 10px var(--s-5); font-size: 13.5px; font-weight: 600;
+  letter-spacing: -0.01em; line-height: 1;
   cursor: pointer; font-family: inherit;
   min-height: 40px;
-  transition-property: background-color, box-shadow, transform, border-color;
+  transition-property: background-color, box-shadow, transform, border-color, filter;
   transition-duration: 150ms;
   transition-timing-function: var(--ease);
 }
-.btn:hover { background: var(--indigo-deep); box-shadow: 0 6px 20px var(--indigo-glow); }
-.btn:active { transform: scale(0.97); }
+.btn:hover { box-shadow: var(--btn-sheen), var(--btn-indigo-shadow-hover); filter: brightness(1.04); }
+.btn:active { transform: translateY(0) scale(0.985); filter: brightness(0.95); box-shadow: var(--btn-indigo-shadow); }
 .btn:focus-visible { outline: none; box-shadow: var(--ring-indigo); }
-.btn:disabled { background: var(--charcoal); color: var(--text-ghost); cursor: not-allowed; box-shadow: none; transform: none; }
+.btn:disabled { background: var(--charcoal); background-image: none; border-color: var(--charcoal); color: var(--text-ghost); cursor: not-allowed; box-shadow: none; transform: none; filter: none; }
 
 .btn.ghost {
-  background: transparent; color: var(--text);
-  border: 1px solid var(--charcoal-2);
+  background: transparent; background-image: none; color: var(--text);
+  border: 1px solid var(--charcoal-2); box-shadow: none;
 }
-.btn.ghost:hover { background: var(--ink-700); border-color: var(--text-faint); box-shadow: none; }
+.btn.ghost:hover { background: var(--ink-700); border-color: var(--text-faint); box-shadow: none; filter: none; }
+.btn.ghost:active { transform: scale(0.985); }
 
-.btn.sm { padding: 7px 13px; font-size: 12.5px; min-height: 34px; }
+.btn.sm { padding: 7px var(--s-4); font-size: 12.5px; min-height: 34px; }
 
 .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 15px; }
 .field label { font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
@@ -584,11 +643,13 @@ tbody tr:hover { background: var(--ink-700); }
   padding: 11px 13px;
   border: 1px solid var(--charcoal-2); border-radius: var(--radius-sm);
   background: var(--ink); color: var(--text);
+  box-shadow: inset 0 1px 2px rgba(26, 24, 48, 0.04);
   outline: none;
   transition-property: border-color, box-shadow;
   transition-duration: 150ms; transition-timing-function: var(--ease);
 }
 .field input::placeholder, .field textarea::placeholder { color: var(--text-ghost); }
+.field input:hover, .field textarea:hover, .field select:hover { border-color: var(--text-faint); }
 .field input:focus, .field textarea:focus, .field select:focus {
   border-color: var(--indigo);
   box-shadow: var(--ring-indigo);
@@ -598,7 +659,7 @@ tbody tr:hover { background: var(--ink-700); }
 
 /* ===== páginas: pesquisas/contatos ========================================= */
 
-.two-col { display: grid; grid-template-columns: 1.6fr 1fr; gap: 18px; align-items: start; }
+.two-col { display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--rhythm); align-items: start; }
 
 .section-title {
   font-family: var(--font-display);
@@ -649,13 +710,13 @@ tbody tr:hover { background: var(--ink-700); }
 /* ===== dashboard: cabeçalho de card + motivos de cancelamento (exit) ======== */
 
 .card-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 16px 22px 14px;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-3);
+  padding: var(--s-4) var(--pad-card-x) var(--s-3);
   border-bottom: 1px solid var(--charcoal);
 }
 .card-head-sub { font-size: 12.5px; color: var(--text-faint); margin-top: 3px; }
 
-.exit-card { margin-bottom: 18px; }
+.exit-card { margin-bottom: var(--rhythm); }
 .exit-counter {
   font-family: var(--mono);
   font-size: 11.5px; font-weight: 500; white-space: nowrap;
@@ -685,7 +746,7 @@ tbody tr:hover { background: var(--ink-700); }
 @media (max-width: 980px) {
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .two-col { grid-template-columns: 1fr; }
-  .main { padding: 26px 18px 56px; }
+  .main { padding: var(--s-6) var(--s-5) var(--s-9); }
 }
 
 /* ===== ficha 360 do contato (Mega Central) ================================== */
@@ -745,8 +806,8 @@ tbody tr:hover { background: var(--ink-700); }
 /* ===== toolbar de filtros (Clientes / Feedbacks) ============================ */
 
 .toolbar {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
-  margin-bottom: 18px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-3);
+  margin-bottom: var(--rhythm);
 }
 .toolbar .search {
   flex: 1 1 260px; min-width: 200px;
@@ -794,7 +855,7 @@ tbody tr:hover { background: var(--ink-700); }
 .badge.perfil { text-transform: capitalize; }
 .badge.perfil.p-risco { background: var(--detractor-soft); color: var(--detractor); border-color: var(--detractor-line); }
 .badge.perfil.p-promotor { background: var(--promoter-soft); color: var(--indigo-light); border-color: var(--promoter-line); }
-.badge.perfil.p-silencioso { background: rgba(113, 113, 122, 0.12); color: var(--text-dim); border-color: var(--charcoal-2); }
+.badge.perfil.p-silencioso { background: rgba(86, 84, 107, 0.08); color: var(--text-dim); border-color: var(--charcoal-2); }
 .badge.perfil.p-ativo { background: var(--promoter-soft); color: var(--indigo-light); border-color: var(--promoter-line); }
 .badge.perfil.p-neutro { background: var(--passive-soft); color: var(--gold-soft); border-color: var(--passive-line); }
 
@@ -820,7 +881,7 @@ tbody tr:hover { background: var(--ink-700); }
 /* ===== inbox de feedbacks =================================================== */
 
 .status-tabs {
-  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px;
+  display: flex; flex-wrap: wrap; gap: var(--s-2); margin-bottom: var(--rhythm);
 }
 .status-tab {
   display: inline-flex; align-items: center; gap: 8px;
@@ -833,7 +894,7 @@ tbody tr:hover { background: var(--ink-700); }
 }
 .status-tab:hover { background: var(--ink-700); color: var(--text); }
 .status-tab:focus-visible { outline: none; box-shadow: var(--ring-indigo); }
-.status-tab.active { background: var(--indigo); border-color: var(--indigo); color: var(--text); }
+.status-tab.active { background: var(--indigo); border-color: var(--indigo); color: #fff; }
 .status-tab .tab-count {
   font-family: var(--mono);
   font-size: 11px; font-weight: 600;
@@ -898,10 +959,16 @@ tbody tr:hover { background: var(--ink-700); }
 
 .page-head-actions { display: flex; align-items: center; gap: 16px; }
 
-/* botão de perigo (excluir) */
-.btn.danger { background: var(--detractor); color: var(--void); }
-.btn.danger:hover { background: #d05858; box-shadow: 0 6px 20px var(--detractor-soft); }
-.btn.danger:disabled { background: var(--charcoal); color: var(--text-ghost); }
+/* botão de perigo (excluir) — vermelho dessaturado com relevo próprio */
+.btn.danger {
+  background: var(--detractor);
+  background-image: linear-gradient(180deg, #d96a6a, var(--detractor));
+  border-color: color-mix(in srgb, var(--detractor) 75%, black); color: #fff;
+  box-shadow: var(--btn-sheen), var(--btn-danger-shadow);
+}
+.btn.danger:hover { filter: brightness(1.05); box-shadow: var(--btn-sheen), var(--btn-danger-shadow); }
+.btn.danger:active { filter: brightness(0.95); box-shadow: none; }
+.btn.danger:disabled { background: var(--charcoal); background-image: none; border-color: var(--charcoal); color: var(--text-ghost); }
 
 /* card marcado como abordado: faixa de acento indigo à esquerda */
 .fb-card.is-abordado {
@@ -959,7 +1026,7 @@ tbody tr:hover { background: var(--ink-700); }
 
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(9, 9, 11, 0.72);
+  background: rgba(26, 24, 48, 0.42);
   backdrop-filter: blur(6px);
   display: flex; align-items: flex-start; justify-content: center;
   padding: 6vh 16px 16px;
@@ -1105,7 +1172,7 @@ tbody tr:hover { background: var(--ink-700); }
 .tema-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 14px;
+  gap: var(--s-4);
 }
 
 .tema-card {
@@ -1277,10 +1344,12 @@ tbody tr:hover { background: var(--ink-700); }
 /* ===== abordagem por WhatsApp (botão verde + modal de mensagem) ============= */
 .btn-wa {
   background: linear-gradient(180deg, #25d366, #1da851);
-  color: #07210f; border: 1px solid transparent;
+  color: #07210f; border: 1px solid #1da851;
+  box-shadow: var(--btn-sheen), 0 1px 1px rgba(7, 33, 15, 0.12), 0 6px 16px -6px rgba(37, 211, 102, 0.5);
 }
-.btn-wa:hover { background: linear-gradient(180deg, #2ee072, #1da851); box-shadow: 0 6px 20px rgba(37, 211, 102, 0.25); }
-.btn-wa:disabled { background: var(--charcoal); color: var(--text-ghost); box-shadow: none; }
+.btn-wa:hover { background: linear-gradient(180deg, #2ee072, #1da851); filter: brightness(1.03); box-shadow: var(--btn-sheen), 0 2px 3px rgba(7, 33, 15, 0.14), 0 12px 26px -8px rgba(37, 211, 102, 0.55); }
+.btn-wa:active { filter: brightness(0.95); }
+.btn-wa:disabled { background: var(--charcoal); background-image: none; border-color: var(--charcoal); color: var(--text-ghost); box-shadow: none; filter: none; }
 
 /* pílula compacta no card do feedback */
 .btn-wa-sm {
@@ -1288,12 +1357,12 @@ tbody tr:hover { background: var(--ink-700); }
   min-height: 34px; padding: 7px 12px;
   font-family: inherit; font-size: 12.5px; font-weight: 600;
   border-radius: 999px; cursor: pointer;
-  background: rgba(37, 211, 102, 0.12); color: #34d77f;
-  border: 1px solid rgba(37, 211, 102, 0.34);
+  background: rgba(37, 211, 102, 0.12); color: #128c41;
+  border: 1px solid rgba(37, 211, 102, 0.40);
   transition-property: background-color, border-color, box-shadow;
   transition-duration: 150ms; transition-timing-function: var(--ease);
 }
-.btn-wa-sm:hover { background: rgba(37, 211, 102, 0.2); border-color: rgba(37, 211, 102, 0.55); }
+.btn-wa-sm:hover { background: rgba(37, 211, 102, 0.2); border-color: rgba(37, 211, 102, 0.6); }
 .btn-wa-sm:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.25); }
 .btn-wa-sm:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-wa-sm svg { width: 15px; height: 15px; }
@@ -1383,7 +1452,7 @@ tbody tr:hover { background: var(--ink-700); }
 .board-cols {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 14px;
+  gap: var(--s-4);
   align-items: start;
 }
 @media (max-width: 1180px) {
@@ -1464,8 +1533,8 @@ tbody tr:hover { background: var(--ink-700); }
   overflow: hidden; margin-bottom: 10px;
 }
 .board-urg span { display: block; height: 100%; border-radius: 999px; }
-.board-urg.u-lo span { background: #4ea672; }
-.board-urg.u-mid span { background: var(--gold); }
+.board-urg.u-lo span { background: #3f9c66; }
+.board-urg.u-mid span { background: var(--gold-fill); }
 .board-urg.u-hi span { background: var(--detractor); }
 
 .board-card-meta { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1512,8 +1581,8 @@ body {
 
 /* hierarquia: o título da página vira âncora, com régua de marca embaixo */
 .page-head {
-  align-items: flex-end; margin-bottom: 28px;
-  padding-bottom: 20px; border-bottom: 1px solid var(--charcoal);
+  align-items: flex-end; margin-bottom: var(--s-7);
+  padding-bottom: var(--s-5); border-bottom: 1px solid var(--charcoal);
   position: relative;
 }
 .page-head::after {
@@ -1522,19 +1591,20 @@ body {
 }
 .page-title { font-size: clamp(28px, 3.2vw, 38px); letter-spacing: -1.4px; }
 
-/* seções: card header com base sutil que o separa do corpo */
-.card-head { background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 92%); }
+/* seções: card header com base sutil que o separa do corpo (tinta clara
+   ascendente — no claro, um leve indigo lavado em vez de branco sobre branco) */
+.card-head { background: linear-gradient(180deg, rgba(108, 92, 231, 0.035), transparent 92%); }
 
 /* KPIs: número-herói com mais peso e rótulo mais espaçado */
 .kpi-value { font-size: 32px; letter-spacing: -1.2px; }
 .kpi-nps .kpi-value { font-size: 48px; }
 .kpi-label { font-size: 10.5px; letter-spacing: 1.1px; }
 
-/* sidebar: marca viva, fundo em camada, item ativo com brilho de marca */
-.sidebar { background: linear-gradient(180deg, #100f15, var(--void) 62%); }
-.brand-mark { box-shadow: var(--edge), 0 8px 24px var(--indigo-glow); }
+/* sidebar: marca viva, fundo em camada, item ativo com realce de marca */
+.sidebar { background: linear-gradient(180deg, #ffffff, var(--ink) 70%); }
+.brand-mark { box-shadow: 0 8px 24px var(--indigo-glow); }
 .nav a.active { background: linear-gradient(90deg, var(--promoter-soft), transparent 92%); }
-.nav a.active::before { box-shadow: 0 0 12px var(--indigo-glow); }
+.nav a.active::before { box-shadow: 0 0 10px var(--indigo-glow); }
 
 /* tabelas: hover na cor da marca, texto acende */
 tbody tr:hover { background: var(--promoter-soft); }
@@ -1569,14 +1639,14 @@ tbody tr:hover td { color: var(--text); }
 .cmp-cards {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 14px; margin-bottom: 18px;
+  gap: var(--s-4); margin-bottom: var(--rhythm);
 }
-.cmp-cards .kpi { padding: 18px 20px; }
+.cmp-cards .kpi { padding: var(--s-5) var(--pad-card-x); }
 .cmp-reativou { color: var(--gold) !important; }
 @media (max-width: 980px) { .cmp-cards { grid-template-columns: repeat(2, 1fr); } }
 
-.cmp-block { margin-bottom: 18px; }
-.cmp-pad { padding: 18px 22px 20px; }
+.cmp-block { margin-bottom: var(--rhythm); }
+.cmp-pad { padding: var(--pad-card-y) var(--pad-card-x); }
 
 /* funil da campanha — barras horizontais proporcionais */
 .cmp-funnel { display: flex; flex-direction: column; gap: 15px; padding: 20px 22px 22px; }
@@ -1601,7 +1671,7 @@ tbody tr:hover td { color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .cmp-fn-fill { transition: none; } }
 
 /* duas colunas: canal + selos */
-.cmp-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+.cmp-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--rhythm); align-items: start; }
 @media (max-width: 860px) { .cmp-two-col { grid-template-columns: 1fr; } }
 
 /* abordagens por canal — lista simples nome/valor */
@@ -1671,7 +1741,7 @@ tbody tr:hover td { color: var(--text); }
   opacity: 0.6; border-radius: 50%;
   transition: opacity 120ms var(--ease), background-color 120ms var(--ease);
 }
-.selo-chip .selo-x:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
+.selo-chip .selo-x:hover { opacity: 1; background: rgba(26, 24, 48, 0.10); }
 .selo-chip .selo-x:disabled { cursor: progress; }
 
 .selo-add {
@@ -1893,7 +1963,7 @@ tbody tr:hover td { color: var(--text); }
 .chat-conv {
   display: flex; gap: 11px; align-items: flex-start; width: 100%;
   padding: 12px 13px; text-align: left; cursor: pointer;
-  background: transparent; border: none; border-bottom: 1px solid var(--hairline);
+  background: transparent; border: none; border-bottom: 1px solid var(--charcoal);
   transition: background 140ms var(--ease);
 }
 .chat-conv:hover { background: var(--ink-700); }
@@ -1986,9 +2056,9 @@ tbody tr:hover td { color: var(--text); }
   --dur-fast: 130ms;
   --dur: 200ms;
   --dur-slow: 320ms;
-  /* shimmer dos skeletons — faixa de luz que desliza sobre o charcoal */
-  --sk-base: #1b1a22;
-  --sk-sheen: rgba(255, 255, 255, 0.06);
+  /* shimmer dos skeletons — faixa de luz que desliza sobre o placeholder claro */
+  --sk-base: #e9eaf3;
+  --sk-sheen: rgba(255, 255, 255, 0.7);
 }
 
 /* ----------------------------------------------------------------------------
@@ -2200,10 +2270,10 @@ tbody tr:hover td { color: var(--text); }
    indigo do item ativo já existe; aqui só refinamos transição e o ícone.
    -------------------------------------------------------------------------- */
 .nav-group { display: flex; flex-direction: column; gap: 2px; }
-.nav-group + .nav-group { margin-top: 16px; }
+.nav-group + .nav-group { margin-top: var(--s-5); }
 .nav-group-label {
-  padding: 0 12px 6px;
-  font-size: 10px; font-weight: 700; letter-spacing: 1.4px;
+  padding: 0 var(--s-3) var(--s-2);
+  font-size: 10px; font-weight: 700; letter-spacing: 1.6px;
   text-transform: uppercase; color: var(--text-ghost);
   user-select: none;
 }
@@ -2234,7 +2304,7 @@ tbody tr:hover td { color: var(--text); }
   .modal-close:hover { transform: rotate(90deg); }
 }
 /* backdrop um pouco mais profundo p/ destacar o painel */
-.modal-backdrop { background: rgba(7, 7, 10, 0.74); }
+.modal-backdrop { background: rgba(26, 24, 48, 0.44); }
 
 /* ----------------------------------------------------------------------------
    8) Avatar / HealthCell — refino visual leve
@@ -2244,4 +2314,16 @@ tbody tr:hover td { color: var(--text); }
 /* a barra de health "preenche" suavemente na entrada quando há movimento */
 @media (prefers-reduced-motion: no-preference) {
   .health-bar span { transition: width 520ms var(--ease-out); }
+}
+
+/* ----------------------------------------------------------------------------
+   9) Acessibilidade do movimento dos botões — o componente <Button> (shadcn)
+   usa utilitários Tailwind de transform (hover:-translate-y-px / active:…).
+   Sob prefers-reduced-motion neutralizamos a elevação/recuo tátil, mantendo
+   cor, sombra e foco. (O .btn legado já é coberto pelas guardas acima.)
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .hover\:-translate-y-px:hover,
+  .active\:translate-y-px:active,
+  .active\:translate-y-0:active { transform: none !important; }
 }

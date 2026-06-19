@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { Check, X } from "lucide-react";
 import Avatar from "@/components/Avatar";
+import { Reveal } from "@/components/Motion";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { api, type Contact } from "@/lib/api";
 
 /** Linha-fantasma (avatar + nome/telefone + opt-in + data) durante o load. */
@@ -73,17 +79,17 @@ export default function ContatosPage() {
 
   return (
     <div>
-      <div className="page-head">
+      <Reveal className="page-head">
         <div>
           <h1 className="page-title">Contatos</h1>
           <div className="page-sub">Quem pode receber pesquisas — sempre com opt-in</div>
         </div>
-      </div>
+      </Reveal>
 
       {flash && <div className={`flash ${flash.kind}`}>{flash.msg}</div>}
 
       <div className="two-col">
-        <div className="card">
+        <Reveal delay={0.05} className="card">
           <div className="table-wrap">
             <table>
               <thead>
@@ -128,9 +134,13 @@ export default function ContatosPage() {
                     </td>
                     <td>
                       {c.opt_in ? (
-                        <span className="badge promoter">sim</span>
+                        <Badge variant="positive">
+                          <Check size={11} strokeWidth={2.6} aria-hidden /> sim
+                        </Badge>
                       ) : (
-                        <span className="badge detractor">não</span>
+                        <Badge variant="negative">
+                          <X size={11} strokeWidth={2.6} aria-hidden /> não
+                        </Badge>
                       )}
                     </td>
                     <td className="dim">
@@ -143,32 +153,38 @@ export default function ContatosPage() {
               </tbody>
             </table>
           </div>
-        </div>
+        </Reveal>
 
-        <div className="card" style={{ padding: "18px 20px" }}>
-          <h2 className="section-title">Adicionar contato</h2>
-          <p className="section-sub">
-            Telefone com DDI, só dígitos (ex.: 5524998365809). O opt-in fica registrado.
-          </p>
-          <form onSubmit={addContact}>
-            <div className="field">
-              <label>WhatsApp (DDI+DDD+número)</label>
-              <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="5524998365809"
-                required
-              />
-            </div>
-            <div className="field">
-              <label>Nome (opcional)</label>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Maria Silva" />
-            </div>
-            <button className="btn" disabled={saving}>
-              {saving ? "Salvando…" : "Adicionar"}
-            </button>
-          </form>
-        </div>
+        <Reveal delay={0.1}>
+          <Card>
+            <CardHeader>
+              <CardTitle>Adicionar contato</CardTitle>
+              <CardDescription>
+                Telefone com DDI, só dígitos (ex.: 5524998365809). O opt-in fica registrado.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={addContact}>
+                <div className="field">
+                  <label>WhatsApp (DDI+DDD+número)</label>
+                  <Input
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="5524998365809"
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label>Nome (opcional)</label>
+                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Maria Silva" />
+                </div>
+                <Button type="submit" disabled={saving}>
+                  {saving ? "Salvando…" : "Adicionar"}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </Reveal>
       </div>
     </div>
   );

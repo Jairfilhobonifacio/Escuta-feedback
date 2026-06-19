@@ -3,8 +3,24 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import {
+  ArrowLeft,
+  Check,
+  Mail,
+  MessageCircle,
+  Phone,
+  Search,
+  Pencil,
+  Plus,
+  X,
+  Users,
+  WifiOff,
+} from "lucide-react";
 import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
+import { Reveal } from "@/components/Motion";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   api,
   campanha as campanhaApi,
@@ -176,7 +192,7 @@ function ProfileCard({ partner }: { partner: Record<string, unknown> }) {
   const sub = (partner.subscription as Record<string, unknown> | undefined) ?? {};
   const nps = (partner.nps as Record<string, unknown> | undefined) ?? {};
   return (
-    <div className="card c360-profile">
+    <Reveal delay={0.04} className="card c360-profile">
       <div className="card-head">
         <div className="section-title">Perfil &amp; assinatura</div>
         <div className="card-head-sub">snapshot da API de Clientes</div>
@@ -189,7 +205,7 @@ function ProfileCard({ partner }: { partner: Record<string, unknown> }) {
         {field("NPS (nota)", nps.score)}
         {field("Motivo de churn", sub.cancellationReason)}
       </div>
-    </div>
+    </Reveal>
   );
 }
 
@@ -259,7 +275,7 @@ function ContatoSelos({
             aria-label={`Remover selo ${nome}`}
             disabled={busy}
           >
-            {"\u{2715}"}
+            <X size={11} strokeWidth={2.4} aria-hidden />
           </button>
         </span>
       ))}
@@ -271,7 +287,7 @@ function ContatoSelos({
         aria-label="Aplicar selo de campanha"
         disabled={busy}
       >
-        {"\u{FF0B}"} selo
+        <Plus size={12} strokeWidth={2.2} aria-hidden /> selo
       </button>
       {open && (
         <div className="selo-pop">
@@ -346,12 +362,12 @@ function EditItemModal({
           {error && <div className="flash err" style={{ marginBottom: 0 }}>{error}</div>}
         </div>
         <div className="modal-foot">
-          <button type="button" className="btn ghost" onClick={onClose} disabled={saving}>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
             Cancelar
-          </button>
-          <button type="submit" className="btn" disabled={saving}>
+          </Button>
+          <Button type="submit" disabled={saving}>
             {saving ? "Salvando…" : "Salvar"}
-          </button>
+          </Button>
         </div>
       </form>
     </Modal>
@@ -398,8 +414,12 @@ function TimelineRow({
           <span className={`score-pill ${t.bucket ?? "none"}`}>{t.score}</span>
         )}
         {sentimentBadge(t.sentiment)}
-        {t.abordado && <span className="badge abordado">{"\u{2705}"} abordado</span>}
-        {t.status === "ingested" && <span className="badge neutral">do app</span>}
+        {t.abordado && (
+          <Badge variant="positive">
+            <Check size={11} strokeWidth={2.6} aria-hidden /> abordado
+          </Badge>
+        )}
+        {t.status === "ingested" && <Badge variant="neutral">do app</Badge>}
         <span className="tl-when">{fmtDate(t.at)}</span>
       </div>
       {t.text && <div className="tl-text">“{t.text}”</div>}
@@ -430,7 +450,13 @@ function TimelineRow({
             aria-pressed={t.abordado}
             title={t.abordado ? "Marcar como não abordado" : "Marcar como abordado"}
           >
-            {busy ? "…" : t.abordado ? "\u{2705} Abordado" : "Marcar abordado"}
+            {busy ? "…" : t.abordado ? (
+              <>
+                <Check size={13} strokeWidth={2.4} aria-hidden /> Abordado
+              </>
+            ) : (
+              "Marcar abordado"
+            )}
           </button>
           <button
             type="button"
@@ -439,7 +465,7 @@ function TimelineRow({
             title="Editar texto"
             aria-label="Editar texto"
           >
-            {"\u{270F}\u{FE0F}"}
+            <Pencil size={14} aria-hidden />
           </button>
         </div>
       )}
@@ -523,11 +549,12 @@ function EnviarWhatsapp({
   const podeEnviar = !!preview && preview.waha_conectado && preview.alcancavel;
 
   return (
-    <div className="card">
+    <Reveal delay={0.08} className="card">
       <div className="card-head">
         <div>
-          {/* \u{1F4AC} = balão de fala */}
-          <div className="section-title">{"\u{1F4AC}"} Enviar WhatsApp</div>
+          <div className="section-title inline-flex items-center gap-2">
+            <MessageCircle size={17} aria-hidden /> Enviar WhatsApp
+          </div>
           <div className="card-head-sub">
             mensagem 1:1 — o envio real depende do WAHA conectado
           </div>
@@ -568,14 +595,14 @@ function EnviarWhatsapp({
       </div>
 
       <div className="wa-send-actions">
-        <button
+        <Button
           type="button"
-          className="btn ghost"
+          variant="ghost"
           onClick={preVisualizar}
           disabled={busy || !texto.trim()}
         >
           {busy && !okMsg ? "Verificando\u{2026}" : "Pré-visualizar"}
-        </button>
+        </Button>
         <button
           type="button"
           className="btn btn-wa"
@@ -598,8 +625,9 @@ function EnviarWhatsapp({
       {preview && (
         <div className="wa-preview">
           <div className="wa-preview-head">
-            {/* \u{1F50D} = lupa */}
-            <span className="lbl">{"\u{1F50D}"} Pré-visualização (nada foi enviado)</span>
+            <span className="lbl inline-flex items-center gap-1.5">
+              <Search size={13} aria-hidden /> Pré-visualização (nada foi enviado)
+            </span>
           </div>
           <div className="wa-preview-body">
             <div className="wa-preview-to">
@@ -608,18 +636,22 @@ function EnviarWhatsapp({
             <div className="wa-preview-msg">{"“"}{preview.texto}{"”"}</div>
           </div>
           <div className="wa-preview-gates">
-            <span className={`badge ${preview.waha_conectado ? "open" : "neutral"}`}>
-              {preview.waha_conectado
-                ? "\u{2705} WAHA conectado"
-                : "\u{1F50C} WAHA desligado"}
-            </span>
-            <span className={`badge ${preview.alcancavel ? "open" : "detractor"}`}>
-              {preview.alcancavel
-                ? "\u{2705} alcançável"
-                : preview.is_grupo
-                  ? "\u{1F465} grupo (sem 1:1)"
-                  : "\u{2709}\u{FE0F} sem WhatsApp"}
-            </span>
+            <Badge variant={preview.waha_conectado ? "positive" : "neutral"}>
+              {preview.waha_conectado ? (
+                <><Check size={11} strokeWidth={2.6} aria-hidden /> WAHA conectado</>
+              ) : (
+                <><WifiOff size={11} aria-hidden /> WAHA desligado</>
+              )}
+            </Badge>
+            <Badge variant={preview.alcancavel ? "positive" : preview.is_grupo ? "neutral" : "negative"}>
+              {preview.alcancavel ? (
+                <><Check size={11} strokeWidth={2.6} aria-hidden /> alcançável</>
+              ) : preview.is_grupo ? (
+                <><Users size={11} aria-hidden /> grupo (sem 1:1)</>
+              ) : (
+                <><Mail size={11} aria-hidden /> sem WhatsApp</>
+              )}
+            </Badge>
           </div>
           {!podeEnviar && (
             <div className="wa-preview-note">
@@ -635,7 +667,7 @@ function EnviarWhatsapp({
 
       {okMsg && <div className="flash ok" style={{ marginTop: 14, marginBottom: 0 }}>{okMsg}</div>}
       {error && <div className="flash err" style={{ marginTop: 14, marginBottom: 0 }}>{error}</div>}
-    </div>
+    </Reveal>
   );
 }
 
@@ -676,11 +708,12 @@ function ConversaWhatsapp({ contactId }: { contactId: string }) {
   const mensagens = thread?.mensagens ?? [];
 
   return (
-    <div className="card">
+    <Reveal delay={0.12} className="card">
       <div className="card-head">
         <div>
-          {/* \u{1F4F1} = celular */}
-          <div className="section-title">{"\u{1F4F1}"} Conversa no WhatsApp</div>
+          <div className="section-title inline-flex items-center gap-2">
+            <Phone size={17} aria-hidden /> Conversa no WhatsApp
+          </div>
           <div className="card-head-sub">histórico real das mensagens trocadas com este cliente</div>
         </div>
         {thread && mensagens.length > 0 && (
@@ -737,7 +770,7 @@ function ConversaWhatsapp({ contactId }: { contactId: string }) {
           ))}
         </div>
       )}
-    </div>
+    </Reveal>
   );
 }
 
@@ -805,22 +838,30 @@ export default function Contact360Page() {
 
   return (
     <div>
-      <div className="page-head">
+      <Reveal className="page-head">
         <div className="c360-head">
-          <Link href="/contatos" className="back-link">{"\u{2190}"} Contatos</Link>
+          <Link href="/contatos" className="back-link inline-flex items-center gap-1.5">
+            <ArrowLeft size={15} aria-hidden /> Contatos
+          </Link>
           <div className="c360-head-row">
             <Avatar name={data?.contact.name} seed={id} size={52} />
             <div>
               <h1 className="page-title">{data?.contact.name || data?.contact.phone || "Cliente"}</h1>
               {data && (
-                <div className="page-sub">
+                <div className="page-sub inline-flex items-center gap-2 flex-wrap">
                   <span className="mono">{data.contact.phone}</span>
-                  {" · "}
-                  {data.contact.opt_in ? "opt-in \u{2713}" : "sem opt-in"}
-                  {semWhatsapp && (
-                    <span className="badge neutral c360-nowa" title="Sem WhatsApp — universo só e-mail">
-                      {"\u{2709}\u{FE0F}"} sem WhatsApp
+                  <span aria-hidden>·</span>
+                  {data.contact.opt_in ? (
+                    <span className="inline-flex items-center gap-1">
+                      opt-in <Check size={13} strokeWidth={2.4} aria-hidden style={{ color: "var(--indigo-light)" }} />
                     </span>
+                  ) : (
+                    "sem opt-in"
+                  )}
+                  {semWhatsapp && (
+                    <Badge variant="neutral" title="Sem WhatsApp — universo só e-mail">
+                      <Mail size={11} aria-hidden /> sem WhatsApp
+                    </Badge>
                   )}
                 </div>
               )}
@@ -833,7 +874,7 @@ export default function Contact360Page() {
           </div>
         </div>
         {data && <span className="refresh-note">{data.summary.total} interações</span>}
-      </div>
+      </Reveal>
 
       {err && (
         <div className="flash err">
@@ -851,7 +892,7 @@ export default function Contact360Page() {
 
           {id && <ConversaWhatsapp contactId={id} />}
 
-          <div className="card">
+          <Reveal delay={0.16} className="card">
             <div className="card-head">
               <div>
                 <div className="section-title">Linha do tempo do cliente</div>
@@ -882,7 +923,7 @@ export default function Contact360Page() {
                 ))}
               </ul>
             )}
-          </div>
+          </Reveal>
         </>
       )}
 

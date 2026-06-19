@@ -320,7 +320,8 @@ async def _make_pending(session, org, contact, *, status, score=None):
     await session.flush()
     resp = SurveyResponse(
         survey_run_id=run.id, contact_id=contact.id, organization_id=org.id,
-        status=status, answer_score=score, nps_bucket=nps_bucket(score), sent_at=_now(),
+        status=status, answer_score=score, nps_bucket=nps_bucket(score),
+        sent_at=datetime.now(timezone.utc),  # recente: dentro da janela de 24h do resolver (não data fixa, que expira)
     )
     session.add(resp)
     await session.commit()

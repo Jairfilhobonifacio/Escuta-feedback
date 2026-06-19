@@ -1351,3 +1351,132 @@ export const melhorias = {
   fromCluster: (clusterId: string, title?: string) =>
     api.post<Improvement>("/api/improvements/from-cluster", { cluster_id: clusterId, title }),
 };
+
+// --- Central de Feedbacks (visão consolidada de acompanhamento) --------------
+// Tela-resumo que o Felipe apresenta: NPS + feedbacks por sentimento +
+// segmentação (churn × ativos) + lista detalhada de NPS. Três endpoints sob
+// /api/central; o backend está sendo feito em paralelo (mesmo contrato abaixo).
+
+/** Bloco de NPS do overview — contagens por bucket + média e sem-resposta. */
+export interface CentralNps {
+  /** Quantos clientes deram nota (responderam o NPS). */
+  deram: number;
+  /** Média do NPS (score líquido −100…+100) ou null se ninguém deu nota. */
+  media: number | null;
+  promotores: number;
+  neutros: number;
+  detratores: number;
+  /** Clientes que receberam mas ainda NÃO deram nota. */
+  sem_resposta: number;
+}
+
+/** Bloco de feedbacks do overview — total, com texto e quebras por fonte/sentimento. */
+export interface CentralFeedbacks {
+  total: number;
+  /** Quantos feedbacks vieram com texto (não só nota). */
+  com_texto: number;
+  /** {"whatsapp": n, "app": n, "billing": n, "forms": n, ...} — só fontes > 0. */
+  por_fonte: Record<string, number>;
+  por_sentimento: {
+    positivo: number;
+    neutro: number;
+    negativo: number;
+    /** Sem sentimento classificado (IA não rodou / sem texto). */
+    sem: number;
+  };
+}
+
+/** Bloco de abordagem do overview — quantos contatos foram abordados/responderam. */
+export interface CentralAbordagem {
+  contatos_total: number;
+  abordados: number;
+  responderam: number;
+  nao_responderam: number;
+}
+
+/** Um segmento de acompanhamento (churn ou ativos) — números do funil de contato. */
+export interface CentralSegmento {
+  /** Rótulo amigável do segmento (ex.: "Cancelaram", "Ativos"). */
+  rotulo: string;
+  total: number;
+  abordados: number;
+  responderam: number;
+  nao_responderam: number;
+}
+
+/** Resposta de GET /api/central/overview — os números-herói da Central. */
+export interface CentralOverview {
+  nps: CentralNps;
+  feedbacks: CentralFeedbacks;
+  abordagem: CentralAbordagem;
+  segmentos: {
+    churn: CentralSegmento;
+    ativos: CentralSegmento;
+  };
+}
+
+/** Bucket textual do NPS de um item da lista detalhada. */
+export type CentralNpsBucket = "promotor" | "neutro" | "detrator";
+
+/** Uma linha da lista de quem deu NPS — GET /api/central/nps. */
+export interface CentralNpsItem {
+  contact_id: string;
+  nome: string | null;
+  telefone: string;
+  score: number;
+  bucket: CentralNpsBucket;
+  /** Motivo/justificativa da nota (texto livre) ou null. */
+  motivo: string | null;
+  fonte: string;
+  /** Quando deu a nota (ISO) ou null. */
+  em: string | null;
+}
+
+/** Resposta de GET /api/central/nps — média + lista de quem deu nota. */
+export interface CentralNpsResponse {
+  media: number | null;
+  items: CentralNpsItem[];
+}
+
+/** Uma linha da lista de feedbacks por sentimento — GET /api/central/feedbacks. */
+export interface CentralFeedbackItem {
+  contact_id: string;
+  nome: string | null;
+  fonte: string;
+  /** 'positivo' | 'neutro' | 'negativo' | null (IA) — agrupa as colunas. */
+  sentimento: string | null;
+  /** 'nps' | 'churn' | ... */
+  tipo: string;
+  /** Motivo/contexto do feedback (texto livre) ou null. */
+  texto: string | null;
+  abordado: boolean;
+  em: string | null;
+  /** Estado de ação (novo/em_analise/resolvido/...) ou null. */
+  estado: string | null;
+}
+
+/** Resposta de GET /api/central/feedbacks — total + itens filtrados. */
+export interface CentralFeedbacksResponse {
+  total: number;
+  items: CentralFeedbackItem[];
+}
+
+/** Filtros opcionais de GET /api/central/feedbacks (query string; ausentes = tudo). */
+export interface CentralFeedbackFiltro {
+  /** 'positivo' | 'neutro' | 'negativo' | 'sem' */
+  sentimento?: string;
+  /** 'whatsapp' | 'app' | 'billing' | 'forms' | ... */
+  fonte?: string;
+  abordado?: boolean;
+}
+
+/** Helpers tipados da CENTRAL DE FEEDBACKS (visão consolidada). */
+export const central = {
+  /** Números-herói: NPS + feedbacks + abordagem + segmentos (churn/ativos). */
+  overview: () => api.get<CentralOverview>("/api/central/overview"),
+  /** Lista detalhada de quem deu NPS (nome, nota, bucket, motivo). */
+  nps: () => api.get<CentralNpsResponse>("/api/central/nps"),
+  /** Feedbacks por sentimento + fonte. Filtros opcionais viram query string. */
+  feedbacks: (filtro?: CentralFeedbackFiltro) =>
+    api.get<CentralFeedbacksResponse>(`/api/central/feedbacks${buildQuery(filtro)}`),
+};

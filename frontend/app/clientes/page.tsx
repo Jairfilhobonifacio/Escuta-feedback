@@ -2,8 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { Search, AlertTriangle, Info, Mail, Plus, X } from "lucide-react";
 import Avatar from "@/components/Avatar";
 import { healthCell } from "@/components/HealthCell";
+import { Reveal } from "@/components/Motion";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   clientes as clientesApi,
   campanha as campanhaApi,
@@ -16,33 +20,35 @@ import {
   type TemWhatsappFiltro,
 } from "@/lib/api";
 
-/** Mapeia perfil da Bizzu -> classe de badge. Cobre variações de grafia. */
-function perfilMeta(perfil: string | null): { cls: string; label: string } | null {
+type BadgeVariant = "default" | "positive" | "neutral" | "negative" | "outline" | "accent";
+
+/** Mapeia perfil da Bizzu -> variante do Badge shadcn. Cobre variações de grafia. */
+function perfilMeta(perfil: string | null): { variant: BadgeVariant; label: string } | null {
   if (!perfil) return null;
   const key = perfil.toLowerCase();
-  if (key.includes("risco")) return { cls: "p-risco", label: perfil };
-  if (key.includes("promot")) return { cls: "p-promotor", label: perfil };
-  if (key.includes("silenc")) return { cls: "p-silencioso", label: perfil };
-  if (key.includes("ativ") || key.includes("engaj")) return { cls: "p-ativo", label: perfil };
-  return { cls: "p-neutro", label: perfil };
+  if (key.includes("risco")) return { variant: "negative", label: perfil };
+  if (key.includes("promot")) return { variant: "positive", label: perfil };
+  if (key.includes("silenc")) return { variant: "outline", label: perfil };
+  if (key.includes("ativ") || key.includes("engaj")) return { variant: "accent", label: perfil };
+  return { variant: "neutral", label: perfil };
 }
 
 function perfilBadge(perfil: string | null) {
   const m = perfilMeta(perfil);
   if (!m) return <span className="faint">—</span>;
-  return <span className={`badge perfil ${m.cls}`}>{m.label.replace(/_/g, " ")}</span>;
+  return <Badge variant={m.variant}>{m.label.replace(/_/g, " ")}</Badge>;
 }
 
 /** NPS por faixa: ≤6 detrator, 7-8 passivo, 9-10 promotor. */
 function npsTag(score: number | null) {
-  if (score === null || score === undefined) return <span className="nps-tag none">—</span>;
-  const cls = score <= 6 ? "detractor" : score <= 8 ? "passive" : "promoter";
+  if (score === null || score === undefined) return <span className="faint">—</span>;
+  const variant: BadgeVariant = score <= 6 ? "negative" : score <= 8 ? "neutral" : "positive";
   const label = score <= 6 ? "detrator" : score <= 8 ? "passivo" : "promotor";
   return (
-    <span className={`nps-tag ${cls}`}>
-      <span className="nps-num">{score}</span>
+    <Badge variant={variant} className="gap-1.5">
+      <span className="font-mono font-bold tabular-nums">{score}</span>
       {label}
-    </span>
+    </Badge>
   );
 }
 
@@ -224,7 +230,7 @@ function SelosCell({
                 aria-label={`Remover selo ${nome}`}
                 disabled={busy}
               >
-                {"\u{2715}"}
+                <X size={11} strokeWidth={2.4} aria-hidden />
               </button>
             </span>
           );
@@ -236,7 +242,7 @@ function SelosCell({
           aria-expanded={open}
           aria-label="Aplicar selo"
         >
-          {"\u{FF0B}"} selo
+          <Plus size={12} strokeWidth={2.2} aria-hidden /> selo
         </button>
       </div>
 
@@ -274,14 +280,13 @@ function SelosCell({
                 if (e.key === "Enter") aplicar(novo, cor);
               }}
             />
-            <button
-              type="button"
-              className="btn sm"
+            <Button
+              size="sm"
               onClick={() => aplicar(novo, cor)}
               disabled={busy || !novo.trim()}
             >
               Criar
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -430,28 +435,28 @@ export default function ClientesPage() {
 
   return (
     <div>
-      <div className="page-head">
+      <Reveal className="page-head">
         <div>
           <h1 className="page-title">Clientes</h1>
           <div className="page-sub">Todos os clientes — perfil, plano, NPS, selos e alcance (WhatsApp vs. só e-mail)</div>
         </div>
         {!loading && <span className="refresh-note">{clientes.length} clientes</span>}
-      </div>
+      </Reveal>
 
       {semWaCount > 0 && (
-        <div className="note">
-          <span className="note-ico">{"\u{2139}\u{FE0F}"}</span>
+        <Reveal delay={0.04} className="note">
+          <span className="note-ico"><Info size={16} aria-hidden /></span>
           <span>
             <b>{semWaCount}</b> cliente{semWaCount === 1 ? "" : "s"} <b>sem WhatsApp</b> (só e-mail) no universo
             atual — fora do alcance das pesquisas por WhatsApp, mas alvo do win-back por e-mail. Use o filtro
             de alcance para isolá-los.
           </span>
-        </div>
+        </Reveal>
       )}
 
-      <div className="toolbar">
+      <Reveal delay={0.07} className="toolbar">
         <label className="search">
-          <span className="ico">{"\u{1F50D}"}</span>
+          <span className="ico"><Search size={15} aria-hidden /></span>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -522,14 +527,14 @@ export default function ClientesPage() {
           aria-pressed={soRisco}
           title="Mostrar só contas que precisam de atenção — pior Health primeiro"
         >
-          {"\u{26A0}\u{FE0F}"} Em risco <span className="risk-n">{emRiscoCount}</span>
+          <AlertTriangle size={15} aria-hidden /> Em risco <span className="risk-n">{emRiscoCount}</span>
         </button>
         {algumFiltro && (
-          <button type="button" className="btn ghost sm" onClick={limparFiltros}>
+          <Button variant="ghost" size="sm" onClick={limparFiltros}>
             Limpar filtros
-          </button>
+          </Button>
         )}
-      </div>
+      </Reveal>
 
       <div className="count-line">
         {loading ? (
@@ -549,7 +554,7 @@ export default function ClientesPage() {
         </div>
       )}
 
-      <div className="card">
+      <Reveal delay={0.1} className="card">
         <div className="table-wrap">
           <table>
             <thead>
@@ -589,9 +594,9 @@ export default function ClientesPage() {
                       </p>
                       {algumFiltro && (
                         <div className="empty-cta">
-                          <button type="button" className="btn ghost sm" onClick={limparFiltros}>
+                          <Button variant="ghost" size="sm" onClick={limparFiltros}>
                             Limpar filtros
-                          </button>
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -615,7 +620,7 @@ export default function ClientesPage() {
                           <span className="mono cell-person-sub">{c.whatsapp}</span>
                         ) : (
                           <span className="cell-person-sub cliente-nowa" title="Sem WhatsApp — universo só e-mail">
-                            {"\u{2709}\u{FE0F}"} só e-mail
+                            <Mail size={12} aria-hidden style={{ display: "inline", verticalAlign: "-2px" }} /> só e-mail
                           </span>
                         )}
                       </div>
@@ -656,7 +661,7 @@ export default function ClientesPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </Reveal>
     </div>
   );
 }

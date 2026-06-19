@@ -5,6 +5,7 @@ import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { healthCell } from "@/components/HealthCell";
 import Modal from "@/components/Modal";
+import { Button } from "@/components/ui/button";
 import {
   boards as boardsApi,
   feedbacks as feedbacksApi,
@@ -1120,21 +1121,21 @@ function BoardFormModal({
                   </button>
                 </div>
               ))}
-              <button type="button" className="btn ghost sm" onClick={addCol}>
+              <Button variant="ghost" size="sm" onClick={addCol}>
                 <span aria-hidden>{"\u{FF0B}"}</span> Adicionar coluna
-              </button>
+              </Button>
             </div>
           </div>
 
           {error && <div className="flash err" style={{ marginBottom: 0 }}>{error}</div>}
         </div>
         <div className="modal-foot">
-          <button type="button" className="btn ghost" onClick={onClose} disabled={saving}>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>
             Cancelar
-          </button>
-          <button type="submit" className="btn" disabled={saving}>
+          </Button>
+          <Button type="submit" disabled={saving}>
             {saving ? "Salvando…" : editing ? "Salvar board" : "Criar board"}
-          </button>
+          </Button>
         </div>
       </form>
     </Modal>
@@ -1590,25 +1591,25 @@ export default function BoardPage() {
             </option>
           ))}
         </select>
-        <button type="button" className="btn sm" onClick={() => setCreating(true)}>
+        <Button size="sm" onClick={() => setCreating(true)}>
           <span aria-hidden>{"\u{FF0B}"}</span> Novo board
-        </button>
-        <button
-          type="button"
-          className="btn ghost sm"
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setEditingBoard(selected)}
           disabled={!selected}
         >
           Editar
-        </button>
-        <button
-          type="button"
-          className="btn ghost sm"
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onDeleteBoard}
           disabled={!selected}
         >
           Excluir
-        </button>
+        </Button>
       </div>
 
       {/* Barra de filtros dos items (Fase E): só os controles que valem para a entidade
@@ -1741,9 +1742,9 @@ export default function BoardPage() {
           )}
 
           {algumFiltro && (
-            <button type="button" className="btn ghost sm" onClick={limparFiltros}>
+            <Button variant="ghost" size="sm" onClick={limparFiltros}>
               Limpar filtros
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -1807,7 +1808,7 @@ export default function BoardPage() {
         </div>
       ) : (
       <div
-        className="board-cols"
+        className="board-cols reveal-stagger"
         style={{ gridTemplateColumns: `repeat(${Math.max(1, columns.length)}, minmax(0, 1fr))` }}
       >
         {columns.map((col, colIdx) => {
@@ -1969,14 +1970,12 @@ export default function BoardPage() {
                   : "Edite o board para adicionar colunas e começar a arrastar os cards."}
               </p>
               <div className="empty-cta">
-                <button
-                  type="button"
-                  className="btn"
+                <Button
                   onClick={() => (boardList.length === 0 ? setCreating(true) : setEditingBoard(selected))}
                   disabled={boardList.length !== 0 && !selected}
                 >
                   {boardList.length === 0 ? "Criar board" : "Editar colunas"}
-                </button>
+                </Button>
               </div>
             </div>
           </div>

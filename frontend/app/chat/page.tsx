@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import { Reveal, Stagger, StaggerItem } from "@/components/Motion";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   whatsapp as wa,
   type WhatsappConversation,
@@ -52,8 +56,9 @@ function BubbleSkeleton({ side }: { side: "inbound" | "outbound" }) {
 
 function estadoBadge(estado: string | null) {
   if (!estado) return null;
-  const cls = estado === "active_paying" ? "promoter" : estado === "cancelled" ? "detractor" : "neutral";
-  return <span className={`badge ${cls}`}>{ESTADO_LABEL[estado] ?? estado}</span>;
+  const variant =
+    estado === "active_paying" ? "positive" : estado === "cancelled" ? "negative" : "neutral";
+  return <Badge variant={variant}>{ESTADO_LABEL[estado] ?? estado}</Badge>;
 }
 
 export default function ChatPage() {
@@ -154,9 +159,9 @@ export default function ChatPage() {
           <h1 className="page-title">Chat</h1>
           <div className="page-sub">Conversas do WhatsApp, dentro da central — sem abrir o WhatsApp Web</div>
         </div>
-        <span className={`badge ${conectado ? "promoter" : "neutral"}`}>
+        <Badge variant={conectado ? "positive" : "neutral"} className="px-2.5 py-1 text-[11.5px]">
           {conectado ? "WAHA conectado" : "WAHA desligado"}
-        </span>
+        </Badge>
       </div>
 
       {!conectado && (
@@ -179,12 +184,13 @@ export default function ChatPage() {
         {/* ----- coluna esquerda: conversas ----- */}
         <aside className="chat-list card">
           <div className="chat-search">
-            <input
+            <Input
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar por nome ou telefone"
               aria-label="Buscar conversa"
+              className="h-9 bg-surface-base"
             />
             <label className="chat-so1a1" title="Esconde grupos e comunidades — só conversas individuais">
               <input
@@ -221,43 +227,51 @@ export default function ChatPage() {
                 </div>
                 <p className="empty-sub">
                   {search.trim()
-                    ? "Ajuste a busca ou desligue o filtro “Só 1:1” para ver grupos."
+                    ? "Ajuste a busca ou desligue o filtro \u{201C}Só 1:1\u{201D} para ver grupos."
                     : "As mensagens aparecem aqui quando um cliente escreve no WhatsApp — ou quando você envia pela ficha ou por aqui."}
                 </p>
               </div>
             ) : (
-              convs.map((c, i) => (
-                <button
-                  key={c.contact_id}
-                  type="button"
-                  className={`chat-conv reveal ${c.contact_id === selectedId ? "active" : ""}`}
-                  style={{ ["--i" as string]: i }}
-                  onClick={() => setSelectedId(c.contact_id)}
-                >
-                  <Avatar name={c.nome} seed={c.contact_id} size={40} />
-                  <div className="chat-conv-body">
-                    <div className="chat-conv-top">
-                      <span className="chat-conv-name">{c.nome || c.whatsapp || "Sem nome"}</span>
-                      <span className="chat-conv-time">{fmtTime(c.ultima_em)}</span>
+              <Stagger key={`${search}|${so1a1}`} stagger={0.04}>
+                {convs.map((c) => (
+                  <StaggerItem
+                    key={c.contact_id}
+                    role="button"
+                    tabIndex={0}
+                    className={`chat-conv ${c.contact_id === selectedId ? "active" : ""}`}
+                    onClick={() => setSelectedId(c.contact_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedId(c.contact_id);
+                      }
+                    }}
+                  >
+                    <Avatar name={c.nome} seed={c.contact_id} size={40} />
+                    <div className="chat-conv-body">
+                      <div className="chat-conv-top">
+                        <span className="chat-conv-name">{c.nome || c.whatsapp || "Sem nome"}</span>
+                        <span className="chat-conv-time">{fmtTime(c.ultima_em)}</span>
+                      </div>
+                      <div className="chat-conv-prev">
+                        {c.ultima_direction === "outbound" && <span className="chat-prev-you">Você: </span>}
+                        {c.ultima_mensagem}
+                      </div>
+                      <div className="chat-conv-meta">
+                        {c.is_grupo && <Badge variant="neutral">{"\u{1F465}"} grupo</Badge>}
+                        {!c.is_grupo && !c.tem_whatsapp && (
+                          <Badge variant="neutral">{"\u{2709}\u{FE0F}"} sem WhatsApp</Badge>
+                        )}
+                        {estadoBadge(c.estado)}
+                        {c.selos.includes("respondeu") && <Badge variant="positive">respondeu</Badge>}
+                        {c.selos.includes("contatado") && !c.selos.includes("respondeu") && (
+                          <Badge variant="outline">contatado</Badge>
+                        )}
+                      </div>
                     </div>
-                    <div className="chat-conv-prev">
-                      {c.ultima_direction === "outbound" && <span className="chat-prev-you">Você: </span>}
-                      {c.ultima_mensagem}
-                    </div>
-                    <div className="chat-conv-meta">
-                      {c.is_grupo && <span className="badge neutral">{"\u{1F465}"} grupo</span>}
-                      {!c.is_grupo && !c.tem_whatsapp && (
-                        <span className="badge neutral">{"\u{2709}\u{FE0F}"} sem WhatsApp</span>
-                      )}
-                      {estadoBadge(c.estado)}
-                      {c.selos.includes("respondeu") && <span className="badge promoter">respondeu</span>}
-                      {c.selos.includes("contatado") && !c.selos.includes("respondeu") && (
-                        <span className="badge open">contatado</span>
-                      )}
-                    </div>
-                  </div>
-                </button>
-              ))
+                  </StaggerItem>
+                ))}
+              </Stagger>
             )}
           </div>
         </aside>
@@ -286,15 +300,17 @@ export default function ChatPage() {
                     <span className="mono">{thread.contact.whatsapp}</span>
                     {estadoBadge(thread.contact.estado)}
                     {thread.contact.is_grupo && (
-                      <span className="badge neutral">{"\u{1F465}"} grupo</span>
+                      <Badge variant="neutral">{"\u{1F465}"} grupo</Badge>
                     )}
                     {!thread.contact.is_grupo && !thread.contact.tem_whatsapp && (
-                      <span className="badge neutral">{"\u{2709}\u{FE0F}"} sem WhatsApp</span>
+                      <Badge variant="neutral">{"\u{2709}\u{FE0F}"} sem WhatsApp</Badge>
                     )}
                   </div>
                 </div>
-                <Link href={`/contatos/${thread.contact.id}`} className="btn ghost chat-head-360">
-                  Ficha 360
+                <Link href={`/contatos/${thread.contact.id}`}>
+                  <Button variant="outline" size="sm" className="chat-head-360">
+                    Ficha 360
+                  </Button>
                 </Link>
               </header>
 
@@ -318,16 +334,17 @@ export default function ChatPage() {
                     </p>
                   </div>
                 ) : (
-                  thread.mensagens.map((m, i) => (
-                    <div
-                      key={m.id}
-                      className={`chat-bubble reveal ${m.direction}`}
-                      style={{ ["--i" as string]: Math.min(i, 6) }}
-                    >
-                      <div className="chat-bubble-body">{m.body}</div>
-                      <div className="chat-bubble-time">{fmtTime(m.at)}</div>
-                    </div>
-                  ))
+                  <Stagger key={selectedId} stagger={0.03} className="chat-thread-list">
+                    {thread.mensagens.map((m) => (
+                      <StaggerItem
+                        key={m.id}
+                        className={`chat-bubble ${m.direction}`}
+                      >
+                        <div className="chat-bubble-body">{m.body}</div>
+                        <div className="chat-bubble-time">{fmtTime(m.at)}</div>
+                      </StaggerItem>
+                    ))}
+                  </Stagger>
                 )}
                 <div ref={endRef} />
               </div>
@@ -366,11 +383,11 @@ export default function ChatPage() {
                   rows={2}
                   disabled={sending}
                 />
-                <button
-                  type="button"
-                  className="btn btn-wa"
+                <Button
+                  variant="accent"
                   onClick={enviar}
                   disabled={!podeEnviar}
+                  className="h-10"
                   title={
                     !conectado
                       ? "WAHA desligado — não dá para enviar"
@@ -381,13 +398,23 @@ export default function ChatPage() {
                           : "Enviar mensagem"
                   }
                 >
-                  {sending ? "Enviando…" : "Enviar"}
-                </button>
+                  {sending ? "Enviando\u{2026}" : "Enviar"}
+                </Button>
               </div>
             </>
           )}
         </section>
       </div>
+
+      {/* a lista de balões usa o mesmo flex-column da .chat-thread (a wrapper
+         <Stagger> apenas orquestra a entrada — herda o gap visual). */}
+      <style jsx>{`
+        :global(.chat-thread-list) {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+      `}</style>
     </div>
   );
 }

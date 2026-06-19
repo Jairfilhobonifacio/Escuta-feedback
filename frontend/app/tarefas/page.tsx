@@ -2,9 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Search, Flame, MessageCircle } from "lucide-react";
 import Avatar from "@/components/Avatar";
 import { healthCell } from "@/components/HealthCell";
 import AbordarModal, { waIcon, type AbordarTarget } from "@/components/AbordarModal";
+import { Reveal } from "@/components/Motion";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   api,
   tarefas as tarefasApi,
@@ -55,11 +59,11 @@ const PRIORITY_LABEL: Record<TarefaPriority, string> = {
 
 /** Badge de prioridade — urgente/alta puxam vermelho, normal/baixa neutro. */
 function priorityBadge(p: TarefaPriority) {
-  const cls = p === "urgente" || p === "alta" ? "detractor" : "neutral";
+  const variant = p === "urgente" || p === "alta" ? "negative" : "neutral";
   return (
-    <span className={`badge ${cls}`} title={`Prioridade ${PRIORITY_LABEL[p]}`}>
+    <Badge variant={variant} title={`Prioridade ${PRIORITY_LABEL[p]}`}>
       {PRIORITY_LABEL[p]}
-    </span>
+    </Badge>
   );
 }
 
@@ -219,13 +223,13 @@ function TarefaRow({
           <span className="row-link" style={{ fontWeight: 600 }}>{t.title}</span>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             {triggerType && (
-              <span className="badge type">{TRIGGER_LABEL[triggerType] ?? triggerType}</span>
+              <Badge variant="outline">{TRIGGER_LABEL[triggerType] ?? triggerType}</Badge>
             )}
             {priorityBadge(t.priority)}
             {t.feedback_id && (
-              <span className="badge neutral" title="Tarefa nasceu de um feedback do cliente">
-                {"\u{1F4AC}"} do feedback
-              </span>
+              <Badge variant="neutral" title="Tarefa nasceu de um feedback do cliente">
+                <MessageCircle size={11} aria-hidden /> do feedback
+              </Badge>
             )}
           </div>
           {t.reason && (
@@ -478,7 +482,7 @@ export default function TarefasPage() {
 
   return (
     <div>
-      <div className="page-head">
+      <Reveal className="page-head">
         <div>
           <h1 className="page-title">Tarefas</h1>
           <div className="page-sub">
@@ -487,25 +491,23 @@ export default function TarefasPage() {
         </div>
         <div className="page-head-actions">
           {!loading && <span className="refresh-note">{total} no total</span>}
-          <button
-            type="button"
-            className="btn"
+          <Button
             onClick={gerarDasDores}
             disabled={gerando}
             title="Cria tarefas a partir dos feedbacks de cancelamento negativos que ainda não viraram tarefa"
           >
-            <span aria-hidden>{"\u{1F525}"}</span>{" "}
+            <Flame size={15} aria-hidden />
             {gerando ? "Gerando…" : "Gerar tarefas das dores"}
-          </button>
+          </Button>
         </div>
-      </div>
+      </Reveal>
 
       {flash && (
         <div className={`flash ${flash.kind === "ok" ? "ok" : "err"}`}>{flash.text}</div>
       )}
 
       {/* KPIs */}
-      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <Reveal delay={0.05} className="kpi-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         <div className="card kpi">
           <div className="kpi-label">Abertas</div>
           <div className="kpi-value">{counts.aberta}</div>
@@ -523,10 +525,10 @@ export default function TarefasPage() {
           <div className="kpi-value">{concluidasHoje}</div>
           <div className="kpi-hint">fechadas no dia (carregadas)</div>
         </div>
-      </div>
+      </Reveal>
 
       {/* Abas por status, com contagens de counts_by_status */}
-      <div className="status-tabs">
+      <Reveal delay={0.08} className="status-tabs">
         <button
           type="button"
           className={`status-tab ${status === "" ? "active" : ""}`}
@@ -545,12 +547,12 @@ export default function TarefasPage() {
             <span className="tab-count">{counts[s.key] ?? 0}</span>
           </button>
         ))}
-      </div>
+      </Reveal>
 
       {/* Toolbar de filtros */}
-      <div className="toolbar">
+      <Reveal delay={0.1} className="toolbar">
         <label className="search">
-          <span className="ico">{"\u{1F50D}"}</span>
+          <span className="ico"><Search size={15} aria-hidden /></span>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -574,7 +576,7 @@ export default function TarefasPage() {
           <option value="sla">Por SLA</option>
           <option value="recente">Mais recentes</option>
         </select>
-      </div>
+      </Reveal>
 
       {err && (
         <div className="flash err">
@@ -583,7 +585,7 @@ export default function TarefasPage() {
         </div>
       )}
 
-      <div className="card">
+      <Reveal delay={0.13} className="card">
         <div className="table-wrap">
           <table>
             <thead>
@@ -622,15 +624,10 @@ export default function TarefasPage() {
                       </p>
                       {!status && !hasFilters && (
                         <div className="empty-cta">
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={gerarDasDores}
-                            disabled={gerando}
-                          >
-                            <span aria-hidden>{"\u{1F525}"}</span>{" "}
+                          <Button onClick={gerarDasDores} disabled={gerando}>
+                            <Flame size={15} aria-hidden />
                             {gerando ? "Gerando…" : "Gerar tarefas das dores"}
-                          </button>
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -643,13 +640,13 @@ export default function TarefasPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </Reveal>
 
       {hasMore && (
         <div className="load-more">
-          <button className="btn ghost" onClick={loadMore} disabled={loadingMore}>
+          <Button variant="ghost" onClick={loadMore} disabled={loadingMore}>
             {loadingMore ? "Carregando…" : "Carregar mais"}
-          </button>
+          </Button>
         </div>
       )}
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Reveal, Stagger, StaggerItem } from "@/components/Motion";
 import {
   campanha as campanhaApi,
   type CampanhaStats,
@@ -185,8 +186,8 @@ export default function CampanhaPage() {
       </div>
 
       {/* Cards de números */}
-      <div className="cmp-cards reveal-stagger">
-        <div className="card kpi reveal">
+      <Stagger className="cmp-cards" stagger={0.05}>
+        <StaggerItem className="card kpi">
           <div className="kpi-label">Universo</div>
           <div className="kpi-value">{stats.universo}</div>
           <div className="kpi-hint">clientes que cancelaram</div>
@@ -204,32 +205,32 @@ export default function CampanhaPage() {
               {"\u{2709}\u{FE0F}"} {stats.sem_whatsapp} sem WhatsApp
             </span>
           </div>
-        </div>
-        <div className="card kpi reveal">
+        </StaggerItem>
+        <StaggerItem className="card kpi">
           <div className="kpi-label">Contatados</div>
           <div className="kpi-value">{stats.contatados}</div>
           <div className="kpi-hint">{conv !== null ? `${conv}% do universo` : "—"}</div>
-        </div>
-        <div className="card kpi reveal">
+        </StaggerItem>
+        <StaggerItem className="card kpi">
           <div className="kpi-label">Responderam</div>
           <div className="kpi-value">{stats.responderam}</div>
           <div className="kpi-hint">voltaram a falar com a gente</div>
-        </div>
-        <div className="card kpi reveal">
+        </StaggerItem>
+        <StaggerItem className="card kpi">
           <div className="kpi-label">Cortesia</div>
           <div className="kpi-value">{stats.cortesia}</div>
           <div className="kpi-hint">ganharam a oferta</div>
-        </div>
-        <div className="card kpi reveal">
+        </StaggerItem>
+        <StaggerItem className="card kpi">
           <div className="kpi-label">Reativaram</div>
           <div className="kpi-value cmp-reativou">{stats.reativaram}</div>
           <div className="kpi-hint">voltaram a assinar</div>
-        </div>
-      </div>
+        </StaggerItem>
+      </Stagger>
 
       {/* Quebra do universo por alcance — transparência dos números de WhatsApp */}
       {alcanceRows.length > 0 && (
-        <div className="card cmp-block">
+        <Reveal className="card cmp-block">
           <div className="card-head">
             <div>
               <div className="section-title">Universo por alcance</div>
@@ -259,11 +260,11 @@ export default function CampanhaPage() {
               ))}
             </ul>
           </div>
-        </div>
+        </Reveal>
       )}
 
       {/* Funil */}
-      <div className="card cmp-block">
+      <Reveal className="card cmp-block">
         <div className="card-head">
           <div>
             <div className="section-title">Funil da campanha</div>
@@ -292,11 +293,11 @@ export default function CampanhaPage() {
             );
           })}
         </div>
-      </div>
+      </Reveal>
 
       <div className="cmp-two-col">
         {/* Por canal */}
-        <div className="card cmp-block">
+        <Reveal className="card cmp-block">
           <div className="card-head">
             <div className="section-title">Abordagens por canal</div>
           </div>
@@ -324,10 +325,10 @@ export default function CampanhaPage() {
               </ul>
             )}
           </div>
-        </div>
+        </Reveal>
 
         {/* Por selo (chips coloridos) */}
-        <div className="card cmp-block">
+        <Reveal delay={0.06} className="card cmp-block">
           <div className="card-head">
             <div className="section-title">Selos aplicados</div>
           </div>
@@ -368,11 +369,11 @@ export default function CampanhaPage() {
               </div>
             )}
           </div>
-        </div>
+        </Reveal>
       </div>
 
       {/* Insights — top temas com negativos */}
-      <div className="card cmp-block">
+      <Reveal className="card cmp-block">
         <div className="card-head">
           <div>
             <div className="section-title">Por que cancelaram</div>
@@ -426,7 +427,7 @@ export default function CampanhaPage() {
             </ul>
           )}
         </div>
-      </div>
+      </Reveal>
 
       <p className="count-line">
         Fonte: feedbacks de cancelamento + selos e abordagens registradas na campanha.

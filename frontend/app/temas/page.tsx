@@ -10,6 +10,8 @@ import {
   type Tema,
   type ThemesAggregate,
 } from "@/lib/api";
+import { Stagger, StaggerItem } from "@/components/Motion";
+import { Button } from "@/components/ui/button";
 
 // ===== abas (por tag × por significado) =====================================
 
@@ -315,15 +317,16 @@ function ClusterCard({ cluster, rank }: { cluster: FeedbackCluster; rank: number
             ✓ no roadmap →
           </Link>
         ) : (
-          <button
-            type="button"
-            className="btn sm promote-btn"
+          <Button
+            variant="default"
+            size="sm"
+            className="promote-btn"
             onClick={virarMelhoria}
             disabled={promote.phase === "saving"}
             title="Criar uma melhoria a partir desta dor e vincular os feedbacks"
           >
             {promote.phase === "saving" ? "Criando…" : "💡 Virar melhoria"}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -569,17 +572,13 @@ export default function TemasPage() {
               </div>
             </div>
           ) : (
-            <div className="tema-grid reveal-stagger">
+            <Stagger className="tema-grid">
               {sorted.map((t, i) => (
-                <div
-                  key={t.name}
-                  className="reveal"
-                  style={{ ["--i" as string]: i } as React.CSSProperties}
-                >
+                <StaggerItem key={t.name}>
                   <TemaCard tema={t} rank={i + 1} maxCount={maxCount} />
-                </div>
+                </StaggerItem>
               ))}
-            </div>
+            </Stagger>
           )}
         </>
       ) : (
@@ -611,17 +610,13 @@ export default function TemasPage() {
               </div>
             </div>
           ) : (
-            <div className="tema-grid reveal-stagger">
+            <Stagger className="tema-grid">
               {clusters.map((c, i) => (
-                <div
-                  key={c.id}
-                  className="reveal"
-                  style={{ ["--i" as string]: i } as React.CSSProperties}
-                >
+                <StaggerItem key={c.id}>
                   <ClusterCard cluster={c} rank={i + 1} />
-                </div>
+                </StaggerItem>
               ))}
-            </div>
+            </Stagger>
           )}
         </>
       )}
