@@ -66,16 +66,70 @@ def get_waha() -> WAHAService:
 async def whatsapp_status(waha: WAHAService = Depends(get_waha)) -> dict[str, Any]:
     """Status do gateway WAHA (best-effort). NÃO expõe segredos (sem api_key).
 
-    Retorna {"conectado": bool, "session": <nome>, "base_url": <url>}. `conectado`
-    é True só quando a sessão está plenamente conectada ('WORKING'); WAHA off/erro
-    -> False (o helper engole a exceção e devolve None).
+    Retorna {"conectado": bool, "status": <str|None>, "session": <nome>,
+    "base_url": <url>}. `status` é a string crua do WAHA (WORKING / SCAN_QR_CODE /
+    STARTING / STOPPED / FAILED / None). `conectado` é True só quando a sessão está
+    plenamente conectada ('WORKING'); WAHA off/erro -> conectado False + status None
+    (o helper engole a exceção e devolve None).
     """
-    conectado = await waha.is_connected(settings.waha_session)
+    status = await waha.get_session_status(settings.waha_session)
     return {
-        "conectado": bool(conectado),
+        "conectado": status == "WORKING",
+        "status": status,
         "session": settings.waha_session,
         "base_url": settings.waha_base_url,
     }
+
+
+@router.get("/whatsapp/qr")
+async def whatsapp_qr(waha: WAHAService = Depends(get_waha)) -> dict[str, Any]:
+    """QR Code do WAHA para parear o WhatsApp (best-effort).
+
+    Retorna {"qr": <data-uri|null>, "status": <str|null>}. Se a sessão já está
+    'WORKING' (pareada), devolve qr=null + status WORKING (não há QR a mostrar). Se
+    o WAHA está off/erro, devolve {"qr": null, "status": null} — NUNCA 500.
+    """
+    status = await waha.get_session_status(settings.waha_session)
+    # Já conectado: não há QR para exibir.
+    if status == "WORKING":
+        return {"qr": None, "status": status}
+    res = await waha.get_qr_code(settings.waha_session)
+    return {
+        "qr": res.get("qr"),
+        # Prefere o status que veio junto do QR; cai no lido acima.
+        "status": res.get("status", status) or status,
+    }
+
+
+@router.post("/whatsapp/session/start")
+async def whatsapp_session_start(waha: WAHAService = Depends(get_waha)) -> dict[str, Any]:
+    """Inicia a sessão WAHA (pareamento). Best-effort: WAHA off -> {"ok": false}.
+
+    Retorna {"ok": bool, "status": <str|null>}. NÃO é envio de mensagem — só liga a
+    sessão para o operador escanear o QR. NUNCA 500.
+    """
+    res = await waha.start_session(settings.waha_session)
+    return {"ok": bool(res.get("ok")), "status": res.get("status")}
+
+
+@router.post("/whatsapp/session/stop")
+async def whatsapp_session_stop(waha: WAHAService = Depends(get_waha)) -> dict[str, Any]:
+    """Para a sessão WAHA. Best-effort: WAHA off -> {"ok": false}.
+
+    Retorna {"ok": bool, "status": <str|null>}. NUNCA 500.
+    """
+    res = await waha.stop_session(settings.waha_session)
+    return {"ok": bool(res.get("ok")), "status": res.get("status")}
+
+
+@router.post("/whatsapp/session/restart")
+async def whatsapp_session_restart(waha: WAHAService = Depends(get_waha)) -> dict[str, Any]:
+    """Reinicia a sessão WAHA (stop + start). Best-effort: WAHA off -> {"ok": false}.
+
+    Retorna {"ok": bool, "status": <str|null>}. NUNCA 500.
+    """
+    res = await waha.restart_session(settings.waha_session)
+    return {"ok": bool(res.get("ok")), "status": res.get("status")}
 
 
 def _is_grupo(phone: str | None) -> bool:

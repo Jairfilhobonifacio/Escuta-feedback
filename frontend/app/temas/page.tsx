@@ -342,6 +342,35 @@ function ClusterCard({ cluster, rank }: { cluster: FeedbackCluster; rank: number
   );
 }
 
+// ===== skeleton (mesma silhueta do card de tema/dor) =======================
+
+/** Placeholder de um card de tema/dor enquanto carrega — título + barra de
+   volume + barra de sentimento + rodapé, com shimmer. */
+function TemaCardSkeleton() {
+  return (
+    <div className="card tema-card" aria-busy="true">
+      <div className="tema-head" style={{ alignItems: "center" }}>
+        <div className="sk-circle" style={{ ["--sk-size" as string]: "26px" } as React.CSSProperties} />
+        <div className="sk-line w-50" style={{ margin: 0 }} />
+      </div>
+      <div className="sk-line w-full" style={{ height: 8, marginTop: 14 }} />
+      <div className="sk-line w-80" style={{ height: 8 }} />
+      <div className="sk-line w-40" style={{ marginTop: 14 }} />
+    </div>
+  );
+}
+
+/** Grid de skeletons reaproveitado pelas duas abas. */
+function TemaGridSkeleton({ count = 6 }: { count?: number }) {
+  return (
+    <div className="tema-grid" aria-busy="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <TemaCardSkeleton key={i} />
+      ))}
+    </div>
+  );
+}
+
 // ===== página ===============================================================
 
 const TAB_OPTIONS: { key: TabKey; label: string }[] = [
@@ -521,25 +550,34 @@ export default function TemasPage() {
             </div>
           )}
 
-          {!err && sorted.length === 0 ? (
+          {!err && loading && sorted.length === 0 ? (
+            <TemaGridSkeleton />
+          ) : !err && sorted.length === 0 ? (
             <div className="card">
               <div className="empty">
-                <div className="big">🏷️</div>
-                {loading
-                  ? "Carregando temas…"
-                  : "Nenhum tema classificado neste período ainda."}
-                {!loading && (
-                  <div className="empty-sub">
-                    Os temas aparecem aqui assim que a IA classificar os feedbacks. Tente um
-                    período maior ou volte depois de novas respostas.
-                  </div>
-                )}
+                <div className="empty-illu">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3.4 13.4A2 2 0 0 1 2.8 12V4.8A2 2 0 0 1 4.8 2.8H12a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8z" />
+                    <circle cx="7.5" cy="7.5" r="1.2" />
+                  </svg>
+                </div>
+                <div className="empty-title">Nenhum tema classificado neste período</div>
+                <p className="empty-sub">
+                  Os temas aparecem aqui assim que a IA classificar os feedbacks. Tente um
+                  período maior ou volte depois de novas respostas.
+                </p>
               </div>
             </div>
           ) : (
-            <div className="tema-grid">
+            <div className="tema-grid reveal-stagger">
               {sorted.map((t, i) => (
-                <TemaCard key={t.name} tema={t} rank={i + 1} maxCount={maxCount} />
+                <div
+                  key={t.name}
+                  className="reveal"
+                  style={{ ["--i" as string]: i } as React.CSSProperties}
+                >
+                  <TemaCard tema={t} rank={i + 1} maxCount={maxCount} />
+                </div>
               ))}
             </div>
           )}
@@ -553,26 +591,35 @@ export default function TemasPage() {
             </div>
           )}
 
-          {!clusterErr && clusters.length === 0 ? (
+          {!clusterErr && clusterLoading && clusters.length === 0 ? (
+            <TemaGridSkeleton />
+          ) : !clusterErr && clusters.length === 0 ? (
             <div className="card">
               <div className="empty">
-                <div className="big">🧭</div>
-                {clusterLoading
-                  ? "Agrupando dores por significado…"
-                  : "Nenhuma dor agrupada neste período ainda."}
-                {!clusterLoading && (
-                  <div className="empty-sub">
-                    Os clusters aparecem quando há feedbacks com texto suficiente para a IA
-                    agrupar por significado. Tente um período maior ou volte após novas
-                    respostas.
-                  </div>
-                )}
+                <div className="empty-illu">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M14.5 9.5 11 11l-1.5 3.5L13 13z" />
+                  </svg>
+                </div>
+                <div className="empty-title">Nenhuma dor agrupada neste período</div>
+                <p className="empty-sub">
+                  Os clusters aparecem quando há feedbacks com texto suficiente para a IA
+                  agrupar por significado. Tente um período maior ou volte após novas
+                  respostas.
+                </p>
               </div>
             </div>
           ) : (
-            <div className="tema-grid">
+            <div className="tema-grid reveal-stagger">
               {clusters.map((c, i) => (
-                <ClusterCard key={c.id} cluster={c} rank={i + 1} />
+                <div
+                  key={c.id}
+                  className="reveal"
+                  style={{ ["--i" as string]: i } as React.CSSProperties}
+                >
+                  <ClusterCard cluster={c} rank={i + 1} />
+                </div>
               ))}
             </div>
           )}

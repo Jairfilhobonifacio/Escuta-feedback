@@ -19,7 +19,6 @@ import {
 
 // emoji em .ts/.tsx só via \u{...} (o bundler do Next no Windows corrompe literais).
 const EMOJI_PULL = "\u{1F3AF}"; // 🎯 — "puxar dor para o roadmap"
-const EMOJI_DONE = "\u{2705}"; // ✅ — nenhuma dor pendente
 const EMOJI_HEART = "\u{1F49C}"; // 💜 — loop fechado (flash de sucesso)
 
 // ===== vocabulário (estágios / esforço) =====================================
@@ -83,11 +82,16 @@ function ImprovementCard({
   busy,
   onChangeStage,
   onCloseLoop,
+  className = "",
+  style,
 }: {
   imp: ImprovementRoadmapItem;
   busy: boolean;
   onChangeStage: (status: ImprovementStatus) => void;
   onCloseLoop: () => void;
+  /** Permite aplicar .reveal direto no .survey-item (preserva :first/:last-child). */
+  className?: string;
+  style?: React.CSSProperties;
 }) {
   const badgeCls = STAGE_BADGE[imp.status] ?? "neutral";
   const delivered = imp.status === "entregue";
@@ -96,7 +100,7 @@ function ImprovementCard({
   const target = fmtMaybeDate(imp.target_date);
 
   return (
-    <div className="survey-item">
+    <div className={`survey-item ${className}`.trim()} style={style}>
       <div className="survey-name">
         {imp.title}
         <span className={`badge ${badgeCls}`}>{STAGE_LABEL[imp.status] ?? imp.status}</span>
@@ -301,16 +305,21 @@ function PendingPainRow({
   cluster,
   busy,
   onPull,
+  className = "",
+  style,
 }: {
   cluster: FeedbackCluster;
   busy: boolean;
   onPull: () => void;
+  /** Permite aplicar .reveal direto no .survey-item (preserva :first/:last-child). */
+  className?: string;
+  style?: React.CSSProperties;
 }) {
   const title = cluster.label ?? "Dor sem rótulo";
   const sent = sentimentBadge(cluster.dominant_sentiment);
 
   return (
-    <div className="survey-item">
+    <div className={`survey-item ${className}`.trim()} style={style}>
       <div className="survey-name">
         {title}
         {sent && <span className={`badge sent ${sent.cls}`}>{sent.label}</span>}
@@ -381,35 +390,68 @@ function PullFromThemes({
         </div>
       )}
 
-      {!error && (loading || pains.length === 0) ? (
+      {!error && loading ? (
+        <div className="imp-list" style={{ margin: "0 -20px -18px" }} aria-busy="true">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <ImprovementRowSkeleton key={i} />
+          ))}
+        </div>
+      ) : !error && pains.length === 0 ? (
         <div className="empty">
-          <div className="big">{loading ? EMOJI_PULL : EMOJI_DONE}</div>
-          {loading ? (
-            "Procurando dores pendentes…"
-          ) : (
-            <>
-              Nenhuma dor pendente — tudo já está no roadmap.
-              <div className="empty-sub">
-                Quando novos feedbacks formarem uma dor em <b>Temas → Por significado</b>,
-                ela aparece aqui para ser puxada.
-              </div>
-            </>
-          )}
+          <div className="empty-illu">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </div>
+          <div className="empty-title">Nenhuma dor pendente</div>
+          <p className="empty-sub">
+            Tudo já está no roadmap. Quando novos feedbacks formarem uma dor em{" "}
+            <b>Temas → Por significado</b>, ela aparece aqui para ser puxada.
+          </p>
         </div>
       ) : (
         !error && (
           <div className="imp-list" style={{ margin: "0 -20px -18px" }}>
-            {pains.map((c) => (
+            {pains.map((c, i) => (
               <PendingPainRow
                 key={c.id}
                 cluster={c}
                 busy={busyId === c.id}
                 onPull={() => onPull(c)}
+                className="reveal"
+                style={{ ["--i" as string]: i } as React.CSSProperties}
               />
             ))}
           </div>
         )
       )}
+    </div>
+  );
+}
+
+// ===== skeletons (espelham a forma dos itens) ===============================
+
+/** Placeholder de um item da lista priorizada (título + métricas + chips). */
+function ImprovementRowSkeleton() {
+  return (
+    <div className="survey-item" aria-busy="true">
+      <div className="sk-line w-60" style={{ marginTop: 4 }} />
+      <div className="sk-line w-90" />
+      <div className="imp-metrics" style={{ marginTop: 10 }}>
+        <div className="sk-line" style={{ width: 130, margin: 0 }} />
+        <div className="sk-line" style={{ width: 80, margin: 0 }} />
+      </div>
+    </div>
+  );
+}
+
+/** Lista de skeletons dentro de um card (usada na coluna do roadmap). */
+function ImprovementListSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <div className="card imp-list" aria-busy="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <ImprovementRowSkeleton key={i} />
+      ))}
     </div>
   );
 }
@@ -644,34 +686,42 @@ export default function MelhoriasPage() {
             </div>
           )}
 
-          {!err && items.length === 0 ? (
+          {!err && loading && items.length === 0 ? (
+            <ImprovementListSkeleton />
+          ) : !err && items.length === 0 ? (
             <div className="card">
               <div className="empty">
-                <div className="big">💡</div>
-                {loading
-                  ? "Carregando o roadmap…"
-                  : filter === "todos"
-                    ? "Nenhuma melhoria ainda."
-                    : `Nenhuma melhoria em "${STAGE_LABEL[filter] ?? filter}".`}
-                {!loading && (
-                  <div className="empty-sub">
-                    Crie uma ao lado, ou vá em <b>Temas → Por significado</b> e use{" "}
-                    <b>“Virar melhoria”</b> numa dor para começar o roadmap já com os feedbacks
-                    vinculados.
-                  </div>
-                )}
+                <div className="empty-illu">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M9 18h6" />
+                    <path d="M10 21h4" />
+                    <path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z" />
+                  </svg>
+                </div>
+                <div className="empty-title">
+                  {filter === "todos"
+                    ? "Nenhuma melhoria ainda"
+                    : `Nada em "${STAGE_LABEL[filter] ?? filter}"`}
+                </div>
+                <p className="empty-sub">
+                  Crie uma ao lado, ou vá em <b>Temas → Por significado</b> e use{" "}
+                  <b>“Virar melhoria”</b> numa dor para começar o roadmap já com os feedbacks
+                  vinculados.
+                </p>
               </div>
             </div>
           ) : (
             !err && (
               <div className="card imp-list">
-                {items.map((imp) => (
+                {items.map((imp, i) => (
                   <ImprovementCard
                     key={imp.id}
                     imp={imp}
                     busy={busyId === imp.id}
                     onChangeStage={(s) => changeStage(imp, s)}
                     onCloseLoop={() => openCloseLoop(imp)}
+                    className="reveal"
+                    style={{ ["--i" as string]: i } as React.CSSProperties}
                   />
                 ))}
               </div>

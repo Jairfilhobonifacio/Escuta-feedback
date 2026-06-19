@@ -126,6 +126,112 @@ class WAHAService:
         """True só se a sessão WAHA está plenamente conectada ('WORKING')."""
         return (await self.get_session_status(session)) == "WORKING"
 
+    async def get_qr_code(self, session: Optional[str] = None) -> Dict[str, Any]:
+        """QR Code da sessão WAHA para parear (best-effort).
+
+        GET /api/{session}/auth/qr?format=image -> PNG binário (content-type
+        image/...) ou, em versões antigas, JSON {"value"/"qr": "<base64|texto>"}.
+        Monta um data-uri quando vem binário/base64 cru. Retorna sempre o mesmo
+        contrato: {"qr": <data-uri|str|None>, "status": <str|None>}. WAHA off/erro
+        (ou já WORKING, que não expõe QR) -> {"qr": None, "status": <status|None>}.
+        Mesmo padrão dos outros métodos: try/except + log, nunca derruba.
+        """
+        import base64 as _b64
+
+        sess = session or self.default_session
+        status = await self.get_session_status(sess)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                r = await client.get(
+                    f"{self.base_url}/api/{sess}/auth/qr",
+                    params={"format": "image"},
+                    headers=self._headers(),
+                )
+            if r.status_code >= 400:
+                logger.warning("WAHA get_qr_code %s: %s", r.status_code, r.text[:200])
+                return {"qr": None, "status": status}
+
+            content_type = r.headers.get("content-type", "")
+            # PNG binário -> data-uri.
+            if "image" in content_type:
+                b64 = _b64.b64encode(r.content).decode("utf-8")
+                return {"qr": f"data:image/png;base64,{b64}", "status": status}
+
+            # JSON antigo: {"value"/"qr": ...}. Pode vir base64 cru ou já data-uri.
+            try:
+                data = r.json() or {}
+                value = data.get("value") or data.get("qr")
+                if value and isinstance(value, str) and not value.startswith("data:"):
+                    value = f"data:image/png;base64,{value}"
+                return {"qr": value, "status": status}
+            except ValueError:
+                # Corpo não-JSON e não-imagem: devolve o texto cru como veio.
+                text = (r.text or "").strip()
+                return {"qr": text or None, "status": status}
+        except Exception:  # noqa: BLE001 — QR é best-effort; WAHA off -> qr None.
+            logger.exception("WAHA get_qr_code falhou")
+            return {"qr": None, "status": status}
+
+    async def start_session(self, session: Optional[str] = None) -> Dict[str, Any]:
+        """Inicia a sessão WAHA para parear (best-effort).
+
+        POST /api/sessions/start com body {"name": session} (mesmo endpoint do
+        Nexus). Retorna {"ok": bool, "status": <str|None>}; o status é relido após
+        o start (tipicamente STARTING/SCAN_QR_CODE). WAHA off/erro -> ok False.
+        Mesmo padrão dos outros métodos: try/except + log, nunca derruba.
+        """
+        sess = session or self.default_session
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                r = await client.post(
+                    f"{self.base_url}/api/sessions/start",
+                    json={"name": sess},
+                    headers=self._headers(),
+                )
+            ok = r.status_code < 400
+            if not ok:
+                logger.warning("WAHA start_session %s: %s", r.status_code, r.text[:200])
+        except Exception:  # noqa: BLE001 — start é best-effort; WAHA off -> ok False.
+            logger.exception("WAHA start_session falhou")
+            ok = False
+        return {"ok": ok, "status": await self.get_session_status(sess)}
+
+    async def stop_session(self, session: Optional[str] = None) -> Dict[str, Any]:
+        """Para a sessão WAHA (best-effort).
+
+        POST /api/sessions/stop com body {"name": session} (mesmo endpoint do
+        Nexus). Retorna {"ok": bool, "status": <str|None>}; status relido após o
+        stop (tipicamente STOPPED/None). WAHA off/erro -> ok False. Mesmo padrão
+        dos outros métodos: try/except + log, nunca derruba.
+        """
+        sess = session or self.default_session
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                r = await client.post(
+                    f"{self.base_url}/api/sessions/stop",
+                    json={"name": sess},
+                    headers=self._headers(),
+                )
+            ok = r.status_code < 400
+            if not ok:
+                logger.warning("WAHA stop_session %s: %s", r.status_code, r.text[:200])
+        except Exception:  # noqa: BLE001 — stop é best-effort; WAHA off -> ok False.
+            logger.exception("WAHA stop_session falhou")
+            ok = False
+        return {"ok": ok, "status": await self.get_session_status(sess)}
+
+    async def restart_session(self, session: Optional[str] = None) -> Dict[str, Any]:
+        """Reinicia a sessão WAHA = stop + start (best-effort).
+
+        O WAHA não tem endpoint dedicado de restart no fluxo do Nexus, então
+        encadeamos stop seguido de start (ambos best-effort). Retorna o resultado
+        do start: {"ok": bool, "status": <str|None>}. ok=True se o start subiu,
+        mesmo que o stop anterior não tenha encontrado sessão para parar.
+        """
+        sess = session or self.default_session
+        await self.stop_session(sess)
+        return await self.start_session(sess)
+
     async def check_number_exists(self, phone: str, session: Optional[str] = None) -> Optional[bool]:
         """Checa se um número está registrado no WhatsApp (best-effort).
 

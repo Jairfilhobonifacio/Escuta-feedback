@@ -27,6 +27,29 @@ const ESTADO_LABEL: Record<string, string> = {
   past_due: "atrasado",
 };
 
+/** Skeleton de uma linha da lista de conversas (avatar + nome + prévia). */
+function ConvSkeleton() {
+  return (
+    <div className="chat-conv chat-conv-sk" aria-hidden>
+      <div className="sk-circle" style={{ ["--sk-size" as string]: "40px" }} />
+      <div className="chat-conv-body">
+        <div className="sk-line w-60" style={{ margin: "2px 0 8px" }} />
+        <div className="sk-line sk-sm w-90" style={{ margin: 0 }} />
+      </div>
+    </div>
+  );
+}
+
+/** Skeleton de um balão do chat (lado in/out alternado). */
+function BubbleSkeleton({ side }: { side: "inbound" | "outbound" }) {
+  return (
+    <div className={`chat-bubble ${side} chat-bubble-sk`} aria-hidden>
+      <div className="sk-line w-full" style={{ margin: "2px 0", width: 160 }} />
+      <div className="sk-line sk-sm" style={{ margin: 0, width: 60 }} />
+    </div>
+  );
+}
+
 function estadoBadge(estado: string | null) {
   if (!estado) return null;
   const cls = estado === "active_paying" ? "promoter" : estado === "cancelled" ? "detractor" : "neutral";
@@ -136,6 +159,22 @@ export default function ChatPage() {
         </span>
       </div>
 
+      {!conectado && (
+        <div className="note">
+          <span className="note-ico" aria-hidden>
+            {"\u{1F50C}"}
+          </span>
+          <span>
+            O WhatsApp está desconectado — você pode ler as conversas, mas o envio
+            fica bloqueado.{" "}
+            <Link href="/conexao" className="row-link">
+              Conectar o WhatsApp
+            </Link>
+            .
+          </span>
+        </div>
+      )}
+
       <div className="chat-wrap">
         {/* ----- coluna esquerda: conversas ----- */}
         <aside className="chat-list card">
@@ -163,20 +202,36 @@ export default function ChatPage() {
             </div>
           )}
 
-          <div className="chat-convs">
+          <div className="chat-convs" aria-busy={loadingConvs && convs.length === 0}>
             {loadingConvs && convs.length === 0 ? (
-              <div className="empty" style={{ padding: 24 }}>Carregando…</div>
+              <>
+                {Array.from({ length: 7 }).map((_, i) => (
+                  <ConvSkeleton key={i} />
+                ))}
+              </>
             ) : convs.length === 0 ? (
-              <div className="empty" style={{ padding: 24 }}>
-                Nenhuma conversa ainda. As mensagens aparecem aqui quando um cliente escreve
-                no WhatsApp ou quando você envia pela ficha/aqui.
+              <div className="empty">
+                <div className="empty-illu" aria-hidden>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7a8.5 8.5 0 0 1-.9-3.8 8.38 8.38 0 0 1 8.5-8.5 8.38 8.38 0 0 1 8.5 8.5Z" />
+                  </svg>
+                </div>
+                <div className="empty-title">
+                  {search.trim() ? "Nada encontrado" : "Nenhuma conversa ainda"}
+                </div>
+                <p className="empty-sub">
+                  {search.trim()
+                    ? "Ajuste a busca ou desligue o filtro “Só 1:1” para ver grupos."
+                    : "As mensagens aparecem aqui quando um cliente escreve no WhatsApp — ou quando você envia pela ficha ou por aqui."}
+                </p>
               </div>
             ) : (
-              convs.map((c) => (
+              convs.map((c, i) => (
                 <button
                   key={c.contact_id}
                   type="button"
-                  className={`chat-conv ${c.contact_id === selectedId ? "active" : ""}`}
+                  className={`chat-conv reveal ${c.contact_id === selectedId ? "active" : ""}`}
+                  style={{ ["--i" as string]: i }}
                   onClick={() => setSelectedId(c.contact_id)}
                 >
                   <Avatar name={c.nome} seed={c.contact_id} size={40} />
@@ -211,8 +266,15 @@ export default function ChatPage() {
         <section className="chat-main card">
           {!selectedId || !thread ? (
             <div className="chat-empty">
-              <div className="big">{"\u{1F4AC}"}</div>
-              <div>Selecione uma conversa à esquerda para ver as mensagens.</div>
+              <div className="empty-illu" aria-hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" />
+                </svg>
+              </div>
+              <div className="empty-title">Selecione uma conversa</div>
+              <p className="empty-sub">
+                Escolha alguém na lista à esquerda para ver o histórico e responder por aqui.
+              </p>
             </div>
           ) : (
             <>
@@ -236,16 +298,32 @@ export default function ChatPage() {
                 </Link>
               </header>
 
-              <div className="chat-thread">
+              <div className="chat-thread" aria-busy={loadingThread && thread.mensagens.length === 0}>
                 {loadingThread && thread.mensagens.length === 0 ? (
-                  <div className="empty" style={{ padding: 24 }}>Carregando…</div>
+                  <>
+                    <BubbleSkeleton side="inbound" />
+                    <BubbleSkeleton side="outbound" />
+                    <BubbleSkeleton side="inbound" />
+                  </>
                 ) : thread.mensagens.length === 0 ? (
-                  <div className="empty" style={{ padding: 24 }}>
-                    Sem mensagens trocadas com este contato ainda.
+                  <div className="empty">
+                    <div className="empty-illu" aria-hidden>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7a8.5 8.5 0 0 1-.9-3.8 8.38 8.38 0 0 1 8.5-8.5 8.38 8.38 0 0 1 8.5 8.5Z" />
+                      </svg>
+                    </div>
+                    <div className="empty-title">Comece a conversa</div>
+                    <p className="empty-sub">
+                      Ainda não há mensagens com este contato. Escreva abaixo para iniciar.
+                    </p>
                   </div>
                 ) : (
-                  thread.mensagens.map((m) => (
-                    <div key={m.id} className={`chat-bubble ${m.direction}`}>
+                  thread.mensagens.map((m, i) => (
+                    <div
+                      key={m.id}
+                      className={`chat-bubble reveal ${m.direction}`}
+                      style={{ ["--i" as string]: Math.min(i, 6) }}
+                    >
                       <div className="chat-bubble-body">{m.body}</div>
                       <div className="chat-bubble-time">{fmtTime(m.at)}</div>
                     </div>

@@ -63,6 +63,48 @@ const TIPO_LABEL: Record<string, string> = {
   csat: "CSAT",
 };
 
+/** Linha-fantasma da tabela durante o load: espelha as 9 colunas (avatar + barra
+    de Health + chips), para a transição conteúdo↔skeleton não "pular". */
+function SkeletonRow() {
+  return (
+    <tr aria-hidden>
+      <td>
+        <div className="cell-person">
+          <div className="sk-circle" />
+          <div className="cell-person-txt" style={{ flex: 1 }}>
+            <div className="sk-line sk-sm w-70" style={{ margin: "2px 0" }} />
+            <div className="sk-line sk-sm w-40" style={{ margin: "2px 0" }} />
+          </div>
+        </div>
+      </td>
+      <td>
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <div className="sk-line" style={{ width: 70, margin: 0 }} />
+          <div className="sk-line sk-sm" style={{ width: 24, margin: 0 }} />
+        </div>
+      </td>
+      <td><div className="sk-line w-60" style={{ margin: 0 }} /></td>
+      <td><div className="sk-line w-50" style={{ margin: 0 }} /></td>
+      <td><div className="sk-line" style={{ width: 56, margin: 0 }} /></td>
+      <td><div className="sk-line w-50" style={{ margin: 0 }} /></td>
+      <td><div className="sk-line w-60" style={{ margin: 0 }} /></td>
+      <td><div className="sk-line" style={{ width: 28, margin: 0 }} /></td>
+      <td><div className="sk-line w-70" style={{ margin: 0 }} /></td>
+    </tr>
+  );
+}
+
+/** SVG discreto p/ o estado vazio (grupo de pessoas, stroke=currentColor). */
+const EMPTY_PEOPLE = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M16 19a4 4 0 0 0-8 0" />
+    <circle cx="12" cy="8" r="3" />
+    <path d="M5 19a3 3 0 0 1 3-3" />
+    <path d="M19 19a3 3 0 0 0-3-3" />
+  </svg>
+);
+
 /** Rótulos legíveis dos estados de assinatura (snapshot partner). */
 const ESTADO_OPCOES: { value: EstadoAssinatura; label: string }[] = [
   { value: "active_paying", label: "Pagante ativo" },
@@ -523,25 +565,45 @@ export default function ClientesPage() {
                 <th>Selos</th>
               </tr>
             </thead>
-            <tbody>
-              {!err && visiveis.length === 0 && (
+            <tbody aria-busy={loading || undefined}>
+              {loading && clientes.length === 0 &&
+                Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)}
+              {!loading && !err && visiveis.length === 0 && (
                 <tr>
                   <td colSpan={9}>
                     <div className="empty">
-                      <div className="big">{"\u{1F465}"}</div>
-                      {loading
-                        ? "Carregando…"
-                        : soRisco
-                        ? "Nenhuma conta em risco \u{1F389}"
-                        : algumFiltro
-                        ? "Nenhum cliente bate com os filtros."
-                        : "Nenhum cliente contatável ainda."}
+                      <div className="empty-illu">{EMPTY_PEOPLE}</div>
+                      <div className="empty-title">
+                        {soRisco
+                          ? "Nenhuma conta em risco"
+                          : algumFiltro
+                          ? "Nenhum cliente com esses filtros"
+                          : "Nenhum cliente contatável ainda"}
+                      </div>
+                      <p className="empty-sub">
+                        {soRisco
+                          ? "Toda a base está saudável por enquanto \u{2014} bom trabalho."
+                          : algumFiltro
+                          ? "Tente afrouxar a busca ou limpar os filtros."
+                          : "Quando houver clientes contatáveis, eles aparecem aqui."}
+                      </p>
+                      {algumFiltro && (
+                        <div className="empty-cta">
+                          <button type="button" className="btn ghost sm" onClick={limparFiltros}>
+                            Limpar filtros
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </td>
                 </tr>
               )}
-              {visiveis.map((c) => (
-                <tr key={c.id}>
+              {(!loading || clientes.length > 0) && visiveis.map((c, i) => (
+                <tr
+                  key={c.id}
+                  className="reveal"
+                  style={{ ["--i" as string]: Math.min(i, 12) } as React.CSSProperties}
+                >
                   <td>
                     <div className="cell-person">
                       <Avatar name={c.nome} seed={c.id} />

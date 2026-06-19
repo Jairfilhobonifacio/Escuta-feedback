@@ -1968,3 +1968,280 @@ tbody tr:hover td { color: var(--text); }
 }
 .chat-compose textarea:focus { outline: none; border-color: var(--indigo); box-shadow: var(--ring-indigo); }
 .chat-compose .btn { flex-shrink: 0; height: 40px; }
+
+/* ============================================================================
+   FINISHING LAYER — acabamento caro (aditivo; nenhuma classe é renomeada)
+   "Mesma alma, mais polido": entrada orquestrada por elemento, skeletons de
+   loading, estados vazios elegantes, microinterações consistentes e refinos
+   conservadores de respiro. Tudo respeita prefers-reduced-motion.
+
+   Tokens novos (escopados, complementam os de :root sem alterá-los):
+     --ease-out  curva de saída suave p/ entradas/hover
+     --reveal-y  deslocamento vertical do .reveal
+     --dur-*     durações padronizadas (rápida/base/lenta)
+   ========================================================================== */
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --reveal-y: 8px;
+  --dur-fast: 130ms;
+  --dur: 200ms;
+  --dur-slow: 320ms;
+  /* shimmer dos skeletons — faixa de luz que desliza sobre o charcoal */
+  --sk-base: #1b1a22;
+  --sk-sheen: rgba(255, 255, 255, 0.06);
+}
+
+/* ----------------------------------------------------------------------------
+   1) .reveal — entrada por elemento (fade + slide-up sutil) com stagger
+   Use em qualquer nó que deva "surgir": <div className="reveal">.
+   Stagger automático: filhos diretos com .reveal escalonam via :nth-child.
+   Stagger manual/ilimitado: defina --i no inline style
+       <li className="reveal" style={{ ["--i" as any]: i }}>  (delay = i * 55ms)
+   Observação: o page-load global (.main > *) já orquestra os blocos de topo;
+   .reveal é para listas/grids/itens que entram depois (ex.: resultados de busca,
+   cards renderizados client-side, linhas que chegam por fetch).
+   -------------------------------------------------------------------------- */
+@keyframes reveal-in {
+  from { opacity: 0; transform: translateY(var(--reveal-y)); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .reveal {
+    animation: reveal-in var(--dur-slow) var(--ease-out) both;
+    animation-delay: calc(var(--i, 0) * 55ms);
+  }
+  /* stagger automático p/ filhos .reveal quando --i não é informado */
+  .reveal-stagger > .reveal:nth-child(1) { --i: 0; }
+  .reveal-stagger > .reveal:nth-child(2) { --i: 1; }
+  .reveal-stagger > .reveal:nth-child(3) { --i: 2; }
+  .reveal-stagger > .reveal:nth-child(4) { --i: 3; }
+  .reveal-stagger > .reveal:nth-child(5) { --i: 4; }
+  .reveal-stagger > .reveal:nth-child(6) { --i: 5; }
+  .reveal-stagger > .reveal:nth-child(7) { --i: 6; }
+  .reveal-stagger > .reveal:nth-child(8) { --i: 7; }
+  .reveal-stagger > .reveal:nth-child(n+9) { --i: 8; }
+}
+/* delay incremental utilitário (quando preferir classe a inline style) */
+.reveal-d1 { animation-delay: 55ms; }
+.reveal-d2 { animation-delay: 110ms; }
+.reveal-d3 { animation-delay: 165ms; }
+.reveal-d4 { animation-delay: 220ms; }
+.reveal-d5 { animation-delay: 275ms; }
+@media (prefers-reduced-motion: reduce) {
+  .reveal { animation: none; }
+}
+
+/* ----------------------------------------------------------------------------
+   2) Skeletons de loading — placeholders com shimmer nas cores do tema
+   Troque "Carregando…" por estrutura. Blocos disponíveis:
+     .skeleton    container opcional (apenas marca semântica; aria-busy no JSX)
+     .sk-line     linha de texto (use .sk-sm / .sk-lg p/ largura; .w-40 etc.)
+     .sk-card     bloco retangular (altura via style ou .sk-card.tall)
+     .sk-circle   avatar/ícone redondo (tamanho via --sk-size ou .sk-lg)
+   Exemplo:
+     <div className="card" aria-busy>
+       <div className="sk-card" style={{height: 120}} />
+       <div className="sk-line w-60" /><div className="sk-line w-40" />
+     </div>
+   -------------------------------------------------------------------------- */
+.skeleton { display: block; }
+.sk-line, .sk-card, .sk-circle {
+  position: relative;
+  overflow: hidden;
+  background: var(--sk-base);
+  border: 1px solid var(--charcoal);
+}
+.sk-line {
+  height: 11px; border-radius: 999px; margin: 9px 0;
+  border: none; background: var(--sk-base);
+}
+.sk-line.sk-sm { height: 9px; }
+.sk-line.sk-lg { height: 15px; }
+.sk-line.w-30 { width: 30%; }
+.sk-line.w-40 { width: 40%; }
+.sk-line.w-50 { width: 50%; }
+.sk-line.w-60 { width: 60%; }
+.sk-line.w-70 { width: 70%; }
+.sk-line.w-80 { width: 80%; }
+.sk-line.w-90 { width: 90%; }
+.sk-line.w-full { width: 100%; }
+.sk-card {
+  height: 84px; border-radius: var(--radius-sm);
+}
+.sk-card.tall { height: 160px; }
+.sk-circle {
+  --sk-size: 34px;
+  width: var(--sk-size); height: var(--sk-size);
+  border-radius: 50%; flex-shrink: 0; border: none; background: var(--sk-base);
+}
+.sk-circle.sk-lg { --sk-size: 44px; }
+/* faixa de luz deslizante (o shimmer) */
+.sk-line::after, .sk-card::after, .sk-circle::after {
+  content: "";
+  position: absolute; inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--sk-sheen) 45%, var(--sk-sheen) 55%, transparent);
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes sk-shimmer { 100% { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .sk-line::after, .sk-card::after, .sk-circle::after { animation: none; }
+}
+
+/* ----------------------------------------------------------------------------
+   3) Estado vazio elegante — refina .empty sem quebrar usos atuais
+   Usos atuais seguem válidos: <div className="empty">…</div> e o .empty .big.
+   Forma recomendada nova:
+     <div className="empty">
+       <div className="empty-illu">{svgDiscreto}</div>   (ícone em círculo sutil)
+       <div className="empty-title">Nada por aqui ainda</div>
+       <p className="empty-sub">explicação curta…</p>
+       <div className="empty-cta"><button className="btn">Ação</button></div>
+     </div>
+   -------------------------------------------------------------------------- */
+.empty {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 52px 24px;
+}
+.empty .big { opacity: 0.55; }
+/* ilustração discreta: glyph em moldura circular tingida pela marca */
+.empty-illu {
+  display: grid; place-items: center;
+  width: 60px; height: 60px; margin-bottom: 14px;
+  border-radius: 50%;
+  color: var(--text-faint);
+  background:
+    radial-gradient(120% 120% at 50% 0%, rgba(108, 92, 231, 0.12), transparent 70%),
+    var(--ink);
+  border: 1px solid var(--charcoal);
+  box-shadow: var(--edge);
+}
+.empty-illu svg { width: 26px; height: 26px; display: block; }
+.empty-title {
+  font-family: var(--font-display);
+  font-size: 15.5px; font-weight: 600; letter-spacing: -0.2px;
+  color: var(--text);
+}
+/* .empty-sub já existe (tema/cluster); reforça consistência sem conflitar */
+.empty .empty-sub { color: var(--text-faint); }
+
+/* ----------------------------------------------------------------------------
+   4) Microinterações consistentes
+   - hover-lift padronizado p/ superfícies clicáveis (utilitário opt-in .lift)
+   - estados :active/:focus-visible coerentes
+   - leve "sheen" no .btn primário (realce de luz que cruza no hover)
+   -------------------------------------------------------------------------- */
+
+/* lift utilitário (cards/itens que ainda não têm hover próprio) */
+.lift {
+  transition-property: transform, box-shadow, border-color;
+  transition-duration: var(--dur);
+  transition-timing-function: var(--ease-out);
+}
+.lift:hover { transform: translateY(-2px); box-shadow: var(--edge), var(--shadow-pop); border-color: var(--charcoal-2); }
+.lift:active { transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .lift, .lift:hover, .lift:active { transform: none; }
+}
+
+/* botão primário: sheen sutil + leve elevação no hover, sem mudar o gradiente */
+.btn:not(.ghost):not(.danger):not(.btn-wa) {
+  position: relative; overflow: hidden;
+}
+.btn:not(.ghost):not(.danger):not(.btn-wa)::after {
+  content: "";
+  position: absolute; top: 0; bottom: 0; left: -60%;
+  width: 45%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+  transform: skewX(-18deg);
+  opacity: 0; pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .btn:not(.ghost):not(.danger):not(.btn-wa):hover::after {
+    animation: btn-sheen 620ms var(--ease-out);
+  }
+}
+@keyframes btn-sheen {
+  from { left: -60%; opacity: 0; }
+  30%  { opacity: 1; }
+  to   { left: 120%; opacity: 0; }
+}
+/* a elevação no hover acompanha o realce existente (box-shadow já definido) */
+.btn:not(.ghost):not(.danger):not(.btn-wa):hover { transform: translateY(-1px); }
+.btn:not(.ghost):not(.danger):not(.btn-wa):active { transform: translateY(0) scale(0.98); }
+@media (prefers-reduced-motion: reduce) {
+  .btn:not(.ghost):not(.danger):not(.btn-wa):hover,
+  .btn:not(.ghost):not(.danger):not(.btn-wa):active { transform: none; }
+}
+
+/* foco visível mais nítido e consistente em elementos interativos que ainda
+   dependiam só do outline do browser (links de conteúdo, linhas clicáveis) */
+.row-link:focus-visible, .fb-who:focus-visible, .back-link:focus-visible,
+.chat-conv:focus-visible, .board-card-link:focus-visible {
+  outline: none; border-radius: var(--radius-xs);
+  box-shadow: var(--ring-indigo);
+}
+
+/* ----------------------------------------------------------------------------
+   5) Refino de hierarquia / respiro (conservador)
+   -------------------------------------------------------------------------- */
+/* o subtítulo da página respira um pouco mais e fica mais legível */
+.page-sub { margin-top: 9px; line-height: 1.55; }
+/* régua de marca do page-head ganha um leve glow (assinatura), sem mudar forma */
+.page-head::after { box-shadow: 0 0 10px var(--indigo-glow); }
+/* títulos de seção com um respiro extra do corpo */
+.section-title { letter-spacing: -0.35px; }
+/* cabeçalho de card: rótulo e sub com hierarquia um pouco mais clara */
+.card-head-sub { line-height: 1.5; }
+
+/* ----------------------------------------------------------------------------
+   6) Sidebar — agrupamento por seção + estado ativo mais elegante
+   A marcação ganha rótulos sutis ("MONITORAR" / "GERIR" / "OPERAR"). A faixa
+   indigo do item ativo já existe; aqui só refinamos transição e o ícone.
+   -------------------------------------------------------------------------- */
+.nav-group { display: flex; flex-direction: column; gap: 2px; }
+.nav-group + .nav-group { margin-top: 16px; }
+.nav-group-label {
+  padding: 0 12px 6px;
+  font-size: 10px; font-weight: 700; letter-spacing: 1.4px;
+  text-transform: uppercase; color: var(--text-ghost);
+  user-select: none;
+}
+/* item ativo: transição mais rica e ícone com leve presença */
+.nav a {
+  transition-property: background-color, color, transform;
+  transition-duration: var(--dur-fast);
+}
+.nav a:active { transform: translateX(1px); }
+@media (prefers-reduced-motion: reduce) { .nav a:active { transform: none; } }
+/* a faixa do ativo entra animada (cresce de cima) quando há movimento */
+@media (prefers-reduced-motion: no-preference) {
+  .nav a.active::before { animation: nav-bar-in 260ms var(--ease-out) both; }
+}
+@keyframes nav-bar-in { from { transform: scaleY(0.2); opacity: 0; } to { transform: scaleY(1); opacity: 1; } }
+
+/* ----------------------------------------------------------------------------
+   7) Modais / diálogos — polimento de foco, espaçamento e movimento
+   -------------------------------------------------------------------------- */
+/* o anel de foco dentro do modal usa a marca, com offset p/ não colar na borda */
+.modal-panel :focus-visible { outline: none; box-shadow: var(--ring-indigo); }
+/* corpo e rodapé com respiro levemente mais generoso e consistente */
+.modal-body { padding: 22px 24px; }
+.modal-foot { padding: 16px 24px 22px; gap: 11px; }
+/* o close do modal gira de leve no hover (afeto sutil) */
+@media (prefers-reduced-motion: no-preference) {
+  .modal-close { transition-property: background-color, color, transform; }
+  .modal-close:hover { transform: rotate(90deg); }
+}
+/* backdrop um pouco mais profundo p/ destacar o painel */
+.modal-backdrop { background: rgba(7, 7, 10, 0.74); }
+
+/* ----------------------------------------------------------------------------
+   8) Avatar / HealthCell — refino visual leve
+   -------------------------------------------------------------------------- */
+/* avatar ganha luz superior (mesma linguagem das demais superfícies) */
+.avatar { box-shadow: var(--edge); }
+/* a barra de health "preenche" suavemente na entrada quando há movimento */
+@media (prefers-reduced-motion: no-preference) {
+  .health-bar span { transition: width 520ms var(--ease-out); }
+}

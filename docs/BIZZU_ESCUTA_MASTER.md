@@ -11,7 +11,9 @@
 > conflito. Docs irmãos: `CONTEXTO_BIZZU.md` (ecossistema), `INTEGRACAO_BIZZU.md` (integração),
 > `analise-bizzu/*.md` (por repo), `corpus_bizzu/*.md` (RAG), `SESSAO_HANDOFF_*.md` (estado).
 >
-> **Última atualização:** 2026-06-10 (auditoria de código dos 8 repos + feedback nativo revalidado).
+> **Última atualização:** 2026-06-18 (commit `577a84e`: agente VoC atrás de flag + retrieval multilíngue/
+> híbrido + hardening multi-tenant + auth de painel/webhook; **555 testes**. Migrations `20260618*` commitadas
+> mas **ainda não aplicadas no piloto**).
 
 ---
 
@@ -201,19 +203,37 @@ ativamente, não derivado).
 eventos de ciclo de vida de clientes (piloto: Bizzu), dispara *surveys* via WhatsApp, interpreta a
 resposta com IA, classifica e entrega insight ao dono.
 
-- **Local:** `C:\Users\jboni\Documents\Projetos\escuta`. Git no commit `6004166` (branch sem remote).
+- **Local:** `C:\Users\jboni\Documents\Projetos\escuta`. Git no commit `577a84e` (branch `master`, sem remote).
 - **Stack:** FastAPI (Python) + Supabase Postgres (pgvector) + WAHA (WhatsApp não-oficial) + painel
-  Next.js. LLM via **Groq** (`llama-3.3-70b-versatile`). Embeddings **MiniLM offline** (384 dim).
+  Next.js. LLM via **Groq** (`llama-3.3-70b-versatile`). Embeddings **MiniLM offline** (384 dim) —
+  trocáveis por modelo **multilíngue** via `EMBEDDING_MODEL_NAME` (vazio = MiniLM; ver §5.1).
 - **As 4 camadas de IA** (todas com fallback determinístico):
   1. **SurveyBrain** (`app/domain/survey/brain.py`): interpreta resposta natural → nota; detecta
      opt-out; responde pergunta; classifica feedback.
   2. **Classificação:** `sentiment` / `themes` / `urgency` por resposta.
   3. **RAG** (`app/domain/knowledge/`): pergunta do contato → busca corpus (`corpus_bizzu/`, 33 chunks,
      pgvector) → resposta *grounded* com **gating duplo** (similaridade + LLM recusa se não cobre).
+     Retrieval **híbrido** (semântico + lexical ILIKE fundidos por RRF) atrás de `RAG_HYBRID_ENABLED`.
   4. **Digest semanal** (`app/domain/digest/`): resume a semana (NPS, temas, urgências, churn) → LLM
      narra → WhatsApp do dono. Endpoints `GET /api/digest/preview` + `POST /api/digest/run`.
+- **Camada 5 — Agente VoC (Fase 2, atrás de flag `VOC_AGENT_ENABLED`, OFF):** function-calling Groq
+  (`chat_with_tools` em `app/services/llm.py`, never-raises, reusa o circuit breaker) + `VoCToolRegistry`
+  + **7 tools TODAS org-scoped** (`app/domain/voc/{registry,tools,orchestrator}.py`: registrar abordagem,
+  aplicar selo, criar tarefa, vincular melhoria, atualizar feedback, **enviar WhatsApp** atrás de flag+3
+  gates, ler perfil) + orchestrator com teto de iterações. Cabeado em `resolver.py`; OFF = fluxo
+  determinístico byte-a-byte. **Sem migration.**
+
+### 5.1 Retrieval multilíngue/híbrido (estado 18/06)
+- **Modelo de embedding por env:** `app/services/embeddings.py` lê `EMBEDDING_MODEL_NAME`. **Vazio = MiniLM
+  atual (zero regressão).** Recomendado p/ PT: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`
+  (**também 384-dim → NÃO exige migration** da coluna `vector(384)`). Trocar **exige reindex** (re-gerar os
+  vetores no piloto) + restart — não basta a env.
+- **Busca híbrida:** `app/domain/knowledge/retriever.py` une semântica (pgvector) + lexical
+  (`ILIKE ... ESCAPE '\'`) por **RRF**, atrás de `RAG_HYBRID_ENABLED` (OFF = só semântica). Melhora recall em
+  PT enquanto o embedding for inglês.
+
 - **Portas:** API `:8000` · painel `:3001` · WAHA `:3000`.
-- **Qualidade:** 66 testes Escuta + 12 E2E (`scripts/smoke_all.py`) + 191 specs Bizzu — verdes.
+- **Qualidade:** **555 testes Escuta verdes** (commit `577a84e`) + E2E (`scripts/smoke_all.py`) + specs Bizzu.
 
 ---
 
@@ -248,12 +268,24 @@ fire-and-forget (nunca bloqueia o fluxo da Bizzu). Idempotência por `event_id` 
 | 🥉 | **Espelhar NPS in-app** → análise unificada | `nps.service.ts:101` → evento `nps_submitted` (modo "ingest sem disparo" no Escuta) | baixo | **código pronto+testado (10/06); pendente: migration `20260610_nps_ingest` + seed + patch `docs/patches/bizzu-backend-nps-escuta-ingest.patch` + deploy** |
 | 🆕 | **Mega Central de Dados (Visão 360)** — unifica TODAS as fontes | `FeedbackItem` (model+migration `20260610b`) + ingest pull (API Clientes) e push (`GENERIC_EVENT_MAP` no `events.py`) + `GET /api/contacts/{id}/360` + **tela 360** (`frontend/app/contatos/[id]`) | médio | **COMPLETA e testada (129 testes, 10/06). 5 fontes unificadas: NPS, churn, report de questão, solicitação de edital, atendimentos (ticket→FeedbackItem; ticket_resolved→CSAT WhatsApp). 3 patches backend em `docs/patches/` (question-report, edital-requested, atendimentos). Falta só ATIVAR: aplicar os 4 patches no backend + migrations (`20260610_nps_ingest`, `20260610b_feedback_items`) + sync + deploy** |
 | 🆕 | **Chatbot conversacional (aprofundamento + hand-off)** | `Message` (transcript, migration `20260610c`) + `brain.decide_followup`/intent `handoff` + resolver (`_maybe_followup`, `_handle_handoff`, `_notify_handoff`, `_open_support_ticket`); webhook grava inbound/outbound e pausa contato em hand-off | médio | **pronto+testado (10/06): guarda TODO o transcript; aprofunda até 2 (viés detrator, acumula motivo); hand-off marca+pausa+alerta o dono + abre ticket (patch `bizzu-backend-support-ticket-endpoint.patch`). Falta só ativar (migration `20260610c`)** |
-| 🆕 | **Fase 2: clustering de temas + alertas de detrator** | `aggregate_themes` (`aggregator.py`) + `GET /api/themes/aggregate` · `resolver._notify_detractor_realtime` (detrator urgente/negativo → alerta o dono na hora) + parser robusto (`um/uma`) | médio | **pronto+testado (136 testes, 10/06). v2 (clustering semântico/pgvector + card de temas no painel) = futuro** |
+| 🆕 | **Fase 2: clustering de temas + alertas de detrator** | `aggregate_themes` (`aggregator.py`) + `GET /api/themes/aggregate` · `resolver._notify_detractor_realtime` (detrator urgente/negativo → alerta o dono na hora) + parser robusto (`um/uma`) | médio | **pronto+testado (136 testes, 10/06). Clustering semântico/pgvector + aba "Por significado" = ENTREGUE (14/06, ver `SESSAO_HANDOFF_2026-06-14_CENTRAL_GESTAO.md`)** |
+| 🆕 | **Fase 2 (Agente VoC): function-calling + 7 tools + WhatsApp tool** | `chat_with_tools` (`app/services/llm.py`) + `app/domain/voc/{registry,tools,orchestrator}.py` + cabeamento em `resolver.py`; **sem migration** | médio | **INFRA PRONTA atrás de flags (18/06, `577a84e`): 7 tools TODAS org-scoped, never-raises, reusa o circuit breaker. `VOC_AGENT_ENABLED` OFF = fluxo determinístico byte-a-byte; tool de WhatsApp `VOC_WHATSAPP_TOOL_ENABLED` OFF + 3 gates (opt-in/cooldown/alcançável). Falta: validar com Groq real (flag ON em teste)** |
+| 🆕 | **Retrieval PT (multilíngue + híbrido)** | `EMBEDDING_MODEL_NAME` em `embeddings.py` + busca híbrida (semântica+lexical ILIKE→RRF) em `retriever.py`; **sem migration** (384-dim) | baixo | **PRONTO atrás de flags (18/06, `577a84e`): vazio = MiniLM atual (zero regressão); `RAG_HYBRID_ENABLED` OFF = só semântica. Falta: download do modelo + **reindex** no piloto + setar a env + restart; depois reavaliar threshold 0.48 do clustering** |
 | 🆕 | **Campanha CHURN (worklist + análise)** | `scripts/export_churn.py` (TODOS os cancelados, `--plan {todos,mensal,anual}` → `_abordagem-churn.template.html`) + `scripts/analise_churn.py` (relatório → `analise-churn.md`) · `mensagens-churn-mensal.md` | baixo | **pronto (12/06): `--real` → **63 churners (27% da base)** / 56 contatáveis. 90% mensal; **52% sem motivo registrado**; 35% cancelou em ≤7d; **8 saíram promotores** (churn evitável). Worklist por card (motivo+NPS prévio+plano+mensagem+wa.me) + análise detalhada** |
 | 🆕 | **Áudio + Call + Fechar o loop** (3 features 12/06) | (1) **áudio inbound**: `app/services/audio.py` (Groq `whisper-large-v3`) + `webhook._extract_inbound` detecta `audio/ptt/voice`/mimetype → transcreve e trata como texto; sem chave/falha → acolhe. (2) **call**: `helpers.append_call_link` + `BIZZU_CALL_URL` no hand-off. (3) **fechar o loop**: worklist com 3 perguntas (motivo/faltou/voltaria) + botão **"📤 Exportar p/ central"** → `scripts/import_abordagens.py` ingere como `FeedbackItem` (type=churn, abordado=True), idempotente | baixo | **pronto+testado (228 verdes, 12/06): `tests/test_audio.py`, `test_call_link.py`, `test_import_abordagens.py`. Envs novas: `GROQ_WHISPER_MODEL`, `BIZZU_CALL_URL`. Áudio real só com WAHA + OK do usuário** |
 | 4 | **Radar → "saiu seu edital" no WhatsApp** | `radar-editais/pipeline.py:317` (após `aplicar_interesse`, antes do `upsert`) | baixo (<50 ln) | canal de valor altíssimo |
 | 5 | **Captura WhatsApp na captação** | site (hero, `/editais/[slug]`, `/exemplo`) + landings (Google Forms) | baixo | lead já chega "conversável" |
 | 6 | Eventos `signup`, `plano_gerado` | `auth.service.ts:52`, `plano-estudo-ia.service.ts` | baixo | mais momentos de ativação |
+
+> **Estado (18/06, commit `577a84e`, working tree limpo, repo sem remote):** além das oportunidades acima,
+> a sessão fechou **hardening multi-tenant** (org da inbound resolvida pela sessão WAHA com fallback ao
+> `default_org_slug`; resposta sai pela sessão da org; IDOR fechado em `admin/tasks/boards` com
+> `organization_id`) e **higiene de segredos** (Postgres hardcoded fora de `scripts/sync_bizzu_contacts.py`
+> → `BIZZU_DATABASE_URL`; WAHA key/senhas redigidas nos handoffs; `docs/historico/` no `.gitignore`). **555
+> testes verdes.** As migrations **`20260618_message_dedup_metadata`** (`msg_metadata` JSONB + índice único
+> parcial de dedup) e **`20260618b_roadmap_cross_links`** estão **commitadas mas PENDENTES de aplicação no
+> piloto** (Fase 0 pré-flight já provou 0 duplicatas; aplicação bloqueada pelo classificador, precisa OK).
+> Detalhe completo em `docs/SESSAO_HANDOFF_2026-06-18_AGENTES_4FRENTES.md`.
 
 ---
 
@@ -313,10 +345,12 @@ export NODE_ENV=development NODE_OPTIONS=--use-system-ca && node_modules/.bin/ne
 | Item | Valor / Caminho |
 |------|-----------------|
 | Supabase Escuta | ref `nlqeargxkidygbrahkbk` (sa-east-1); PAT em `~/.secrets/supabase_pat_escuta.txt` |
-| WAHA | `localhost:3000`; key em `.env` (`WAHA_API_KEY`) — **rotacionar**, novas em `~/.secrets/waha_*.txt` |
+| WAHA | `localhost:3000`; key em `.env` (`WAHA_API_KEY`) — **rotacionar de fato**, novas em `~/.secrets/waha_*.txt` |
 | Groq | `.env`: `GROQ_API_KEY` + `GROQ_MODEL=llama-3.3-70b-versatile`; `LLM_ENABLED=1` |
-| Bizzu local (PG) | `postgres` / senha em `.env` @ `localhost:5432/plataforma`; user teste `jair.e2e@escuta.test` |
+| Bizzu local (PG) | sync via `BIZZU_DATABASE_URL` no `.env` (sem default no código) @ `localhost:5432/plataforma`; user teste `jair.e2e@escuta.test` |
 | HMAC Bizzu↔Escuta | `BIZZU_WEBHOOK_SECRET` (.env Escuta) == `ESCUTA_WEBHOOK_SECRET` (.env backend Bizzu) |
+| Auth painel/webhook (**prod**) | `PANEL_API_KEY` (header `X-Panel-Key`) · `WAHA_WEBHOOK_SECRET` (header `X-Webhook-Secret`) — **fail-open sem elas** → setar em produção |
+| Flags Fase 2 / retrieval (`app/config.py`) | `VOC_AGENT_ENABLED` (0) · `VOC_WHATSAPP_TOOL_ENABLED` (0) · `RAG_HYBRID_ENABLED` (0) · `EMBEDDING_MODEL_NAME` ("" = MiniLM; multilíngue exige reindex) — todos conservadores |
 | Terraform state | bucket S3 `bizzu-terraform-state-633146206248`, key `infra/terraform.tfstate` |
 | ACM wildcard | `*.bizzu.ai` (us-east-1) — já cobre `escuta.bizzu.ai` |
 | Surveys Escuta | Exit Bizzu (type `exit`) · CSAT Tópico Bizzu (type `nps`, id `b18a4736`) |

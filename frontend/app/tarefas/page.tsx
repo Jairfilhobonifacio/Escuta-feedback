@@ -102,6 +102,46 @@ function slaCell(t: Tarefa, now: Date) {
   );
 }
 
+/** Linha-fantasma da fila durante o load: 8 colunas espelhando a linha real. */
+function SkeletonRow() {
+  return (
+    <tr aria-hidden>
+      <td>
+        <div className="cell-person">
+          <div className="sk-circle" />
+          <div className="cell-person-txt" style={{ flex: 1 }}>
+            <div className="sk-line sk-sm w-70" style={{ margin: "2px 0" }} />
+            <div className="sk-line sk-sm w-50" style={{ margin: "2px 0" }} />
+          </div>
+        </div>
+      </td>
+      <td>
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <div className="sk-line" style={{ width: 70, margin: 0 }} />
+        </div>
+      </td>
+      <td>
+        <div className="sk-line w-80" style={{ margin: "2px 0" }} />
+        <div className="sk-line sk-sm w-50" style={{ margin: "6px 0 2px" }} />
+      </td>
+      <td><div className="sk-line w-60" style={{ margin: 0 }} /></td>
+      <td><div className="sk-line w-50" style={{ margin: 0 }} /></td>
+      <td><div className="sk-line w-70" style={{ margin: 0 }} /></td>
+      <td><div className="sk-line" style={{ width: 90, height: 30, margin: 0 }} /></td>
+      <td><div className="sk-line" style={{ width: 96, height: 30, margin: 0 }} /></td>
+    </tr>
+  );
+}
+
+/** SVG discreto p/ a fila vazia: checklist (stroke=currentColor). */
+const EMPTY_TASKS = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M9 11l3 3L22 4" />
+    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+  </svg>
+);
+
 /** Adapta uma Tarefa ao alvo mínimo que o AbordarModal precisa. */
 function toAbordarTarget(t: Tarefa): AbordarTarget {
   return {
@@ -116,10 +156,12 @@ function toAbordarTarget(t: Tarefa): AbordarTarget {
 
 function TarefaRow({
   t,
+  index,
   onPatched,
   onAbordar,
 }: {
   t: Tarefa;
+  index: number;
   onPatched: (updated: Tarefa, previousStatus: TarefaStatus) => void;
   onAbordar: (t: Tarefa) => void;
 }) {
@@ -148,7 +190,10 @@ function TarefaRow({
   }
 
   return (
-    <tr>
+    <tr
+      className="reveal"
+      style={{ ["--i" as string]: Math.min(index, 12) } as React.CSSProperties}
+    >
       <td>
         <div className="cell-person">
           <Avatar name={t.contato_nome} seed={t.contato_id ?? t.contato_whatsapp} />
@@ -553,40 +598,47 @@ export default function TarefasPage() {
                 <th>Ação</th>
               </tr>
             </thead>
-            <tbody>
-              {!err && visible.length === 0 && (
+            <tbody aria-busy={loading || undefined}>
+              {loading && items.length === 0 &&
+                Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)}
+              {!loading && !err && visible.length === 0 && (
                 <tr>
                   <td colSpan={8}>
                     <div className="empty">
-                      <div className="big">{"\u{2705}"}</div>
-                      {loading
-                        ? "Carregando…"
-                        : status
-                        ? `Nenhuma tarefa em "${STATUS_LABEL[status as TarefaStatus]}".`
-                        : hasFilters
-                        ? "Nenhuma tarefa bate com os filtros."
-                        : (
-                          <>
-                            Fila vazia — nenhuma tarefa pendente.
-                            <div className="empty-cta">
-                              <button
-                                type="button"
-                                className="btn"
-                                onClick={gerarDasDores}
-                                disabled={gerando}
-                              >
-                                <span aria-hidden>{"\u{1F525}"}</span>{" "}
-                                {gerando ? "Gerando…" : "Gerar tarefas das dores"}
-                              </button>
-                            </div>
-                          </>
-                        )}
+                      <div className="empty-illu">{EMPTY_TASKS}</div>
+                      <div className="empty-title">
+                        {status
+                          ? `Nada em "${STATUS_LABEL[status as TarefaStatus]}"`
+                          : hasFilters
+                          ? "Nenhuma tarefa com esses filtros"
+                          : "Fila vazia"}
+                      </div>
+                      <p className="empty-sub">
+                        {status
+                          ? "Nenhuma tarefa neste status agora."
+                          : hasFilters
+                          ? "Tente afrouxar a busca ou trocar os filtros."
+                          : "Nenhuma tarefa pendente \u{2014} puxe as dores recentes para começar."}
+                      </p>
+                      {!status && !hasFilters && (
+                        <div className="empty-cta">
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={gerarDasDores}
+                            disabled={gerando}
+                          >
+                            <span aria-hidden>{"\u{1F525}"}</span>{" "}
+                            {gerando ? "Gerando…" : "Gerar tarefas das dores"}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </td>
                 </tr>
               )}
-              {visible.map((t) => (
-                <TarefaRow key={t.id} t={t} onPatched={onPatched} onAbordar={setAbordando} />
+              {(!loading || items.length > 0) && visible.map((t, i) => (
+                <TarefaRow key={t.id} t={t} index={i} onPatched={onPatched} onAbordar={setAbordando} />
               ))}
             </tbody>
           </table>

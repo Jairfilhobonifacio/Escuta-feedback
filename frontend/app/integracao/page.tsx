@@ -59,7 +59,7 @@ function Endpoint({
   sample: string;
 }) {
   return (
-    <div className="card api-endpoint">
+    <div className="card api-endpoint reveal">
       <div className="api-route">
         <span className="badge api-method">{method}</span>
         <code className="mono api-path">{path}</code>
@@ -126,11 +126,12 @@ export default function IntegracaoPage() {
             chave, somente leitura
           </div>
         </div>
-        <span className="refresh-note">2 endpoints</span>
+        <span className="refresh-note">2 endpoints · somente leitura</span>
       </div>
 
+      <div className="reveal-stagger">
       {/* ---- Autenticação ---- */}
-      <div className="card api-auth">
+      <div className="card api-auth reveal">
         <h2 className="section-title">
           {EMOJI_KEY} Autenticação
         </h2>
@@ -139,6 +140,9 @@ export default function IntegracaoPage() {
           <b>apenas no servidor</b>, na variável de ambiente <code className="mono">INTEGRATION_API_KEY</code>;
           o painel nunca a exibe nem a solicita. Quem configura é o administrador, no ambiente da API.
         </p>
+
+        <div className="api-block-label">Base URL</div>
+        <Code>{API_HOST}</Code>
 
         <div className="api-block-label">Header obrigatório</div>
         <Code>X-API-Key: &lt;sua-chave&gt;</Code>
@@ -203,6 +207,7 @@ export default function IntegracaoPage() {
         curl={curlClientes}
         sample={sampleClientes}
       />
+      </div>
 
       {/* ---- estilos locais dos blocos de código (padrão dark do painel) ---- */}
       <style jsx>{`

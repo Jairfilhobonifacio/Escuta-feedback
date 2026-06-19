@@ -3,15 +3,33 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Contact, type DispatchResult, type Survey } from "@/lib/api";
 
+// emoji em .ts/.tsx só via \u{...} (o bundler do Next no Windows corrompe literais).
+const EMOJI_ROCKET = "\u{1F680}"; // 🚀 — disparo (mensagem de sucesso)
+const EMOJI_HANDS = "\u{1F64C}"; // 🙌 — follow-up padrão (texto enviado ao cliente)
+
+/** Placeholder de um item de pesquisa enquanto a lista carrega (nome + perguntas
+   + ação), espelhando a silhueta do .survey-item real com shimmer. */
+function SurveyRowSkeleton() {
+  return (
+    <div className="survey-item" aria-busy="true">
+      <div className="sk-line w-50" style={{ marginTop: 4 }} />
+      <div className="sk-line w-90" style={{ marginTop: 10 }} />
+      <div className="sk-line w-70" />
+      <div className="sk-line" style={{ width: 120, marginTop: 12 }} />
+    </div>
+  );
+}
+
 export default function PesquisasPage() {
   const [surveys, setSurveys] = useState<Survey[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
 
   // form de criação
   const [name, setName] = useState("");
   const [npsQ, setNpsQ] = useState("De 0 a 10, o quanto você recomendaria a gente pra um amigo?");
-  const [reasonQ, setReasonQ] = useState("Massa! 🙌 Por quê? (pode mandar em texto)");
+  const [reasonQ, setReasonQ] = useState(`Massa! ${EMOJI_HANDS} Por quê? (pode mandar em texto)`);
   const [saving, setSaving] = useState(false);
 
   // disparo
@@ -20,6 +38,7 @@ export default function PesquisasPage() {
   const [dispatching, setDispatching] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const [s, c] = await Promise.all([
         api.get<Survey[]>("/api/surveys"),
@@ -29,6 +48,8 @@ export default function PesquisasPage() {
       setContacts(c);
     } catch (e) {
       setFlash({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -74,7 +95,7 @@ export default function PesquisasPage() {
       });
       setFlash({
         kind: "ok",
-        msg: `🚀 "${out.survey}" disparada para ${out.count} contato(s) no WhatsApp: ${out.dispatched_to
+        msg: `${EMOJI_ROCKET} "${out.survey}" disparada para ${out.count} contato(s) no WhatsApp: ${out.dispatched_to
           .map((d) => d.name || d.phone)
           .join(", ")}`,
       });
@@ -94,78 +115,108 @@ export default function PesquisasPage() {
           <h1 className="page-title">Pesquisas</h1>
           <div className="page-sub">Crie campanhas com perguntas próprias e dispare pra quem você escolher</div>
         </div>
+        {!loading && surveys.length > 0 && (
+          <span className="refresh-note">
+            {surveys.length} {surveys.length === 1 ? "pesquisa" : "pesquisas"}
+          </span>
+        )}
       </div>
 
       {flash && <div className={`flash ${flash.kind}`}>{flash.msg}</div>}
 
       <div className="two-col">
         <div className="card">
-          {surveys.length === 0 && (
+          {loading ? (
+            <div aria-busy="true">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <SurveyRowSkeleton key={i} />
+              ))}
+            </div>
+          ) : surveys.length === 0 ? (
             <div className="empty">
-              <div className="big">✦</div>
-              Nenhuma pesquisa ainda — crie a primeira ao lado.
+              <div className="empty-illu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M9 13h6M9 17h4" />
+                </svg>
+              </div>
+              <div className="empty-title">Nenhuma pesquisa ainda</div>
+              <p className="empty-sub">
+                Crie a primeira ao lado: uma pergunta de nota (0–10), o follow-up do motivo e o
+                agradecimento. Depois é só disparar pra quem você escolher.
+              </p>
             </div>
-          )}
-          {surveys.map((s) => (
-            <div key={s.id} className="survey-item">
-              <div className="survey-name">
-                {s.name}
-                <span className={`badge ${s.status === "active" ? "promoter" : "neutral"}`}>{s.status}</span>
-              </div>
-              <div className="survey-q">
-                <b>Pergunta:</b> {s.nps_question}
-                <br />
-                <b>Follow-up:</b> {s.reason_prompt}
-              </div>
-              <div style={{ marginTop: 10 }}>
-                {picking === s.id ? (
-                  <div className="contact-picker">
-                    <div className="section-sub" style={{ marginBottom: 8 }}>
-                      Enviar para ({picked.size} selecionado{picked.size === 1 ? "" : "s"}):
-                    </div>
-                    {contacts.length === 0 && (
-                      <div className="faint" style={{ fontSize: 13 }}>
-                        Nenhum contato — adicione na aba Contatos.
+          ) : (
+            surveys.map((s, i) => (
+              <div
+                key={s.id}
+                className="survey-item reveal"
+                style={{ ["--i" as string]: i } as React.CSSProperties}
+              >
+                <div className="survey-name">
+                  {s.name}
+                  <span className={`badge ${s.status === "active" ? "promoter" : "neutral"}`}>{s.status}</span>
+                </div>
+                <div className="survey-q">
+                  <b>Pergunta:</b> {s.nps_question}
+                  <br />
+                  <b>Follow-up:</b> {s.reason_prompt}
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  {picking === s.id ? (
+                    <div className="contact-picker">
+                      <div className="section-sub" style={{ marginBottom: 8 }}>
+                        Enviar para ({picked.size} selecionado{picked.size === 1 ? "" : "s"}):
                       </div>
-                    )}
-                    {contacts.map((c) => (
-                      <label key={c.id} className="pick-row">
-                        <input
-                          type="checkbox"
-                          checked={picked.has(c.id)}
-                          onChange={() => togglePick(c.id)}
-                        />
-                        <span>{c.name || "sem nome"}</span>
-                        <span className="mono dim">{c.phone}</span>
-                      </label>
-                    ))}
-                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                      <button
-                        className="btn sm"
-                        disabled={picked.size === 0 || dispatching}
-                        onClick={() => dispatch(s)}
-                      >
-                        {dispatching ? "Enviando…" : `Disparar agora (${picked.size})`}
-                      </button>
-                      <button className="btn ghost sm" onClick={() => setPicking(null)}>
-                        Cancelar
-                      </button>
+                      {contacts.length === 0 && (
+                        <div className="faint" style={{ fontSize: 13 }}>
+                          Nenhum contato — adicione na aba Contatos.
+                        </div>
+                      )}
+                      {contacts.map((c) => (
+                        <label key={c.id} className="pick-row">
+                          <input
+                            type="checkbox"
+                            checked={picked.has(c.id)}
+                            onChange={() => togglePick(c.id)}
+                          />
+                          <span>{c.name || "sem nome"}</span>
+                          <span className="mono dim">{c.phone}</span>
+                        </label>
+                      ))}
+                      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                        <button
+                          className="btn sm"
+                          disabled={picked.size === 0 || dispatching}
+                          onClick={() => dispatch(s)}
+                        >
+                          {dispatching ? "Enviando…" : `Disparar agora (${picked.size})`}
+                        </button>
+                        <button className="btn ghost sm" onClick={() => setPicking(null)}>
+                          Cancelar
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <button
-                    className="btn ghost sm"
-                    onClick={() => {
-                      setPicking(s.id);
-                      setPicked(new Set());
-                    }}
-                  >
-                    📤 Disparar
-                  </button>
-                )}
+                  ) : (
+                    <button
+                      className="btn ghost sm"
+                      onClick={() => {
+                        setPicking(s.id);
+                        setPicked(new Set());
+                      }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="m22 2-7 20-4-9-9-4Z" />
+                        <path d="M22 2 11 13" />
+                      </svg>
+                      Disparar
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
 
         <div className="card" style={{ padding: "18px 20px" }}>

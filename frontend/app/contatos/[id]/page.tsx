@@ -98,6 +98,80 @@ function field(label: string, value: unknown) {
   );
 }
 
+/** Balão de conversa p/ o vazio do chat (stroke=currentColor). */
+const EMPTY_CHAT = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+  </svg>
+);
+
+/** Conexão interrompida p/ o erro do chat (stroke=currentColor). */
+const EMPTY_CHAT_OFF = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+    <line x1="12" y1="2" x2="12" y2="12" />
+  </svg>
+);
+
+/** SVG discreto p/ a timeline vazia (folha/registro, stroke=currentColor). */
+const EMPTY_TIMELINE = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3v5h5" />
+    <path d="M9 13h6M9 17h4" />
+  </svg>
+);
+
+/** Esqueleto da ficha inteira (cabeçalho + grid de perfil + timeline) enquanto
+    o GET /360 não volta. Espelha a forma real para a troca não "saltar". */
+function Skeleton360() {
+  return (
+    <div aria-busy aria-hidden>
+      <div className="card c360-profile">
+        <div className="card-head">
+          <div style={{ flex: 1 }}>
+            <div className="sk-line w-30" style={{ margin: "2px 0" }} />
+            <div className="sk-line sk-sm w-40" style={{ margin: "6px 0 2px" }} />
+          </div>
+        </div>
+        <div className="c360-grid">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i}>
+              <div className="sk-line sk-sm w-50" style={{ margin: "2px 0 8px" }} />
+              <div className="sk-line w-70" style={{ margin: 0 }} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <div style={{ flex: 1 }}>
+            <div className="sk-line w-40" style={{ margin: "2px 0" }} />
+            <div className="sk-line sk-sm w-60" style={{ margin: "6px 0 2px" }} />
+          </div>
+        </div>
+        <ul className="tl">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <li key={i} className="tl-item">
+              <span className="tl-dot" aria-hidden />
+              <div className="tl-top" style={{ gap: 9 }}>
+                <div className="sk-line" style={{ width: 54, margin: 0 }} />
+                <div className="sk-line" style={{ width: 70, margin: 0 }} />
+              </div>
+              <div className="sk-line w-90" style={{ marginTop: 12 }} />
+              <div className="sk-line w-60" style={{ marginTop: 2 }} />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function ProfileCard({ partner }: { partner: Record<string, unknown> }) {
   const sub = (partner.subscription as Record<string, unknown> | undefined) ?? {};
   const nps = (partner.nps as Record<string, unknown> | undefined) ?? {};
@@ -288,10 +362,12 @@ function EditItemModal({
 
 function TimelineRow({
   t,
+  index,
   onPatch,
   onEdit,
 }: {
   t: Timeline360Item;
+  index: number;
   onPatch: (id: string, patch: FeedbackPatch) => Promise<void>;
   onEdit: (t: Timeline360Item) => void;
 }) {
@@ -311,7 +387,10 @@ function TimelineRow({
   }
 
   return (
-    <li className="tl-item">
+    <li
+      className="tl-item reveal"
+      style={{ ["--i" as string]: Math.min(index, 12) } as React.CSSProperties}
+    >
       <span className={`tl-dot ${dotCls}`} aria-hidden />
       <div className="tl-top">
         {typeBadge(t.type)}
@@ -611,21 +690,36 @@ function ConversaWhatsapp({ contactId }: { contactId: string }) {
         )}
       </div>
 
-      {loading && <div className="empty">{"Carregando conversa\u{2026}"}</div>}
+      {loading && (
+        <div style={{ padding: "16px 20px" }} aria-busy aria-hidden>
+          {[72, 58, 80].map((w, i) => (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                justifyContent: i % 2 ? "flex-end" : "flex-start",
+                marginBottom: 12,
+              }}
+            >
+              <div className="sk-card" style={{ width: `${w}%`, height: 40, borderRadius: 14 }} />
+            </div>
+          ))}
+        </div>
+      )}
 
       {!loading && error && (
         <div className="empty">
-          {/* \u{1F50C} = tomada (offline) */}
-          <div className="big">{"\u{1F50C}"}</div>
-          Não consegui carregar a conversa agora ({error}).
+          <div className="empty-illu">{EMPTY_CHAT_OFF}</div>
+          <div className="empty-title">Não consegui carregar a conversa</div>
+          <p className="empty-sub">{error}</p>
         </div>
       )}
 
       {!loading && !error && mensagens.length === 0 && (
         <div className="empty">
-          {/* \u{1F4AC} = balão de fala */}
-          <div className="big">{"\u{1F4AC}"}</div>
-          Nenhuma mensagem de WhatsApp ainda com este cliente.
+          <div className="empty-illu">{EMPTY_CHAT}</div>
+          <div className="empty-title">Nenhuma mensagem ainda</div>
+          <p className="empty-sub">Quando vocês conversarem no WhatsApp, o histórico aparece aqui.</p>
         </div>
       )}
 
@@ -747,7 +841,7 @@ export default function Contact360Page() {
         </div>
       )}
 
-      {!err && !data && <div className="empty">Carregando…</div>}
+      {!err && !data && <Skeleton360 />}
 
       {data && (
         <>
@@ -769,13 +863,22 @@ export default function Contact360Page() {
             </div>
             {data.timeline.length === 0 ? (
               <div className="empty">
-                <div className="big">{"\u{1F5C2}\u{FE0F}"}</div>
-                Nenhum feedback registrado ainda para este cliente.
+                <div className="empty-illu">{EMPTY_TIMELINE}</div>
+                <div className="empty-title">Sem feedback ainda</div>
+                <p className="empty-sub">
+                  Quando este cliente responder a uma pesquisa ou falar com vocês, tudo aparece aqui.
+                </p>
               </div>
             ) : (
               <ul className="tl">
                 {data.timeline.map((t, i) => (
-                  <TimelineRow key={t.id ?? i} t={t} onPatch={patchItem} onEdit={setEditingItem} />
+                  <TimelineRow
+                    key={t.id ?? i}
+                    t={t}
+                    index={i}
+                    onPatch={patchItem}
+                    onEdit={setEditingItem}
+                  />
                 ))}
               </ul>
             )}

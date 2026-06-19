@@ -920,6 +920,28 @@ function FeedbackCard({
   );
 }
 
+// ===== Skeleton de carregamento (espelha a forma do card) ===================
+
+/** Placeholder de um card do inbox enquanto a 1ª página carrega — mesma silhueta
+   (avatar + cabeçalho + citação + rodapé de ação), com shimmer. */
+function FeedbackCardSkeleton() {
+  return (
+    <div className="card fb-card" aria-busy="true">
+      <div className="fb-top" style={{ alignItems: "center" }}>
+        <div className="sk-circle" style={{ ["--sk-size" as string]: "30px" } as React.CSSProperties} />
+        <div className="sk-line w-30" style={{ margin: 0 }} />
+        <div className="sk-line w-30" style={{ margin: 0, maxWidth: 90 }} />
+      </div>
+      <div className="sk-line w-90" style={{ marginTop: 14 }} />
+      <div className="sk-line w-60" />
+      <div className="fb-actions" style={{ marginTop: 14 }}>
+        <div className="sk-line w-30" style={{ margin: 0, maxWidth: 120 }} />
+        <div className="sk-line w-40" style={{ margin: 0 }} />
+      </div>
+    </div>
+  );
+}
+
 // ===== Página ===============================================================
 
 export default function FeedbacksPage() {
@@ -1304,18 +1326,36 @@ export default function FeedbacksPage() {
         </div>
       )}
 
-      {!err && visible.length === 0 ? (
+      {!err && loading && visible.length === 0 ? (
+        <div className="feed" aria-busy="true">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <FeedbackCardSkeleton key={i} />
+          ))}
+        </div>
+      ) : !err && visible.length === 0 ? (
         <div className="card">
           <div className="empty">
-            <div className="big">📭</div>
-            {loading
-              ? "Carregando…"
-              : status
-              ? `Nenhum feedback em "${STATUS_LABEL[status]}".`
-              : hasFilters
-              ? "Nenhum feedback bate com os filtros."
-              : "Nenhum feedback ainda."}
-            {!loading && !status && !hasFilters && (
+            <div className="empty-illu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 5h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+                <path d="M4 7l8 6 8-6" />
+              </svg>
+            </div>
+            <div className="empty-title">
+              {status
+                ? `Nada em "${STATUS_LABEL[status]}"`
+                : hasFilters
+                ? "Nenhum feedback bate com os filtros"
+                : "Nenhum feedback ainda"}
+            </div>
+            <p className="empty-sub">
+              {status
+                ? "Mude de aba ou ajuste os filtros para ver outros feedbacks."
+                : hasFilters
+                ? "Tente afrouxar os filtros ou limpar a busca."
+                : "Os feedbacks do WhatsApp caem aqui. Você também pode registrar um manualmente."}
+            </p>
+            {!status && !hasFilters && (
               <div className="empty-cta">
                 <button type="button" className="btn" onClick={() => setCreating(true)}>
                   <span aria-hidden>＋</span> Adicionar o primeiro
@@ -1325,17 +1365,22 @@ export default function FeedbacksPage() {
           </div>
         </div>
       ) : (
-        <div className="feed">
-          {visible.map((fb) => (
-            <FeedbackCard
+        <div className="feed reveal-stagger">
+          {visible.map((fb, i) => (
+            <div
               key={fb.id}
-              fb={fb}
-              onPatched={onPatched}
-              onEdit={setEditing}
-              onDelete={setDeleting}
-              onAbordar={setAbordando}
-              onSelosChanged={onSelosChanged}
-            />
+              className="reveal"
+              style={{ ["--i" as string]: i } as React.CSSProperties}
+            >
+              <FeedbackCard
+                fb={fb}
+                onPatched={onPatched}
+                onEdit={setEditing}
+                onDelete={setDeleting}
+                onAbordar={setAbordando}
+                onSelosChanged={onSelosChanged}
+              />
+            </div>
           ))}
         </div>
       )}

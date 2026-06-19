@@ -1777,11 +1777,40 @@ export default function BoardPage() {
         </div>
       )}
 
+      {loading && !items ? (
+        <div
+          className="board-cols"
+          style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
+          aria-busy="true"
+        >
+          {Array.from({ length: 3 }).map((_, c) => (
+            <section className="board-col" key={c}>
+              <header className="board-col-head">
+                <span className="board-col-name">
+                  <span className="sk-line" style={{ width: 70, margin: 0, display: "inline-block" }} />
+                </span>
+              </header>
+              <div className="board-col-body">
+                {Array.from({ length: c === 1 ? 3 : 2 }).map((_, k) => (
+                  <div className="card board-card" key={k} aria-busy="true">
+                    <div className="board-card-top cell-person" style={{ alignItems: "center" }}>
+                      <div className="sk-circle" style={{ ["--sk-size" as string]: "26px" } as React.CSSProperties} />
+                      <div className="sk-line w-60" style={{ margin: 0 }} />
+                    </div>
+                    <div className="sk-line w-90" style={{ marginTop: 10 }} />
+                    <div className="sk-line w-50" />
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : (
       <div
         className="board-cols"
         style={{ gridTemplateColumns: `repeat(${Math.max(1, columns.length)}, minmax(0, 1fr))` }}
       >
-        {columns.map((col) => {
+        {columns.map((col, colIdx) => {
           // Highlight/drop pela IDENTIDADE da coluna (`col.id`), não por `col.valor`.
           const isOver = overColumn === col.id;
           // Nudge da esteira: só no board de feedback agrupado por action_status,
@@ -1795,7 +1824,8 @@ export default function BoardPage() {
           return (
             <section
               key={col.id}
-              className={`board-col ${isOver ? "is-over" : ""}`}
+              className={`board-col reveal ${isOver ? "is-over" : ""}`}
+              style={{ ["--i" as string]: colIdx } as React.CSSProperties}
               onDragOver={
                 dropEnabled
                   ? (e) => {
@@ -1884,7 +1914,24 @@ export default function BoardPage() {
                   ))
                 )}
 
-                {col.count === 0 && !loading && <div className="board-col-empty">vazio</div>}
+                {col.count === 0 && !loading && (
+                  <div className="board-col-empty">
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      style={{ width: 22, height: 22, opacity: 0.7, margin: "0 auto 6px", display: "block" }}
+                    >
+                      <rect x="3" y="4" width="18" height="16" rx="2" />
+                      <path d="M3 9h18" strokeDasharray="2 3" />
+                    </svg>
+                    <div>nada nesta coluna</div>
+                  </div>
+                )}
                 {col.count > col.items.length && (
                   <div className="board-col-more">
                     + {col.count - col.items.length} mais (top {col.items.length} por{" "}
@@ -1906,12 +1953,36 @@ export default function BoardPage() {
         {columns.length === 0 && !loading && (
           <div className="card">
             <div className="empty">
-              <div className="big">{"\u{1F4CB}"}</div>
-              Este board ainda não tem colunas. Edite-o para adicionar.
+              <div className="empty-illu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="4" width="5" height="16" rx="1" />
+                  <rect x="10" y="4" width="5" height="11" rx="1" />
+                  <rect x="17" y="4" width="4" height="7" rx="1" />
+                </svg>
+              </div>
+              <div className="empty-title">
+                {boardList.length === 0 ? "Nenhum board ainda" : "Este board não tem colunas"}
+              </div>
+              <p className="empty-sub">
+                {boardList.length === 0
+                  ? "Crie um board para organizar feedbacks, clientes, tarefas ou melhorias em colunas."
+                  : "Edite o board para adicionar colunas e começar a arrastar os cards."}
+              </p>
+              <div className="empty-cta">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => (boardList.length === 0 ? setCreating(true) : setEditingBoard(selected))}
+                  disabled={boardList.length !== 0 && !selected}
+                >
+                  {boardList.length === 0 ? "Criar board" : "Editar colunas"}
+                </button>
+              </div>
             </div>
           </div>
         )}
       </div>
+      )}
 
       {(creating || editingBoard) && (
         <BoardFormModal

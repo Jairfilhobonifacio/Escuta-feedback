@@ -27,14 +27,22 @@ export default function Modal({
     // trava o scroll do fundo enquanto o modal está aberto
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    // foca o primeiro campo do diálogo
-    const first = panelRef.current?.querySelector<HTMLElement>(
+    // lembra quem tinha o foco p/ devolvê-lo ao fechar (acabamento de acessibilidade)
+    const prevFocus = document.activeElement as HTMLElement | null;
+    // foca o primeiro campo editável; se não houver, cai no primeiro botão —
+    // evita abrir já com um botão destrutivo em foco
+    const focusables = panelRef.current?.querySelectorAll<HTMLElement>(
       "input, select, textarea, button",
     );
-    first?.focus();
+    const firstField = panelRef.current?.querySelector<HTMLElement>(
+      "input, select, textarea",
+    );
+    (firstField ?? focusables?.[0])?.focus();
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
+      // devolve o foco ao elemento que abriu o modal (se ainda existir no DOM)
+      if (prevFocus && document.contains(prevFocus)) prevFocus.focus();
     };
   }, [onClose]);
 

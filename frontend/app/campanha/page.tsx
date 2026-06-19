@@ -54,6 +54,42 @@ function corDoSelo(catalogo: Selo[], nome: string): string {
   return catalogo.find((s) => s.nome === nome)?.cor || "var(--indigo)";
 }
 
+/** Esqueleto da tela enquanto o primeiro fetch não volta — espelha a silhueta
+   real (5 cards de números + 2 blocos) com shimmer, no lugar de "Carregando…". */
+function CampanhaSkeleton() {
+  return (
+    <div aria-busy="true">
+      <div className="cmp-cards">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="card kpi">
+            <div className="sk-line w-60" style={{ height: 9 }} />
+            <div className="sk-line w-40" style={{ height: 26, marginTop: 12 }} />
+            <div className="sk-line w-80" style={{ height: 9, marginTop: 10 }} />
+          </div>
+        ))}
+      </div>
+      <div className="card cmp-block">
+        <div className="card-head">
+          <div style={{ flex: 1 }}>
+            <div className="sk-line w-40" style={{ height: 13 }} />
+            <div className="sk-line w-70" style={{ height: 9, marginTop: 8 }} />
+          </div>
+        </div>
+        <div className="cmp-funnel">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="cmp-fn-step">
+              <div className="cmp-fn-top">
+                <div className="sk-line" style={{ width: 90, height: 10, margin: 0 }} />
+              </div>
+              <div className="sk-line w-full" style={{ height: 9, margin: 0 }} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CampanhaPage() {
   const [stats, setStats] = useState<CampanhaStats | null>(null);
   const [selos, setSelos] = useState<SelosResponse | null>(null);
@@ -107,7 +143,22 @@ export default function CampanhaPage() {
     );
   }
 
-  if (!stats) return <div className="empty">Carregando…</div>;
+  if (!stats) {
+    return (
+      <div>
+        <div className="page-head">
+          <div>
+            <h1 className="page-title">Campanha</h1>
+            <div className="page-sub">
+              Win-back de cancelados — quem já abordamos, quem respondeu e quem reativou
+            </div>
+          </div>
+          <span className="refresh-note">atualiza a cada 30s</span>
+        </div>
+        <CampanhaSkeleton />
+      </div>
+    );
+  }
 
   const conv =
     stats.universo > 0 ? Math.round(pct(stats.contatados, stats.universo)) : null;
@@ -134,8 +185,8 @@ export default function CampanhaPage() {
       </div>
 
       {/* Cards de números */}
-      <div className="cmp-cards">
-        <div className="card kpi">
+      <div className="cmp-cards reveal-stagger">
+        <div className="card kpi reveal">
           <div className="kpi-label">Universo</div>
           <div className="kpi-value">{stats.universo}</div>
           <div className="kpi-hint">clientes que cancelaram</div>
@@ -154,22 +205,22 @@ export default function CampanhaPage() {
             </span>
           </div>
         </div>
-        <div className="card kpi">
+        <div className="card kpi reveal">
           <div className="kpi-label">Contatados</div>
           <div className="kpi-value">{stats.contatados}</div>
           <div className="kpi-hint">{conv !== null ? `${conv}% do universo` : "—"}</div>
         </div>
-        <div className="card kpi">
+        <div className="card kpi reveal">
           <div className="kpi-label">Responderam</div>
           <div className="kpi-value">{stats.responderam}</div>
           <div className="kpi-hint">voltaram a falar com a gente</div>
         </div>
-        <div className="card kpi">
+        <div className="card kpi reveal">
           <div className="kpi-label">Cortesia</div>
           <div className="kpi-value">{stats.cortesia}</div>
           <div className="kpi-hint">ganharam a oferta</div>
         </div>
-        <div className="card kpi">
+        <div className="card kpi reveal">
           <div className="kpi-label">Reativaram</div>
           <div className="kpi-value cmp-reativou">{stats.reativaram}</div>
           <div className="kpi-hint">voltaram a assinar</div>
@@ -189,9 +240,9 @@ export default function CampanhaPage() {
             </div>
           </div>
           <div className="cmp-pad">
-            <ul className="cmp-canal-list">
+            <ul className="cmp-canal-list reveal-stagger">
               {alcanceRows.map((r) => (
-                <li key={r.key} className="cmp-canal-row">
+                <li key={r.key} className="cmp-canal-row reveal">
                   <span className="cmp-canal-name">
                     <span aria-hidden="true">{r.emoji} </span>
                     {r.label}
@@ -251,11 +302,21 @@ export default function CampanhaPage() {
           </div>
           <div className="cmp-pad">
             {canais.length === 0 ? (
-              <div className="empty">Nenhuma abordagem registrada ainda.</div>
+              <div className="empty">
+                <div className="empty-illu">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                </div>
+                <div className="empty-title">Nenhuma abordagem ainda</div>
+                <p className="empty-sub">
+                  Os canais aparecem aqui conforme você registra contatos com os cancelados.
+                </p>
+              </div>
             ) : (
-              <ul className="cmp-canal-list">
+              <ul className="cmp-canal-list reveal-stagger">
                 {canais.map(([canal, n]) => (
-                  <li key={canal} className="cmp-canal-row">
+                  <li key={canal} className="cmp-canal-row reveal">
                     <span className="cmp-canal-name">{CANAL_LABEL[canal] ?? canal}</span>
                     <span className="cmp-canal-n mono">{n}</span>
                   </li>
@@ -272,7 +333,18 @@ export default function CampanhaPage() {
           </div>
           <div className="cmp-pad">
             {porSelo.length === 0 ? (
-              <div className="empty">Nenhum selo aplicado no universo ainda.</div>
+              <div className="empty">
+                <div className="empty-illu">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 2 4 5v6c0 5 3.5 8 8 11 4.5-3 8-6 8-11V5z" />
+                    <path d="m9 12 2 2 4-4" />
+                  </svg>
+                </div>
+                <div className="empty-title">Nenhum selo aplicado</div>
+                <p className="empty-sub">
+                  Aplique selos aos cancelados (na tela de Clientes) para segmentar o universo.
+                </p>
+              </div>
             ) : (
               <div className="cmp-selo-chips">
                 {porSelo.map(([nome, n]) => {
@@ -311,11 +383,23 @@ export default function CampanhaPage() {
         </div>
         <div className="cmp-pad">
           {stats.insights.length === 0 ? (
-            <div className="empty">Ainda não há temas classificados nos cancelamentos.</div>
+            <div className="empty">
+              <div className="empty-illu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M9 18h6" />
+                  <path d="M10 21h4" />
+                  <path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z" />
+                </svg>
+              </div>
+              <div className="empty-title">Sem temas nos cancelamentos</div>
+              <p className="empty-sub">
+                Os motivos aparecem aqui assim que a IA classificar os feedbacks de cancelamento.
+              </p>
+            </div>
           ) : (
-            <ul className="cmp-insight-list">
+            <ul className="cmp-insight-list reveal-stagger">
               {stats.insights.map((it) => (
-                <li key={it.tema} className="cmp-insight-row">
+                <li key={it.tema} className="cmp-insight-row reveal">
                   <div className="cmp-insight-head">
                     <span className="cmp-insight-name">{it.tema}</span>
                     <span className="cmp-insight-counts">

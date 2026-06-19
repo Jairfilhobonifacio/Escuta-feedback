@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   api,
@@ -54,6 +54,30 @@ const HEALTH_BANDS = [
 function ruleSummary(p: Playbook): string {
   return `${TRIGGER_LABEL[p.trigger_type] ?? p.trigger_type} → ${ACTION_LABEL[p.action_type] ?? p.action_type}`;
 }
+
+/** Item-fantasma da lista de regras durante o load (espelha o .survey-item). */
+function SkeletonItem() {
+  return (
+    <div className="survey-item" aria-hidden>
+      <div className="sk-line w-40" style={{ margin: "2px 0 10px" }} />
+      <div className="sk-line w-70" style={{ margin: "2px 0" }} />
+      <div className="sk-line w-50" style={{ margin: "2px 0" }} />
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <div className="sk-line" style={{ width: 64, height: 30, margin: 0 }} />
+        <div className="sk-line" style={{ width: 56, height: 30, margin: 0 }} />
+      </div>
+    </div>
+  );
+}
+
+/** SVG discreto p/ o vazio: engrenagem de automação (stroke=currentColor). */
+const EMPTY_RULES = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+  </svg>
+);
 
 /** Estado bruto do form (strings p/ os inputs; vira config tipada no submit). */
 interface FormState {
@@ -233,6 +257,13 @@ export default function PlaybooksPage() {
   // exclusão
   const [deleting, setDeleting] = useState<Playbook | null>(null);
 
+  // foco no form a partir do CTA do estado vazio
+  const nameRef = useRef<HTMLInputElement>(null);
+  const focusForm = useCallback(() => {
+    nameRef.current?.focus();
+    nameRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
+
   const set = useCallback(<K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
   }, []);
@@ -333,15 +364,29 @@ export default function PlaybooksPage() {
 
       <div className="two-col">
         {/* Lista de regras */}
-        <div className="card">
-          {playbooks.length === 0 && (
+        <div className="card" aria-busy={loading || undefined}>
+          {loading && playbooks.length === 0 &&
+            Array.from({ length: 3 }).map((_, i) => <SkeletonItem key={i} />)}
+          {!loading && playbooks.length === 0 && (
             <div className="empty">
-              <div className="big">⚙️</div>
-              {loading ? "Carregando…" : "Nenhuma regra ainda — crie a primeira ao lado."}
+              <div className="empty-illu">{EMPTY_RULES}</div>
+              <div className="empty-title">Nenhuma regra ainda</div>
+              <p className="empty-sub">
+                Crie um playbook para que um gatilho vire tarefa de CS ou alerta — sem ninguém precisar lembrar.
+              </p>
+              <div className="empty-cta">
+                <button type="button" className="btn" onClick={focusForm}>
+                  Criar playbook
+                </button>
+              </div>
             </div>
           )}
-          {playbooks.map((p) => (
-            <div key={p.id} className="survey-item">
+          {playbooks.map((p, i) => (
+            <div
+              key={p.id}
+              className="survey-item reveal"
+              style={{ ["--i" as string]: Math.min(i, 12) } as React.CSSProperties}
+            >
               <div className="survey-name">
                 {p.name}
                 <span className={`badge ${p.enabled ? "promoter" : "neutral"}`}>
@@ -378,7 +423,11 @@ export default function PlaybooksPage() {
                   title="Excluir regra"
                   aria-label="Excluir regra"
                 >
-                  🗑️
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+                    strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                    <path d="M10 11v6M14 11v6" />
+                  </svg>
                 </button>
               </div>
             </div>
@@ -397,6 +446,7 @@ export default function PlaybooksPage() {
             <div className="field">
               <label>Nome da regra</label>
               <input
+                ref={nameRef}
                 value={form.name}
                 onChange={(e) => set("name", e.target.value)}
                 placeholder="ex.: Resgatar contas em risco"

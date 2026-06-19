@@ -143,6 +143,52 @@ function NpsGauge({ nps }: { nps: number | null }) {
   );
 }
 
+/** Skeleton do dashboard enquanto o /api/dashboard não respondeu — espelha a
+   forma real (hero do NPS + fila de KPIs), com shimmer, em vez de "Carregando…". */
+function DashboardSkeleton() {
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Dashboard</h1>
+          <div className="page-sub">carregando o pulso da operação…</div>
+        </div>
+        <span className="refresh-note">atualiza a cada 30s</span>
+      </div>
+
+      <div className="card hero-nps" aria-busy="true">
+        <div className="hero-gauge" style={{ display: "grid", placeItems: "center", gap: 14 }}>
+          <div className="sk-card" style={{ width: 240, height: 130, borderRadius: 999 }} />
+          <div className="sk-line w-40" />
+        </div>
+        <div className="hero-meta" style={{ width: "100%" }}>
+          <div className="hero-dist">
+            <div className="sk-line w-30" />
+            <div className="sk-card" style={{ height: 16, borderRadius: 999, margin: "10px 0" }} />
+            <div className="sk-line w-80" />
+          </div>
+          <div className="hero-funnel" style={{ marginTop: 18 }}>
+            <div className="sk-line w-40" />
+            <div className="sk-line w-full" />
+            <div className="sk-line w-70" />
+            <div className="sk-line w-50" />
+          </div>
+        </div>
+      </div>
+
+      <div className="cmp-cards">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="card kpi" aria-busy="true">
+            <div className="sk-line sk-sm w-60" />
+            <div className="sk-line sk-lg w-30" style={{ margin: "12px 0" }} />
+            <div className="sk-line sk-sm w-80" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Mini waveform — assinatura "Escuta" (ouvir o cliente). Decorativo. */
 function Waveform() {
   const bars = [8, 16, 11, 22, 14, 28, 18, 34, 22, 40, 26, 44, 30, 38, 24, 30, 18, 26, 14, 34, 20, 42, 28, 36, 22, 28, 16, 22, 12, 18, 10, 14];
@@ -226,7 +272,7 @@ export default function DashboardPage() {
     );
   }
 
-  if (!data) return <div className="empty">Carregando…</div>;
+  if (!data) return <DashboardSkeleton />;
 
   const k = data.kpis;
   const exit = data.exit ?? { sent: 0, answered: 0, recent: [] };
@@ -299,8 +345,8 @@ export default function DashboardPage() {
       {cmp && (
         <>
           {/* Cards de números: universo + recorte com/sem WhatsApp real */}
-          <div className="cmp-cards">
-            <div className="card kpi">
+          <div className="cmp-cards reveal-stagger">
+            <div className="card kpi reveal">
               <div className="kpi-label">Universo</div>
               <div className="kpi-value">{cmp.universo}</div>
               <div className="kpi-hint">clientes que cancelaram</div>
@@ -319,7 +365,7 @@ export default function DashboardPage() {
                 </span>
               </div>
             </div>
-            <div className="card kpi">
+            <div className="card kpi reveal">
               <div className="kpi-label">Contatados</div>
               <div className="kpi-value">{cmp.contatados}</div>
               <div className="kpi-hint">
@@ -328,17 +374,17 @@ export default function DashboardPage() {
                   : "—"}
               </div>
             </div>
-            <div className="card kpi">
+            <div className="card kpi reveal">
               <div className="kpi-label">Responderam</div>
               <div className="kpi-value">{cmp.responderam}</div>
               <div className="kpi-hint">voltaram a falar com a gente</div>
             </div>
-            <div className="card kpi">
+            <div className="card kpi reveal">
               <div className="kpi-label">Cortesia</div>
               <div className="kpi-value">{cmp.cortesia}</div>
               <div className="kpi-hint">ganharam a oferta</div>
             </div>
-            <div className="card kpi">
+            <div className="card kpi reveal">
               <div className="kpi-label">Reativaram</div>
               <div className="kpi-value cmp-reativou">{cmp.reativaram}</div>
               <div className="kpi-hint">voltaram a assinar</div>
@@ -366,8 +412,12 @@ export default function DashboardPage() {
                 </div>
                 <div className="cmp-pad">
                   <ul className="cmp-canal-list">
-                    {rows.map((r) => (
-                      <li key={r.key} className="cmp-canal-row">
+                    {rows.map((r, i) => (
+                      <li
+                        key={r.key}
+                        className="cmp-canal-row reveal"
+                        style={{ ["--i" as string]: i } as React.CSSProperties}
+                      >
                         <span className="cmp-canal-name">
                           <span aria-hidden="true">{r.emoji} </span>
                           {r.label}
@@ -402,8 +452,12 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div className="cmp-funnel">
-                {cmp.funil.map((f) => (
-                  <div className="cmp-fn-step" key={f.etapa}>
+                {cmp.funil.map((f, i) => (
+                  <div
+                    className="cmp-fn-step reveal"
+                    key={f.etapa}
+                    style={{ ["--i" as string]: i } as React.CSSProperties}
+                  >
                     <div className="cmp-fn-top">
                       <span className="cmp-fn-label">{f.etapa}</span>
                       <span className="cmp-fn-n mono">{f.count}</span>
@@ -552,13 +606,25 @@ export default function DashboardPage() {
         </div>
         {exit.recent.length === 0 ? (
           <div className="empty">
-            <div className="big">🎉</div>
-            Nenhum cancelamento respondido ainda.
+            <div className="empty-illu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                <path d="M9 10h6" />
+              </svg>
+            </div>
+            <div className="empty-title">Nenhum cancelamento respondido</div>
+            <p className="empty-sub">
+              Quando alguém responder a exit survey ao cancelar, o motivo aparece aqui.
+            </p>
           </div>
         ) : (
-          <ul className="exit-list">
+          <ul className="exit-list reveal-stagger">
             {exit.recent.map((m, i) => (
-              <li key={i} className="exit-item">
+              <li
+                key={i}
+                className="exit-item reveal"
+                style={{ ["--i" as string]: i } as React.CSSProperties}
+              >
                 <div className="exit-quote">“{m.text}”</div>
                 <div className="exit-meta">
                   {m.contact_name || "sem nome"} · {fmtDate(m.closed_at)}
@@ -605,14 +671,26 @@ export default function DashboardPage() {
                 <tr>
                   <td colSpan={7}>
                     <div className="empty">
-                      <div className="big">📭</div>
-                      Nenhuma pesquisa enviada ainda. Crie uma em <b>Pesquisas</b> e dispare.
+                      <div className="empty-illu">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M4 4h16v12H5.2L4 17.2z" />
+                          <path d="M8 9h8M8 12h5" />
+                        </svg>
+                      </div>
+                      <div className="empty-title">Nenhuma pesquisa enviada ainda</div>
+                      <p className="empty-sub">
+                        Crie uma pesquisa em <b>Pesquisas</b> e dispare para começar a ouvir os clientes.
+                      </p>
                     </div>
                   </td>
                 </tr>
               )}
-              {data.recent.map((r) => (
-                <tr key={r.id}>
+              {data.recent.map((r, i) => (
+                <tr
+                  key={r.id}
+                  className="reveal"
+                  style={{ ["--i" as string]: i } as React.CSSProperties}
+                >
                   <td>
                     <div>{r.contact_name || <span className="faint">sem nome</span>}</div>
                     <div className="mono dim">{r.contact_phone}</div>

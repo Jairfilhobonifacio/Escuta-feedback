@@ -1069,13 +1069,44 @@ export const campanha = {
 
 // --- WhatsApp da central (envio 1:1, gated por confirmação) ------------------
 
+/** Estados possíveis da sessão WAHA (espelha o backend).
+    WORKING = conectado · SCAN_QR_CODE = precisa escanear · STARTING/STOPPED/FAILED
+    = transições · null = WAHA desligado/inalcançável. Tipado como `string | null`
+    (não union fechada) para tolerar estados novos do WAHA sem quebrar a UI. */
+export type WhatsappSessionStatus =
+  | "WORKING"
+  | "SCAN_QR_CODE"
+  | "STARTING"
+  | "STOPPED"
+  | "FAILED"
+  | (string & {})
+  | null;
+
 /** Resposta de GET /api/whatsapp/status — saúde do gateway WAHA.
     `conectado` é true só quando a sessão está plenamente ligada ('WORKING');
-    WAHA off/erro -> false. Não expõe segredos (sem api_key). */
+    WAHA off/erro -> false. `status` é o estado bruto da sessão (ou null se WAHA
+    desligado). Não expõe segredos (sem api_key). */
 export interface WhatsappStatus {
   conectado: boolean;
+  status: WhatsappSessionStatus;
   session: string;
   base_url: string;
+}
+
+/** Resposta de GET /api/whatsapp/qr — QR code para parear a sessão.
+    `qr` é um data-uri pronto para <img src> ("data:image/png;base64,…") ou null
+    (sessão já conectada, ainda iniciando, ou WAHA desligado). `status` acompanha
+    o estado da sessão para a UI decidir parar o polling (vira 'WORKING'). */
+export interface WhatsappQr {
+  qr: string | null;
+  status: WhatsappSessionStatus;
+}
+
+/** Resposta dos comandos de sessão (start/stop/restart). `ok` indica se o WAHA
+    aceitou o comando; `status` é o estado da sessão logo após o comando (ou null). */
+export interface WhatsappSessionResult {
+  ok: boolean;
+  status: WhatsappSessionStatus;
 }
 
 /** Corpo do POST /api/contacts/{id}/whatsapp/send (preview e envio).
@@ -1167,6 +1198,18 @@ export interface WhatsappThread {
 export const whatsapp = {
   /** Status do gateway WAHA (best-effort; WAHA off -> conectado=false). */
   status: () => api.get<WhatsappStatus>("/api/whatsapp/status"),
+  /** QR code para parear a sessão (data-uri ou null). Faça polling enquanto o
+      status for 'SCAN_QR_CODE'; pare quando virar 'WORKING'. */
+  qr: () => api.get<WhatsappQr>("/api/whatsapp/qr"),
+  /** Inicia a sessão do WhatsApp (gera o QR). Idempotente no backend. */
+  startSession: () =>
+    api.post<WhatsappSessionResult>("/api/whatsapp/session/start", {}),
+  /** Desconecta/para a sessão do WhatsApp (desfaz o pareamento). */
+  stopSession: () =>
+    api.post<WhatsappSessionResult>("/api/whatsapp/session/stop", {}),
+  /** Reinicia a sessão (stop+start) — útil quando ela trava em FAILED. */
+  restartSession: () =>
+    api.post<WhatsappSessionResult>("/api/whatsapp/session/restart", {}),
   /** Lista de conversas (1 por contato com mensagem), ordenada pela última msg desc.
       `excluirGrupos=true` injeta `excluir_grupos=true` e omite contatos classe 'group'. */
   conversations: (search?: string, excluirGrupos?: boolean) =>
