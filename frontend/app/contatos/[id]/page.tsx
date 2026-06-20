@@ -5,19 +5,29 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  Bug,
   Check,
   ChevronDown,
+  FileText,
+  Gauge,
+  HandHeart,
+  Lightbulb,
   Mail,
   MessageCircle,
+  MessageSquare,
   Phone,
   Search,
   Pencil,
   Plus,
   RefreshCw,
+  StickyNote,
+  ThumbsUp,
   Trash2,
+  UserX,
   X,
   Users,
   WifiOff,
+  type LucideIcon,
 } from "lucide-react";
 import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
@@ -60,8 +70,60 @@ const TYPE_LABEL: Record<string, string> = {
   outro: "Outro",
 };
 
-/** Tipos oferecidos ao registrar um evento à mão na linha do tempo. */
-const MANUAL_TYPE_OPTIONS: { key: string; label: string }[] = [
+/** Ícone + cor por TIPO de evento, para diferenciar os marcos "de relance" na
+    timeline. `accent` é uma cor CSS (token da paleta) usada no ícone e no halo do
+    selo; `tone` mapeia o vínculo semântico (negativo/positivo/neutro/marca). Tipos
+    fora do mapa caem no default neutro (MessageSquare). */
+interface TypeVisual {
+  Icon: LucideIcon;
+  accent: string;
+  soft: string;
+  line: string;
+}
+const TYPE_VISUAL: Record<string, TypeVisual> = {
+  nps: { Icon: Gauge, accent: "var(--indigo-light)", soft: "var(--promoter-soft)", line: "var(--promoter-line)" },
+  csat: { Icon: Gauge, accent: "var(--indigo-light)", soft: "var(--promoter-soft)", line: "var(--promoter-line)" },
+  churn: { Icon: UserX, accent: "var(--detractor)", soft: "var(--detractor-soft)", line: "var(--detractor-line)" },
+  exit: { Icon: UserX, accent: "var(--detractor)", soft: "var(--detractor-soft)", line: "var(--detractor-line)" },
+  bug: { Icon: Bug, accent: "var(--detractor)", soft: "var(--detractor-soft)", line: "var(--detractor-line)" },
+  report: { Icon: Bug, accent: "var(--detractor)", soft: "var(--detractor-soft)", line: "var(--detractor-line)" },
+  elogio: { Icon: ThumbsUp, accent: "var(--indigo-light)", soft: "var(--promoter-soft)", line: "var(--promoter-line)" },
+  sugestao: { Icon: Lightbulb, accent: "var(--gold-soft)", soft: "var(--passive-soft)", line: "var(--passive-line)" },
+  edital_request: { Icon: FileText, accent: "var(--gold-soft)", soft: "var(--passive-soft)", line: "var(--passive-line)" },
+  nota: { Icon: StickyNote, accent: "var(--text-dim)", soft: "rgba(86, 84, 107, 0.08)", line: "var(--charcoal-2)" },
+  abordagem: { Icon: HandHeart, accent: "var(--indigo-light)", soft: "var(--promoter-soft)", line: "var(--promoter-line)" },
+  ticket: { Icon: MessageCircle, accent: "var(--text-dim)", soft: "rgba(86, 84, 107, 0.08)", line: "var(--charcoal-2)" },
+};
+const TYPE_VISUAL_DEFAULT: TypeVisual = {
+  Icon: MessageSquare,
+  accent: "var(--text-dim)",
+  soft: "rgba(86, 84, 107, 0.08)",
+  line: "var(--charcoal-2)",
+};
+function typeVisual(type: string): TypeVisual {
+  return TYPE_VISUAL[type] ?? TYPE_VISUAL_DEFAULT;
+}
+
+/** Selo do tipo de evento: ícone + rótulo num chip tingido pela cor do tipo, p/ os
+    marcos saltarem aos olhos (assinatura/feedback/nota/abordagem/cancelamento). */
+function TypeMark({ type }: { type: string }) {
+  const v = typeVisual(type);
+  const label = TYPE_LABEL[type] ?? type;
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-[7px] border px-2.5 py-1 text-[12px] font-semibold leading-none"
+      style={{ color: v.accent, background: v.soft, borderColor: v.line }}
+    >
+      <v.Icon size={13} strokeWidth={2.2} aria-hidden />
+      {label}
+    </span>
+  );
+}
+
+/** FALLBACK dos tipos oferecidos ao registrar feedback à mão (se GET /api/config
+    falhar). O conjunto efetivo — defaults + custom da org — vem de config.get()
+    (feedback_types) e é passado por props ao modal. */
+const TYPE_OPTIONS_FALLBACK: ConfigItem[] = [
   { key: "nota", label: "Nota" },
   { key: "abordagem", label: "Abordagem" },
   { key: "elogio", label: "Elogio" },
@@ -70,6 +132,13 @@ const MANUAL_TYPE_OPTIONS: { key: string; label: string }[] = [
   { key: "churn", label: "Cancelamento" },
   { key: "outro", label: "Outro" },
 ];
+
+/** Garante que um `key` (ex.: vindo de dado custom fora do vocabulário carregado)
+    apareça no select, para não "perder" o valor default selecionado. */
+function withKey(items: ConfigItem[], key: string | null | undefined): ConfigItem[] {
+  if (!key || items.some((it) => it.key === key)) return items;
+  return [...items, { key, label: key }];
+}
 
 /** ISO (UTC) -> valor de <input type="datetime-local"> no fuso local (sem 'Z'). */
 function toLocalInputValue(d: Date): string {
@@ -110,12 +179,6 @@ function withCurrentStatus(items: ConfigItem[], current: string | null | undefin
 
 /** Selos de campanha win-back sugeridos no controle do cabeçalho. */
 const SELOS_CAMPANHA = ["contatado", "respondeu", "cortesia", "reativou"];
-
-function typeBadge(type: string) {
-  const label = TYPE_LABEL[type] ?? type;
-  const cls = type === "churn" || type === "exit" ? "t-exit" : type === "nps" || type === "csat" ? "t-nps" : "";
-  return <span className={`badge type ${cls}`}>{label}</span>;
-}
 
 function sentimentBadge(s?: string | null) {
   if (!s) return null;
@@ -478,29 +541,42 @@ function EditItemModal({
   );
 }
 
-// ===== Modal de ADICIONAR um evento à linha do tempo (FeedbackItem manual) ===
+// ===== Modal de REGISTRAR feedback do cliente (FeedbackItem manual) ==========
+// O cliente é FIXO (a própria ficha): não pedimos cliente. Cobre tipo + sentimento
+// + texto + data + status inicial + "já abordei". Cria via POST /api/feedbacks com
+// o contato fixo; se o operador escolher um status inicial != 'novo' (o default do
+// backend, que não aceita action_status na criação), aplicamos via PATCH logo após.
 
-function AddEventModal({
+function RegistrarFeedbackModal({
   contactId,
+  typeOptions,
+  statusOptions,
   onClose,
   onAdded,
 }: {
   contactId: string;
+  typeOptions: ConfigItem[];
+  statusOptions: ConfigItem[];
   onClose: () => void;
   /** Chamado após criar — o pai recarrega a ficha (a timeline re-ordena por data). */
   onAdded: () => void;
 }) {
   const titleId = useId();
-  const [type, setType] = useState("nota");
+  // Default de tipo: primeiro do vocabulário (mantém "nota" no topo do fallback).
+  const [type, setType] = useState(() => typeOptions[0]?.key ?? "nota");
+  const [sentiment, setSentiment] = useState("");
   const [text, setText] = useState("");
   // datetime-local começa em "agora" (fuso local); o operador pode recuar a data.
   const [quando, setQuando] = useState(() => toLocalInputValue(new Date()));
+  // Status inicial: "" = deixa o default do backend ('novo'); senão, PATCH pós-criação.
+  const [status, setStatus] = useState("");
+  const [abordado, setAbordado] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    if (saving) return;
+    if (saving || !text.trim()) return;
     setSaving(true);
     setError(null);
     // datetime-local é "horário de parede" sem fuso; new Date() o lê no fuso local
@@ -511,10 +587,22 @@ function AddEventModal({
       type,
       text: text.trim() || null,
       source: "manual",
+      sentiment: sentiment || null,
       occurred_at: occurred ? occurred.toISOString() : null,
+      abordado,
     };
     try {
-      await feedbacksApi.create(body);
+      const created = await feedbacksApi.create(body);
+      // O POST não aceita action_status (nasce 'novo'); se o operador pediu outro
+      // status inicial, aplicamos num PATCH imediato — best-effort, não desfaz o
+      // feedback já criado se falhar.
+      if (status && status !== created.action_status) {
+        try {
+          await feedbacksApi.patch(created.id, { action_status: status as FeedbackStatus });
+        } catch {
+          /* status inicial é refinamento; o feedback já existe — segue. */
+        }
+      }
       onAdded();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -523,36 +611,78 @@ function AddEventModal({
   }
 
   return (
-    <Modal title="Adicionar à linha do tempo" onClose={onClose} labelledById={titleId}>
+    <Modal title="Registrar feedback" onClose={onClose} labelledById={titleId}>
       <form onSubmit={save}>
         <div className="modal-body">
-          <div className="field">
-            <label htmlFor={`${titleId}-type`}>Tipo</label>
-            <select id={`${titleId}-type`} value={type} onChange={(e) => setType(e.target.value)}>
-              {MANUAL_TYPE_OPTIONS.map((o) => (
-                <option key={o.key} value={o.key}>{o.label}</option>
-              ))}
-            </select>
+          <div className="form-row-2">
+            <div className="field">
+              <label htmlFor={`${titleId}-type`}>Tipo</label>
+              <select id={`${titleId}-type`} value={type} onChange={(e) => setType(e.target.value)}>
+                {withKey(typeOptions, type).map((o) => (
+                  <option key={o.key} value={o.key}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor={`${titleId}-sent`}>Sentimento</label>
+              <select
+                id={`${titleId}-sent`}
+                value={sentiment}
+                onChange={(e) => setSentiment(e.target.value)}
+              >
+                <option value="">— não definido —</option>
+                <option value="positivo">Positivo</option>
+                <option value="neutro">Neutro</option>
+                <option value="negativo">Negativo</option>
+              </select>
+            </div>
           </div>
+
           <div className="field">
-            <label htmlFor={`${titleId}-text`}>O que aconteceu</label>
+            <label htmlFor={`${titleId}-text`}>O que o cliente disse</label>
             <textarea
               id={`${titleId}-text`}
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="Ex.: ligou reclamando da cobrança; pediu desconto…"
+              placeholder="Ex.: ligou reclamando da cobrança; elogiou o suporte; pediu desconto…"
             />
           </div>
-          <div className="field">
-            <label htmlFor={`${titleId}-quando`}>Quando</label>
+
+          <div className="form-row-2">
+            <div className="field">
+              <label htmlFor={`${titleId}-quando`}>Quando</label>
+              <input
+                id={`${titleId}-quando`}
+                type="datetime-local"
+                value={quando}
+                max={toLocalInputValue(new Date())}
+                onChange={(e) => setQuando(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`${titleId}-status`}>Status inicial (opcional)</label>
+              <select
+                id={`${titleId}-status`}
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+              >
+                <option value="">— padrão (Novo) —</option>
+                {statusOptions.map((s) => (
+                  <option key={s.key} value={s.key}>{s.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <label className="check-row">
             <input
-              id={`${titleId}-quando`}
-              type="datetime-local"
-              value={quando}
-              max={toLocalInputValue(new Date())}
-              onChange={(e) => setQuando(e.target.value)}
+              type="checkbox"
+              checked={abordado}
+              onChange={(e) => setAbordado(e.target.checked)}
             />
-          </div>
+            <span>Já abordei esse cliente sobre o feedback</span>
+          </label>
+
           {error && <div className="flash err" style={{ marginBottom: 0 }}>{error}</div>}
         </div>
         <div className="modal-foot">
@@ -560,7 +690,7 @@ function AddEventModal({
             Cancelar
           </Button>
           <Button type="submit" disabled={saving || !text.trim()}>
-            {saving ? "Adicionando…" : "Adicionar"}
+            {saving ? "Registrando…" : "Registrar feedback"}
           </Button>
         </div>
       </form>
@@ -647,8 +777,14 @@ function TimelineRow({
   statusOptions: ConfigItem[];
 }) {
   const [busy, setBusy] = useState(false);
+  const v = typeVisual(t.type);
+  // Cor do ponto da trilha: prioriza o sentimento (neg/pos/neu); sem sentimento,
+  // herda a cor do TIPO via estilo inline, para o marco "saltar aos olhos".
   const dotCls =
     t.sentiment === "negativo" ? "neg" : t.sentiment === "positivo" ? "pos" : t.sentiment === "neutro" ? "neu" : "";
+  const dotStyle: React.CSSProperties = dotCls
+    ? {}
+    : { background: v.accent, boxShadow: `0 0 0 2px ${v.line}` };
   const editable = t.kind === "feedback_item" && !!t.id;
 
   async function run(patch: FeedbackPatch) {
@@ -664,11 +800,11 @@ function TimelineRow({
   return (
     <li
       className="tl-item reveal"
-      style={{ ["--i" as string]: Math.min(index, 12) } as React.CSSProperties}
+      style={{ paddingTop: 22, paddingBottom: 22, ["--i" as string]: Math.min(index, 12) } as React.CSSProperties}
     >
-      <span className={`tl-dot ${dotCls}`} aria-hidden />
-      <div className="tl-top">
-        {typeBadge(t.type)}
+      <span className={`tl-dot ${dotCls}`} style={dotStyle} aria-hidden />
+      <div className="tl-top" style={{ rowGap: 8 }}>
+        <TypeMark type={t.type} />
         {t.score !== null && t.score !== undefined && (
           <span className={`score-pill ${t.bucket ?? "none"}`}>{t.score}</span>
         )}
@@ -679,9 +815,16 @@ function TimelineRow({
           </Badge>
         )}
         {t.status === "ingested" && <Badge variant="neutral">do app</Badge>}
-        <span className="tl-when">{fmtDate(t.at)}</span>
+        <span className="tl-when" style={{ fontWeight: 500 }}>{fmtDate(t.at)}</span>
       </div>
-      {t.text && <div className="tl-text">“{feedbackText(t.text)}”</div>}
+      {t.text && (
+        <div
+          className="tl-text"
+          style={{ marginTop: 12, paddingLeft: 11, borderLeft: `2px solid ${v.line}` }}
+        >
+          “{feedbackText(t.text)}”
+        </div>
+      )}
       {editable && t.action_note && (
         <div className="tl-note">
           <span className="tl-note-tag">nota do time</span>
@@ -765,20 +908,30 @@ function subMarkerFromPartner(partner: Record<string, unknown> | null): SubMarke
 }
 
 function SubscriptionRow({ marker, index }: { marker: SubMarker; index: number }) {
+  // Marco de assinatura: cor de marca (indigo), distinta dos feedbacks.
+  const accent = "var(--indigo-light)";
+  const soft = "var(--promoter-soft)";
+  const line = "var(--promoter-line)";
   return (
     <li
       className="tl-item reveal"
-      style={{ ["--i" as string]: Math.min(index, 12) } as React.CSSProperties}
+      style={{ paddingTop: 22, paddingBottom: 22, ["--i" as string]: Math.min(index, 12) } as React.CSSProperties}
     >
-      <span className="tl-dot neu" aria-hidden />
-      <div className="tl-top">
-        <span className="badge type">
-          <RefreshCw size={11} strokeWidth={2.4} aria-hidden style={{ marginRight: 4, verticalAlign: "-1px" }} />
+      <span className="tl-dot" style={{ background: accent, boxShadow: `0 0 0 2px ${line}` }} aria-hidden />
+      <div className="tl-top" style={{ rowGap: 8 }}>
+        <span
+          className="inline-flex items-center gap-1.5 rounded-[7px] border px-2.5 py-1 text-[12px] font-semibold leading-none"
+          style={{ color: accent, background: soft, borderColor: line }}
+        >
+          <RefreshCw size={13} strokeWidth={2.2} aria-hidden />
           assinatura
         </span>
-        <span className="tl-when">{fmtDate(marker.at)}</span>
+        <span className="tl-when" style={{ fontWeight: 500 }}>{fmtDate(marker.at)}</span>
       </div>
-      <div className="tl-text" style={{ fontStyle: "normal" }}>
+      <div
+        className="tl-text"
+        style={{ fontStyle: "normal", marginTop: 12, paddingLeft: 11, borderLeft: `2px solid ${line}` }}
+      >
         {marker.label} {fmtDay(marker.at)}
       </div>
       <div className="tl-src">via API de Clientes</div>
@@ -1157,19 +1310,23 @@ export default function Contact360Page() {
   const [editingItem, setEditingItem] = useState<Timeline360Item | null>(null);
   const [addingEvent, setAddingEvent] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  // Status efetivos da org (defaults + custom) p/ o dropdown da timeline. Inicia
-  // no fallback; troca quando GET /api/config chega. Falha = segue no fallback.
+  // Vocabulários efetivos da org (defaults + custom) p/ os dropdowns da timeline e
+  // do modal de registro. Iniciam nos fallbacks; trocam quando GET /api/config chega.
+  // Falha = segue nos fallbacks.
   const [statusOptions, setStatusOptions] = useState<ConfigItem[]>(STATUS_OPTIONS_FALLBACK);
+  const [typeOptions, setTypeOptions] = useState<ConfigItem[]>(TYPE_OPTIONS_FALLBACK);
 
   useEffect(() => {
     let alive = true;
     configApi
       .get()
       .then((cfg) => {
-        if (alive && cfg.action_statuses?.length) setStatusOptions(cfg.action_statuses);
+        if (!alive) return;
+        if (cfg.action_statuses?.length) setStatusOptions(cfg.action_statuses);
+        if (cfg.feedback_types?.length) setTypeOptions(cfg.feedback_types);
       })
       .catch(() => {
-        /* sem config (API antiga / offline): mantém o fallback. */
+        /* sem config (API antiga / offline): mantém os fallbacks. */
       });
     return () => {
       alive = false;
@@ -1311,8 +1468,8 @@ export default function Contact360Page() {
         <div className="c360-body">
           {data.partner && <ProfileCard partner={data.partner} />}
 
-          {/* LINHA DO TEMPO — o coração da ficha (onde se registra e acompanha o
-             feedback). Vem logo após o perfil e com destaque visual próprio:
+          {/* ACOMPANHAMENTO — o coração da ficha (onde se registra e acompanha o
+             cliente). Vem logo após o perfil e com destaque visual próprio:
              filete indigo à esquerda + título maior. */}
           <Reveal
             delay={0.1}
@@ -1321,8 +1478,10 @@ export default function Contact360Page() {
           >
             <div className="card-head">
               <div>
-                <div className="section-title" style={{ fontSize: 18 }}>Linha do tempo do cliente</div>
-                <div className="card-head-sub">todas as fontes de feedback, unificadas e editáveis — registre aqui cada nota e abordagem</div>
+                <div className="section-title" style={{ fontSize: 18 }}>Acompanhamento do cliente</div>
+                <div className="card-head-sub">
+                  Tudo que aconteceu com este cliente — registre aqui cada conversa, nota e próximo passo.
+                </div>
               </div>
               <div className="tl-head-actions">
                 <span className="exit-counter">
@@ -1330,7 +1489,7 @@ export default function Contact360Page() {
                 </span>
                 {id && (
                   <Button type="button" onClick={() => setAddingEvent(true)}>
-                    <Plus size={15} strokeWidth={2.4} aria-hidden /> adicionar à linha do tempo
+                    <Plus size={15} strokeWidth={2.4} aria-hidden /> Adicionar evento
                   </Button>
                 )}
               </div>
@@ -1346,7 +1505,7 @@ export default function Contact360Page() {
                 {id && (
                   <div className="empty-cta">
                     <Button type="button" size="sm" onClick={() => setAddingEvent(true)}>
-                      <Plus size={14} strokeWidth={2.2} aria-hidden /> adicionar à linha do tempo
+                      <Plus size={14} strokeWidth={2.2} aria-hidden /> Adicionar evento
                     </Button>
                   </div>
                 )}
@@ -1407,8 +1566,10 @@ export default function Contact360Page() {
       )}
 
       {addingEvent && id && (
-        <AddEventModal
+        <RegistrarFeedbackModal
           contactId={id}
+          typeOptions={typeOptions}
+          statusOptions={statusOptions}
           onClose={() => setAddingEvent(false)}
           onAdded={onEventAdded}
         />
