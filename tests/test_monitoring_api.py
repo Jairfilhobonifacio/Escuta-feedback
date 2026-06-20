@@ -311,6 +311,59 @@ async def test_clientes_filtros_por_tipo_de_cliente(client, org, session):
     assert {c["nome"] for c in r} == {"Ativo Promo", "Ativo Neutro"}
 
 
+@pytest.mark.asyncio
+async def test_clientes_filtro_abordado(client, org, session):
+    """Filtro `abordado=sim|nao` com a MESMA semântica de /central/overview:
+    abordado = selo 'contatado' OU abordagens não-vazias OU FeedbackItem.abordado==True."""
+    # Abordado via selo 'contatado'.
+    por_selo = Contact(
+        organization_id=org.id, phone="5531900000001", name="PorSelo", opt_in=True,
+        profile_data={"selos": ["contatado"]},
+    )
+    # Abordado via histórico de abordagens.
+    por_abordagem = Contact(
+        organization_id=org.id, phone="5531900000002", name="PorAbordagem", opt_in=True,
+        profile_data={"abordagens": [{"canal": "whatsapp"}]},
+    )
+    # Abordado via FeedbackItem.abordado==True (sem selo/abordagem).
+    por_feedback = Contact(
+        organization_id=org.id, phone="5531900000003", name="PorFeedback", opt_in=True,
+        profile_data={},
+    )
+    # NÃO abordado: tem feedback, mas abordado=False; sem selo/abordagem.
+    nao_abordado = Contact(
+        organization_id=org.id, phone="5531900000004", name="NaoAbordado", opt_in=True,
+        profile_data={},
+    )
+    session.add_all([por_selo, por_abordagem, por_feedback, nao_abordado])
+    await session.flush()
+    session.add_all(
+        [
+            FeedbackItem(
+                organization_id=org.id, contact_id=por_feedback.id, source="manual", type="churn",
+                external_id="ab1", text="x", abordado=True, occurred_at=_dt(2026, 6, 5),
+            ),
+            FeedbackItem(
+                organization_id=org.id, contact_id=nao_abordado.id, source="manual", type="churn",
+                external_id="ab2", text="y", abordado=False, occurred_at=_dt(2026, 6, 5),
+            ),
+        ]
+    )
+    await session.commit()
+
+    # abordado=sim: os 3 abordados (selo, abordagem, feedback.abordado).
+    r = (await client.get("/api/clientes", params={"abordado": "sim"})).json()
+    assert {c["nome"] for c in r} == {"PorSelo", "PorAbordagem", "PorFeedback"}
+
+    # abordado=nao: o complemento (só o NaoAbordado).
+    r = (await client.get("/api/clientes", params={"abordado": "nao"})).json()
+    assert {c["nome"] for c in r} == {"NaoAbordado"}
+
+    # sem o param: todos os 4 (comportamento idêntico ao anterior).
+    r = (await client.get("/api/clientes")).json()
+    assert {c["nome"] for c in r} == {"PorSelo", "PorAbordagem", "PorFeedback", "NaoAbordado"}
+
+
 # --- /api/feedbacks ----------------------------------------------------------
 
 

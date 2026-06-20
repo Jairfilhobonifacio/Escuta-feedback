@@ -326,6 +326,9 @@ export interface ClienteFiltro {
   nps_bucket?: NpsBucket;
   health_band?: HealthBand;
   tem_whatsapp?: TemWhatsappFiltro;
+  /** Já abordados (selo 'contatado'): 'sim' = só abordados, 'nao' = só não-abordados.
+      A UI mantém o refino client-side como fallback caso o backend ignore o param. */
+  abordado?: TemWhatsappFiltro;
 }
 
 /** Filtros opcionais de GET /api/feedbacks (query string; ausentes = sem filtro).
@@ -1300,6 +1303,12 @@ export const clientes = {
   /** Lista de clientes contatáveis. Filtros opcionais viram query string. */
   list: (filtro?: ClienteFiltro) =>
     api.get<Cliente[]>(`/api/clientes${buildQuery(filtro)}`),
+};
+
+/** Helpers tipados de CONTATOS (a ficha 360 é buscada direto via `api.get`). */
+export const contacts = {
+  /** Exclui um contato e TODO o seu histórico (irreversível). Backend responde 204. */
+  remove: (id: string) => api.del(`/api/contacts/${id}`),
 };
 
 /** Helpers tipados de FEEDBACKS (feed + contagens + filtros + ações do Board). */

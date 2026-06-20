@@ -499,6 +499,42 @@ async def create_contact(body: ContactIn, session: AsyncSession = Depends(get_se
     return {"id": str(contact.id), "phone": contact.phone, "name": contact.name, "opt_in": contact.opt_in}
 
 
+@router.delete("/contacts/{contact_id}", status_code=204)
+async def delete_contact(
+    contact_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Apaga um contato da org + TUDO ligado a ele, em ordem de FK segura.
+
+    Mesma ordem do script scripts/_limpar_dados_teste.py (respeita as FKs):
+        feedback_items -> survey_responses -> messages -> contact
+    (Message.survey_response_id é ON DELETE SET NULL; por isso apagamos as messages
+    do contato por contact_id logo em seguida — nenhuma fica órfã.) Escopado por
+    organização: 404 se o contato não existir nesta org. 204 sem corpo no sucesso.
+    """
+    from sqlalchemy import delete
+
+    org = await _get_org(session)
+    try:
+        cid = uuid.UUID(contact_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="id inválido")
+
+    contact = (
+        await session.execute(
+            select(Contact).where(Contact.id == cid, Contact.organization_id == org.id)
+        )
+    ).scalar_one_or_none()
+    if contact is None:
+        raise HTTPException(status_code=404, detail="contato não encontrado")
+
+    await session.execute(delete(FeedbackItem).where(FeedbackItem.contact_id == cid))
+    await session.execute(delete(SurveyResponse).where(SurveyResponse.contact_id == cid))
+    await session.execute(delete(Message).where(Message.contact_id == cid))
+    await session.execute(delete(Contact).where(Contact.id == cid))
+    await session.commit()
+
+
 # --- Visão 360 (Mega Central de Dados) ---------------------------------------
 
 
@@ -977,6 +1013,7 @@ async def list_clientes(
     nps_bucket: str | None = None,
     health_band: str | None = None,
     tem_whatsapp: str | None = None,
+    abordado: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
     """Lista rica de clientes contatáveis da org (Contact + snapshot partner +
@@ -991,10 +1028,36 @@ async def list_clientes(
     - nps_bucket: 'promotor' (score>=9) | 'neutro' (7-8) | 'detrator' (<=6) — POST-FILTER
       sobre nps_score (None nunca casa).
     - health_band: 'healthy' | 'watch' | 'at_risk' — POST-FILTER sobre o health.band.
-    - tem_whatsapp: 'sim' | 'nao' — POST-FILTER usando o validador (celular BR válido)."""
+    - tem_whatsapp: 'sim' | 'nao' — POST-FILTER usando o validador (celular BR válido).
+    - abordado: 'sim' | 'nao' — POST-FILTER com a MESMA semântica de /central/overview:
+      "abordado" = selo 'contatado' OU profile_data["abordagens"] não-vazio OU algum
+      FeedbackItem.abordado==True do contato. 'nao' é o complemento."""
+    from app.api.campanha import (  # import local: campanha importa admin (evita ciclo)
+        SELO_CONTATADO,
+        _abordagens_do_contato,
+        _selos_do_contato,
+    )
     from app.domain.cs.health import compute_health
 
     org = await _get_org(session)
+
+    # Conjunto de contatos com algum FeedbackItem.abordado==True (org-scoped). Espelha
+    # `contatos_abordados_fb` de /central/overview, para o filtro `abordado` não divergir.
+    contatos_abordados_fb: set[Any] = set()
+    if abordado in ("sim", "nao"):
+        contatos_abordados_fb = set(
+            (
+                await session.execute(
+                    select(FeedbackItem.contact_id).where(
+                        FeedbackItem.organization_id == org.id,
+                        FeedbackItem.contact_id.is_not(None),
+                        FeedbackItem.abordado.is_(True),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
 
     # Agregação por contato em feedback_items: total + último occurred/created + tipo.
     last_at = func.max(func.coalesce(FeedbackItem.occurred_at, FeedbackItem.created_at))
@@ -1095,6 +1158,16 @@ async def list_clientes(
         if tem_whatsapp in ("sim", "nao"):
             quer_wa = tem_whatsapp == "sim"
             if tem_whatsapp_fn(c.phone) != quer_wa:
+                continue
+        if abordado in ("sim", "nao"):
+            # MESMA semântica de /central/overview (_abordado): selo 'contatado' OU
+            # abordagens não-vazias OU algum FeedbackItem.abordado==True do contato.
+            foi_abordado = (
+                SELO_CONTATADO in set(_selos_do_contato(c))
+                or bool(_abordagens_do_contato(c))
+                or c.id in contatos_abordados_fb
+            )
+            if foi_abordado != (abordado == "sim"):
                 continue
         out.append(
             {

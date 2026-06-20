@@ -434,10 +434,15 @@ export default function ClientesPage() {
       // Defensivo: a API antiga pode não devolver `selos`; garante array em runtime
       // (vários pontos fazem c.selos.includes/.map sem checar).
       const norm = (xs: Cliente[]) => xs.map((c) => ({ ...c, selos: c.selos ?? [] }));
+      // Chip "Abordados" passa abordado=sim server-side (contrato ?abordado=sim|nao).
+      // Mantemos o refino client-side (`foiAbordado` em `visiveis`) como fallback
+      // gracioso: se o backend ignorar o param, a lista ainda fica certa.
+      const abordadoParam = canalChip === "abordados" ? "sim" : undefined;
       // Lista visível (com o alcance atual) + base completa p/ os contadores dos
-      // chips, em paralelo. A base ignora tem_whatsapp de propósito.
+      // chips, em paralelo. A base ignora tem_whatsapp/abordado de propósito (conta
+      // o universo inteiro do recorte de busca/avançados).
       const [lista, baseLista] = await Promise.all([
-        clientesApi.list({ ...comum, tem_whatsapp: temWa || undefined }),
+        clientesApi.list({ ...comum, tem_whatsapp: temWa || undefined, abordado: abordadoParam }),
         clientesApi.list(comum),
       ]);
       setClientes(norm(lista));
@@ -448,7 +453,7 @@ export default function ClientesPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, perfil, planType, estado, npsBucket, healthBand, temWa]);
+  }, [search, perfil, planType, estado, npsBucket, healthBand, temWa, canalChip]);
 
   // Catálogo de selos — carregado uma vez (best-effort; sem ele os chips usam cor default).
   const loadCatalogo = useCallback(async () => {

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Check,
@@ -12,6 +12,8 @@ import {
   Search,
   Pencil,
   Plus,
+  RefreshCw,
+  Trash2,
   X,
   Users,
   WifiOff,
@@ -26,6 +28,7 @@ import {
   api,
   campanha as campanhaApi,
   config as configApi,
+  contacts as contactsApi,
   feedbacks as feedbacksApi,
   whatsapp as whatsappApi,
   type ConfigItem,
@@ -221,9 +224,68 @@ function Skeleton360() {
   );
 }
 
+/** Só a data (sem hora) para campos de assinatura (currentPeriodEnd/respondedAt). */
+function fmtDay(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("pt-BR", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+  });
+}
+
+/** Forma do snapshot partner.subscription (espelha `_build_partner_profile` do sync;
+    são EXATAMENTE estes campos — não há data de assinatura nem valor no snapshot). */
+interface PartnerSub {
+  state?: string | null;
+  active?: boolean | null;
+  cancelled?: boolean | null;
+  complimentary?: boolean | null;
+  planType?: string | null;
+  cancellationReason?: string | null;
+  daysAsSubscriber?: number | null;
+  currentPeriodEnd?: string | null;
+}
+
+/** Rótulo legível do estado da assinatura (espelha ESTADO_META da tela Clientes). */
+const SUB_STATE_LABEL: Record<string, string> = {
+  active_paying: "Pagante ativo",
+  past_due: "Em atraso",
+  paid_without_access: "Pago sem acesso",
+  complimentary: "Cortesia",
+  cancelled: "Cancelado",
+};
+
+/** Plano mensal/anual → ciclo de cobrança legível (o snapshot só traz planType). */
+function cicloLabel(planType?: string | null): string | null {
+  if (!planType) return null;
+  const k = planType.toLowerCase();
+  if (k.includes("anu")) return "Anual";
+  if (k.includes("mens")) return "Mensal";
+  return planType;
+}
+
+/** Badge de status da assinatura (verde pagante/cortesia, vermelho cancelado/atraso). */
+function subStatusBadge(sub: PartnerSub) {
+  const state = sub.state ?? null;
+  const label = state ? SUB_STATE_LABEL[state] ?? state.replace(/_/g, " ") : null;
+  if (!label) return null;
+  const variant: "positive" | "negative" | "neutral" =
+    sub.active ? "positive" : sub.cancelled || state === "past_due" ? "negative" : "neutral";
+  return (
+    <div>
+      <span className="lbl">Status da assinatura</span>
+      <span className="val">
+        <Badge variant={variant}>{label}</Badge>
+        {sub.complimentary && <Badge variant="neutral" style={{ marginLeft: 6 }}>cortesia</Badge>}
+      </span>
+    </div>
+  );
+}
+
 function ProfileCard({ partner }: { partner: Record<string, unknown> }) {
-  const sub = (partner.subscription as Record<string, unknown> | undefined) ?? {};
+  const sub = ((partner.subscription as PartnerSub | undefined) ?? {}) as PartnerSub;
   const nps = (partner.nps as Record<string, unknown> | undefined) ?? {};
+  // currentPeriodEnd é a renovação (assinatura ativa) ou o fim do acesso (cancelada).
+  const renovaLabel = sub.active && !sub.cancelled ? "Renova em" : "Fim do ciclo";
   return (
     <Reveal delay={0.04} className="card c360-profile">
       <div className="card-head">
@@ -232,8 +294,9 @@ function ProfileCard({ partner }: { partner: Record<string, unknown> }) {
       </div>
       <div className="c360-grid">
         {field("Perfil", partner.profile)}
-        {field("Estado", sub.state)}
-        {field("Plano", sub.planType)}
+        {subStatusBadge(sub)}
+        {field("Ciclo", cicloLabel(sub.planType))}
+        {sub.currentPeriodEnd != null && field(renovaLabel, fmtDay(sub.currentPeriodEnd))}
         {field("Dias de casa", sub.daysAsSubscriber)}
         {field("NPS (nota)", nps.score)}
         {field("Motivo de churn", sub.cancellationReason)}
@@ -503,6 +566,69 @@ function AddEventModal({
   );
 }
 
+// ===== Modal de CONFIRMAÇÃO de exclusão do contato ===========================
+
+function DeleteContactModal({
+  contactId,
+  contactName,
+  onClose,
+  onDeleted,
+}: {
+  contactId: string;
+  contactName: string;
+  onClose: () => void;
+  /** Chamado após DELETE 204 — o pai redireciona para /clientes. */
+  onDeleted: () => void;
+}) {
+  const titleId = useId();
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function confirmar() {
+    if (deleting) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await contactsApi.remove(contactId);
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <Modal title="Excluir contato" onClose={onClose} labelledById={titleId}>
+      <div className="modal-body">
+        <p style={{ margin: 0, lineHeight: 1.5 }}>
+          Tem certeza que quer excluir <b>{contactName}</b>? Isso apaga o contato e
+          <b> todo o histórico</b> (feedbacks, conversas, abordagens, selos) —{" "}
+          <b>não dá para desfazer</b>.
+        </p>
+        {error && <div className="flash err" style={{ marginTop: 14, marginBottom: 0 }}>{error}</div>}
+      </div>
+      <div className="modal-foot">
+        <Button type="button" variant="ghost" onClick={onClose} disabled={deleting}>
+          Cancelar
+        </Button>
+        <button
+          type="button"
+          className="btn"
+          onClick={confirmar}
+          disabled={deleting}
+          style={{
+            background: "var(--detractor, #dc2626)",
+            color: "#fff",
+            borderColor: "transparent",
+          }}
+        >
+          {deleting ? "Excluindo\u{2026}" : "Excluir definitivamente"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 // ===== Linha da timeline (editável quando é feedback_item) ===================
 
 function TimelineRow({
@@ -606,6 +732,53 @@ function TimelineRow({
           </button>
         </div>
       )}
+    </li>
+  );
+}
+
+// ===== Marco de assinatura na timeline (renovação / fim de ciclo) ============
+// Derivado de partner.subscription.currentPeriodEnd (data REAL do snapshot). Não é
+// um feedback: não é editável e tem um visual próprio (ícone de ciclo, sem "via").
+
+interface SubMarker {
+  at: string;
+  label: string;
+  /** É futuro (renovação a vir) ou passado (ciclo encerrado)? muda o texto. */
+  future: boolean;
+}
+
+/** Extrai o marco de assinatura do snapshot partner, ou null se não houver data. */
+function subMarkerFromPartner(partner: Record<string, unknown> | null): SubMarker | null {
+  if (!partner) return null;
+  const sub = (partner.subscription as PartnerSub | undefined) ?? {};
+  const end = sub.currentPeriodEnd;
+  if (!end) return null;
+  const future = new Date(end).getTime() > Date.now();
+  const ativa = !!sub.active && !sub.cancelled;
+  const label = ativa
+    ? future ? "Renova em" : "Renovação venceu em"
+    : future ? "Acesso até" : "Ciclo encerrado em";
+  return { at: end, label, future };
+}
+
+function SubscriptionRow({ marker, index }: { marker: SubMarker; index: number }) {
+  return (
+    <li
+      className="tl-item reveal"
+      style={{ ["--i" as string]: Math.min(index, 12) } as React.CSSProperties}
+    >
+      <span className="tl-dot neu" aria-hidden />
+      <div className="tl-top">
+        <span className="badge type">
+          <RefreshCw size={11} strokeWidth={2.4} aria-hidden style={{ marginRight: 4, verticalAlign: "-1px" }} />
+          assinatura
+        </span>
+        <span className="tl-when">{fmtDate(marker.at)}</span>
+      </div>
+      <div className="tl-text" style={{ fontStyle: "normal" }}>
+        {marker.label} {fmtDay(marker.at)}
+      </div>
+      <div className="tl-src">via API de Clientes</div>
     </li>
   );
 }
@@ -913,11 +1086,13 @@ function ConversaWhatsapp({ contactId }: { contactId: string }) {
 
 export default function Contact360Page() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const id = params?.id;
   const [data, setData] = useState<Contact360 | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<Timeline360Item | null>(null);
   const [addingEvent, setAddingEvent] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   // Status efetivos da org (defaults + custom) p/ o dropdown da timeline. Inicia
   // no fallback; troca quando GET /api/config chega. Falha = segue no fallback.
   const [statusOptions, setStatusOptions] = useState<ConfigItem[]>(STATUS_OPTIONS_FALLBACK);
@@ -1001,6 +1176,9 @@ export default function Contact360Page() {
 
   const selos = data?.contact.selos ?? [];
   const semWhatsapp = data?.contact.sem_whatsapp ?? false;
+  // Marco de assinatura (renovação / fim de ciclo) derivado do snapshot partner —
+  // entra na timeline na posição cronológica certa (timeline vem desc do backend).
+  const subMarker = subMarkerFromPartner(data?.partner ?? null);
 
   return (
     <div>
@@ -1039,7 +1217,22 @@ export default function Contact360Page() {
             </div>
           </div>
         </div>
-        {data && <span className="refresh-note">{data.summary.total} interações</span>}
+        {data && (
+          <div className="inline-flex items-center gap-3">
+            <span className="refresh-note">{data.summary.total} interações</span>
+            {id && (
+              <button
+                type="button"
+                onClick={() => setDeleting(true)}
+                title="Excluir contato e todo o histórico"
+                aria-label="Excluir contato"
+                className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-transparent px-2 py-1 text-[12.5px] font-medium text-[var(--text-faint)] transition-colors hover:border-[var(--charcoal-2)] hover:text-[var(--detractor,#dc2626)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--detractor,#dc2626)]"
+              >
+                <Trash2 size={14} aria-hidden /> Excluir
+              </button>
+            )}
+          </div>
+        )}
       </Reveal>
 
       {err && (
@@ -1075,7 +1268,7 @@ export default function Contact360Page() {
                 )}
               </div>
             </div>
-            {data.timeline.length === 0 ? (
+            {data.timeline.length === 0 && !subMarker ? (
               <div className="empty">
                 <div className="empty-illu">{EMPTY_TIMELINE}</div>
                 <div className="empty-title">Sem feedback ainda</div>
@@ -1093,16 +1286,41 @@ export default function Contact360Page() {
               </div>
             ) : (
               <ul className="tl">
-                {data.timeline.map((t, i) => (
-                  <TimelineRow
-                    key={t.id ?? i}
-                    t={t}
-                    index={i}
-                    onPatch={patchItem}
-                    onEdit={setEditingItem}
-                    statusOptions={statusOptions}
-                  />
-                ))}
+                {/* Funde feedbacks + marco de assinatura por data (desc, mais recente primeiro). */}
+                {(() => {
+                  type Entry =
+                    | { kind: "fb"; key: string; ts: number; item: Timeline360Item }
+                    | { kind: "sub"; key: string; ts: number; marker: SubMarker };
+                  const entries: Entry[] = data.timeline.map((t, i) => ({
+                    kind: "fb",
+                    key: t.id ?? `fb-${i}`,
+                    ts: t.at ? new Date(t.at).getTime() : 0,
+                    item: t,
+                  }));
+                  if (subMarker) {
+                    entries.push({
+                      kind: "sub",
+                      key: "sub-marker",
+                      ts: new Date(subMarker.at).getTime(),
+                      marker: subMarker,
+                    });
+                  }
+                  entries.sort((a, b) => b.ts - a.ts);
+                  return entries.map((e, i) =>
+                    e.kind === "sub" ? (
+                      <SubscriptionRow key={e.key} marker={e.marker} index={i} />
+                    ) : (
+                      <TimelineRow
+                        key={e.key}
+                        t={e.item}
+                        index={i}
+                        onPatch={patchItem}
+                        onEdit={setEditingItem}
+                        statusOptions={statusOptions}
+                      />
+                    ),
+                  );
+                })()}
               </ul>
             )}
           </Reveal>
@@ -1122,6 +1340,15 @@ export default function Contact360Page() {
           contactId={id}
           onClose={() => setAddingEvent(false)}
           onAdded={onEventAdded}
+        />
+      )}
+
+      {deleting && id && (
+        <DeleteContactModal
+          contactId={id}
+          contactName={data?.contact.name || data?.contact.phone || "este contato"}
+          onClose={() => setDeleting(false)}
+          onDeleted={() => router.push("/clientes")}
         />
       )}
     </div>

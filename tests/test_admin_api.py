@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -22,10 +23,13 @@ from app.api.admin import get_messaging  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.core import Contact, Organization  # noqa: E402
+from app.models.feedback import FeedbackItem  # noqa: E402
 from app.models.survey import (  # noqa: E402
     STATUS_AWAITING_REASON,
     STATUS_CLOSED,
     STATUS_SENT,
+    Message,
+    Survey,
     SurveyResponse,
     SurveyRun,
 )
@@ -201,6 +205,57 @@ async def test_crud_survey_e_contato(client, org):
     # listas
     assert len((await client.get("/api/surveys")).json()) == 1
     assert len((await client.get("/api/contacts")).json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_contact_remove_contato_e_ligados(client, org, session):
+    """DELETE /api/contacts/{id} -> 204; apaga o contato + feedback_items/
+    survey_responses/messages ligados; some do GET. 404 p/ id inexistente."""
+    contact = Contact(organization_id=org.id, phone="5531900000099", name="Alvo", opt_in=True, profile_data={})
+    session.add(contact)
+    await session.flush()
+
+    # Liga registros das 3 tabelas (feedback_items / survey_responses / messages).
+    survey = Survey(organization_id=org.id, name="NPS", type="nps", questions=[])
+    session.add(survey)
+    await session.flush()
+    run = SurveyRun(survey_id=survey.id, organization_id=org.id)
+    session.add(run)
+    await session.flush()
+    session.add_all(
+        [
+            FeedbackItem(
+                organization_id=org.id, contact_id=contact.id, source="manual", type="churn",
+                external_id="d1", text="apagar", occurred_at=datetime(2026, 6, 5, 12, tzinfo=timezone.utc),
+            ),
+            SurveyResponse(
+                survey_run_id=run.id, contact_id=contact.id, organization_id=org.id,
+                status=STATUS_CLOSED, answer_score=3,
+            ),
+            Message(
+                organization_id=org.id, contact_id=contact.id, direction="inbound", body="oi",
+            ),
+        ]
+    )
+    await session.commit()
+
+    # Aparece antes de apagar.
+    assert any(c["id"] == str(contact.id) for c in (await client.get("/api/contacts")).json())
+
+    # DELETE -> 204 sem corpo.
+    r = await client.delete(f"/api/contacts/{contact.id}")
+    assert r.status_code == 204, r.text
+    assert r.content == b""
+
+    # Sumiu do GET e os ligados foram apagados.
+    assert not any(c["id"] == str(contact.id) for c in (await client.get("/api/contacts")).json())
+    assert (await session.execute(select(FeedbackItem).where(FeedbackItem.contact_id == contact.id))).first() is None
+    assert (await session.execute(select(SurveyResponse).where(SurveyResponse.contact_id == contact.id))).first() is None
+    assert (await session.execute(select(Message).where(Message.contact_id == contact.id))).first() is None
+
+    # id inexistente (uuid válido, fora da org) -> 404.
+    r = await client.delete(f"/api/contacts/{uuid.uuid4()}")
+    assert r.status_code == 404
 
 
 @pytest.mark.asyncio
