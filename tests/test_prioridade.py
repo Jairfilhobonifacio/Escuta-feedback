@@ -215,3 +215,19 @@ def test_volume_ref_custom_muda_saturacao():
         weights={"volume": 0.5, "revenue": 0.3, "gravity": 0.2, "volume_ref": 5},
     )
     assert out["breakdown"]["volume_score"] == 1.0
+
+
+def test_priority_index_clampa_em_100_com_pesos_somando_mais_que_um():
+    # Pesos são configuráveis por env; se somarem > 1.0 o raw passa de 1.0 e o
+    # índice estouraria 100 sem clamp. Aqui todos os componentes = 1.0 e os pesos
+    # somam 3.0 → raw=3.0 → índice DEVE ser clampado em 100.0 (não 300.0).
+    out = priority_index(
+        distinct_customers=10, paying_weighted=10.0, neg_count=5, item_count=5,
+        weights={"volume": 1.0, "revenue": 1.0, "gravity": 1.0, "volume_ref": 10},
+    )
+    assert out["breakdown"]["volume_score"] == 1.0
+    assert out["breakdown"]["revenue_score"] == 1.0
+    assert out["breakdown"]["gravity_score"] == 1.0
+    assert out["priority_index"] <= 100.0
+    assert out["priority_index"] == 100.0
+    assert out["priority_band"] == "alta"

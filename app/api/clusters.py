@@ -251,6 +251,7 @@ async def _customer_counts_by_cluster(
             .join(Contact, Contact.id == FeedbackItem.contact_id)
             .where(
                 FeedbackItem.organization_id == org_id,
+                Contact.organization_id == org_id,
                 FeedbackItem.cluster_id.in_(cluster_ids),
                 FeedbackItem.contact_id.is_not(None),
             )

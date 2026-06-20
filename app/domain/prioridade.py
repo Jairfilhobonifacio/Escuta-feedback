@@ -132,12 +132,12 @@ def priority_index(
     neg = max(0, int(neg_count or 0))
     paying = max(0.0, float(paying_weighted or 0.0))
 
-    volume_score = min(1.0, distinct / volume_ref) if volume_ref else 0.0
+    volume_score = min(1.0, distinct / volume_ref)
     revenue_score = min(1.0, paying / max(distinct, 1))
     gravity_score = (neg / items) if items else 0.0
 
     raw = w_volume * volume_score + w_revenue * revenue_score + w_gravity * gravity_score
-    index = round(100.0 * raw, 1)
+    index = round(min(100.0, max(0.0, 100.0 * raw)), 1)
 
     if index >= _BAND_ALTA_MIN:
         band = "alta"

@@ -1213,7 +1213,9 @@ tbody tr:hover { background: var(--ink-700); }
   font-family: var(--font-display);
   margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.3px;
   color: var(--text);
-  text-transform: capitalize; text-wrap: balance;
+  /* sem text-transform: o rótulo vem do clustering em sentence case natural;
+     capitalize deixava preposições maiúsculas ("Cancelamento De Serviços"). */
+  text-wrap: balance;
   overflow-wrap: anywhere;
 }
 
@@ -1315,6 +1317,13 @@ tbody tr:hover { background: var(--ink-700); }
   background: var(--detractor-soft); border-color: var(--detractor-line);
 }
 .tema-card.is-pain .cluster-pain-value { color: var(--detractor); }
+
+/* índice de dor do card de TEMA (aba "Por tema") usa o MESMO layout do Mapa de
+   dores (.pain-index): número mono ancorado no fim da barra. Aqui só ajustamos o
+   respiro até a barra de sentimento e tingimos a trilha/valor quando é "dor". */
+.tema-card .pain-index { margin: 14px 0 16px; }
+.tema-card.is-pain .pain-index-fill { background: linear-gradient(90deg, var(--detractor), #eb9090); }
+.tema-card.is-pain .pain-index-val { color: var(--detractor); }
 
 .cluster-themes { margin-top: 14px; }
 
@@ -2862,6 +2871,17 @@ tbody tr:hover td { color: var(--text); }
 
 .pain-card { padding: 18px 22px; }
 
+/* hierarquia visual (SÓ visual — a régua/índice é do backend): a dor de
+   prioridade ALTA respira mais e ganha leve presença; média/baixa condensam. */
+.pain-card.pri-alta { padding: 22px 24px; }
+.pain-card.pri-alta .tema-name { font-size: 17px; }
+.pain-card.pri-media,
+.pain-card.pri-baixa { padding: 15px 20px; }
+.pain-card.pri-media .tema-name,
+.pain-card.pri-baixa .tema-name { font-size: 15px; }
+.pain-card.pri-media .pain-meta,
+.pain-card.pri-baixa .pain-meta { margin: 10px 0 13px; }
+
 /* faixa de acento à esquerda pela banda (mesma linguagem do .is-pain) */
 .pain-card.pri-alta  { border-color: var(--detractor-line); box-shadow: inset 4px 0 0 var(--detractor), var(--shadow); }
 .pain-card.pri-media { border-color: var(--passive-line);   box-shadow: inset 4px 0 0 var(--gold-fill),  var(--shadow); }
@@ -3134,4 +3154,50 @@ tbody tr:hover td { color: var(--text); }
 @media (max-width: 560px) {
   .loop-celebrate > img { width: 60px; }
 }
+
+/* ----- gaveta auxiliar do roadmap (Puxar dos temas / Nova melhoria) -----
+   O Kanban é o herói e ocupa a largura toda. Os painéis auxiliares ficam
+   recolhidos numa gaveta abaixo do board: toggles discretos que, ao abrir,
+   mostram um painel com largura contida e SCROLL próprio — nunca esticam a
+   página nem competem com o board. */
+.imp-drawer { margin-top: var(--rhythm); }
+.imp-drawer-tabs {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  padding-top: 16px; border-top: 1px dashed var(--charcoal-2);
+}
+.imp-drawer-toggle {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 9px 15px; border-radius: 999px; cursor: pointer;
+  font-family: inherit; font-size: 13px; font-weight: 600; color: var(--text-dim);
+  background: var(--ink); border: 1px solid var(--charcoal);
+  transition-property: background-color, border-color, color;
+  transition-duration: 150ms; transition-timing-function: var(--ease);
+}
+.imp-drawer-toggle:hover { border-color: var(--text-faint); color: var(--text); }
+.imp-drawer-toggle.is-open {
+  background: var(--indigo-glow); border-color: var(--indigo); color: var(--indigo-light);
+}
+.imp-drawer-toggle:focus-visible { outline: none; box-shadow: var(--ring-indigo); }
+.imp-drawer-caret {
+  display: inline-grid; place-items: center; width: 16px;
+  font-family: var(--mono); font-size: 16px; font-weight: 700; line-height: 1;
+}
+.imp-drawer-count {
+  font-size: 11.5px; font-weight: 600; color: var(--text-faint);
+  background: var(--ink-800); border: 1px solid var(--charcoal);
+  border-radius: 999px; min-width: 20px; height: 20px; padding: 0 6px;
+  display: inline-grid; place-items: center;
+}
+
+/* painel aberto: largura contida (não espalha pela tela toda) */
+.imp-drawer-panel { margin-top: 14px; max-width: 560px; }
+
+/* "Puxar dos temas": a lista de dores pode ser longa → rola dentro do card,
+   numa altura limitada, em vez de empurrar a página. */
+.imp-drawer-pull .imp-list {
+  max-height: 460px; overflow-y: auto;
+  /* anula o "sangrar" negativo do inline-style p/ a barra de rolagem caber */
+  margin: 4px 0 0 !important;
+}
+.imp-drawer-pull .imp-list .survey-item { padding-left: 4px; padding-right: 4px; }
 

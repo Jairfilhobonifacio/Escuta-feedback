@@ -640,6 +640,11 @@ export default function MelhoriasPage() {
   // id do cluster sendo puxado (trava só o botão daquela dor)
   const [pullingId, setPullingId] = useState<string | null>(null);
 
+  // O Kanban é o herói (como no mockup). Os dois painéis auxiliares — "Puxar
+  // dos temas" (pode ter dezenas de dores) e "Nova melhoria" — vivem recolhidos
+  // numa gaveta abaixo do board, com scroll próprio, e não esticam a página.
+  const [drawer, setDrawer] = useState<"pull" | "new" | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -721,6 +726,7 @@ export default function MelhoriasPage() {
       setEffort("");
       setTargetDate("");
       setStage("ideia");
+      setDrawer(null); // some a gaveta: o card novo já aparece no board
       await load();
     } catch (e) {
       setFlash({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
@@ -817,18 +823,28 @@ export default function MelhoriasPage() {
           <h1 className="page-title">Melhorias</h1>
           <div className="page-sub">Você pediu, a gente fez.</div>
         </div>
-        {!loading && !err && hasItems && (
-          <span className="refresh-note">
-            {fmtNum.format(items.length)} {items.length === 1 ? "melhoria" : "melhorias"} ·{" "}
-            {fmtNum.format(totalDemand)} pedidos
-            {openLoops > 0 && (
-              <>
-                {" · "}
-                <b>{fmtNum.format(openLoops)}</b> {openLoops === 1 ? "loop aberto" : "loops abertos"}
-              </>
-            )}
-          </span>
-        )}
+        <div className="page-head-actions">
+          {!loading && !err && hasItems && (
+            <span className="refresh-note">
+              {fmtNum.format(items.length)} {items.length === 1 ? "melhoria" : "melhorias"} ·{" "}
+              {fmtNum.format(totalDemand)} pedidos
+              {openLoops > 0 && (
+                <>
+                  {" · "}
+                  <b>{fmtNum.format(openLoops)}</b> {openLoops === 1 ? "loop aberto" : "loops abertos"}
+                </>
+              )}
+            </span>
+          )}
+          {!err && (
+            <Button
+              onClick={() => setDrawer((d) => (d === "new" ? null : "new"))}
+              aria-expanded={drawer === "new"}
+            >
+              + Nova melhoria
+            </Button>
+          )}
+        </div>
       </div>
 
       {loopDone && (
@@ -852,135 +868,156 @@ export default function MelhoriasPage() {
 
       {flash && <div className={`flash ${flash.kind}`}>{flash.msg}</div>}
 
-      <div className="two-col imp-layout">
-        {/* ---- esquerda: o Kanban "Você pediu, a gente fez" ---- */}
-        <div>
-          {err && (
-            <div className="flash err">
-              Não consegui carregar o roadmap ({err}). A API está rodando em{" "}
-              <span className="mono">localhost:8000</span>?
-            </div>
-          )}
+      {/* ---- o Kanban "Você pediu, a gente fez": full-width, é o herói ---- */}
+      {err && (
+        <div className="flash err">
+          Não consegui carregar o roadmap ({err}). A API está rodando em{" "}
+          <span className="mono">localhost:8000</span>?
+        </div>
+      )}
 
-          {!err && loading && !hasItems ? (
-            <div className="board-cols imp-board" aria-busy="true">
+      {!err && loading && !hasItems ? (
+        <div className="board-cols imp-board" aria-busy="true">
+          {COLUMNS.map((col) => (
+            <section className="board-col imp-col" key={col.key} aria-label={col.label}>
+              <div className="board-col-head">
+                <span className="board-col-name">{col.label}</span>
+              </div>
+              <div className="board-col-body">
+                <KanbanCardSkeleton />
+                <KanbanCardSkeleton />
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : !err && !hasItems ? (
+        <div className="card">
+          <div className="empty">
+            <div className="empty-illu-scene">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/illustrations/empty-melhorias.svg" alt="" width={200} height={150} />
+            </div>
+            <div className="empty-title">Nenhuma melhoria ainda</div>
+            <p className="empty-sub">
+              Vire uma dor recorrente em melhoria e feche o loop. Use{" "}
+              <b>Puxar dos temas</b> abaixo, ou crie uma na mão.
+            </p>
+          </div>
+        </div>
+      ) : (
+        !err && (
+          <Reveal>
+            <div className="board-cols imp-board">
               {COLUMNS.map((col) => (
-                <section className="board-col imp-col" key={col.key} aria-label={col.label}>
-                  <div className="board-col-head">
-                    <span className="board-col-name">{col.label}</span>
-                  </div>
-                  <div className="board-col-body">
-                    <KanbanCardSkeleton />
-                    <KanbanCardSkeleton />
-                  </div>
-                </section>
+                <KanbanColumn
+                  key={col.key}
+                  col={col}
+                  items={byColumn[col.key] ?? []}
+                  busyId={busyId}
+                  onChangeStage={changeStage}
+                  onCloseLoop={openCloseLoop}
+                />
               ))}
             </div>
-          ) : !err && !hasItems ? (
-            <div className="card">
-              <div className="empty">
-                <div className="empty-illu-scene">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/illustrations/empty-melhorias.svg" alt="" width={200} height={150} />
-                </div>
-                <div className="empty-title">Nenhuma melhoria ainda</div>
-                <p className="empty-sub">
-                  Vire uma dor recorrente em melhoria e feche o loop. Use{" "}
-                  <b>Puxar dos temas</b> ao lado, ou crie uma na mão.
+          </Reveal>
+        )
+      )}
+
+      {/* ---- gaveta auxiliar abaixo do board: recolhível, não estica a página ----
+          "Puxar dos temas" pode listar dezenas de dores → fica atrás de um toggle,
+          com scroll próprio. "Nova melhoria" abre pelo botão do cabeçalho. */}
+      {!err && (
+        <div className="imp-drawer">
+          <div className="imp-drawer-tabs">
+            <button
+              type="button"
+              className={`imp-drawer-toggle ${drawer === "pull" ? "is-open" : ""}`}
+              onClick={() => setDrawer((d) => (d === "pull" ? null : "pull"))}
+              aria-expanded={drawer === "pull"}
+            >
+              <span className="imp-drawer-caret" aria-hidden>
+                {drawer === "pull" ? "–" : "+"}
+              </span>
+              Puxar dos temas
+              {pains.length > 0 && <span className="imp-drawer-count mono">{pains.length}</span>}
+            </button>
+          </div>
+
+          {drawer === "pull" && (
+            <div className="imp-drawer-panel imp-drawer-pull">
+              <PullFromThemes
+                pains={pains}
+                loading={painsLoading}
+                error={painsErr}
+                busyId={pullingId}
+                onPull={pullFromCluster}
+              />
+            </div>
+          )}
+
+          {drawer === "new" && (
+            <div className="imp-drawer-panel">
+              <div className="card" style={{ padding: "18px 20px" }}>
+                <h2 className="section-title">Nova melhoria</h2>
+                <p className="section-sub">
+                  Registre algo que você vai construir. Vincule a dores depois pela aba Mapeamento.
                 </p>
+                <form onSubmit={createImprovement}>
+                  <div className="field">
+                    <label>Título</label>
+                    <Input
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="ex.: Reduzir tempo de carregamento do simulado"
+                      required
+                      maxLength={200}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Descrição (opcional)</label>
+                    <textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder="O que vai mudar e por quê"
+                      maxLength={4000}
+                    />
+                  </div>
+                  <div className="form-row-2">
+                    <div className="field">
+                      <label>Esforço</label>
+                      <select value={effort} onChange={(e) => setEffort(e.target.value as ImprovementEffort | "")}>
+                        <option value="">—</option>
+                        {EFFORTS.map((ef) => (
+                          <option key={ef.key} value={ef.key}>
+                            {ef.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field">
+                      <label>Data-alvo</label>
+                      <Input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label>Estágio inicial</label>
+                    <select value={stage} onChange={(e) => setStage(e.target.value as ImprovementStatus)}>
+                      {STAGES.map((s) => (
+                        <option key={s.key} value={s.key}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <Button type="submit" disabled={saving || !title.trim()}>
+                    {saving ? "Criando…" : "Criar melhoria"}
+                  </Button>
+                </form>
               </div>
             </div>
-          ) : (
-            !err && (
-              <Reveal>
-                <div className="board-cols imp-board">
-                  {COLUMNS.map((col) => (
-                    <KanbanColumn
-                      key={col.key}
-                      col={col}
-                      items={byColumn[col.key] ?? []}
-                      busyId={busyId}
-                      onChangeStage={changeStage}
-                      onCloseLoop={openCloseLoop}
-                    />
-                  ))}
-                </div>
-              </Reveal>
-            )
           )}
         </div>
-
-        {/* ---- direita: puxar dos temas + criar melhoria ---- */}
-        <div className="imp-side">
-          <Reveal>
-            <PullFromThemes
-              pains={pains}
-              loading={painsLoading}
-              error={painsErr}
-              busyId={pullingId}
-              onPull={pullFromCluster}
-            />
-          </Reveal>
-
-          <Reveal className="card" style={{ padding: "18px 20px" }} delay={0.05}>
-            <h2 className="section-title">Nova melhoria</h2>
-          <p className="section-sub">
-            Registre algo que você vai construir. Vincule a dores depois pela aba Mapeamento.
-          </p>
-          <form onSubmit={createImprovement}>
-            <div className="field">
-              <label>Título</label>
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="ex.: Reduzir tempo de carregamento do simulado"
-                required
-                maxLength={200}
-              />
-            </div>
-            <div className="field">
-              <label>Descrição (opcional)</label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="O que vai mudar e por quê"
-                maxLength={4000}
-              />
-            </div>
-            <div className="form-row-2">
-              <div className="field">
-                <label>Esforço</label>
-                <select value={effort} onChange={(e) => setEffort(e.target.value as ImprovementEffort | "")}>
-                  <option value="">—</option>
-                  {EFFORTS.map((ef) => (
-                    <option key={ef.key} value={ef.key}>
-                      {ef.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Data-alvo</label>
-                <Input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
-              </div>
-            </div>
-            <div className="field">
-              <label>Estágio inicial</label>
-              <select value={stage} onChange={(e) => setStage(e.target.value as ImprovementStatus)}>
-                {STAGES.map((s) => (
-                  <option key={s.key} value={s.key}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <Button type="submit" disabled={saving || !title.trim()}>
-              {saving ? "Criando…" : "Criar melhoria"}
-            </Button>
-          </form>
-          </Reveal>
-        </div>
-      </div>
+      )}
 
       {loopFor && (
         <CloseLoopModal

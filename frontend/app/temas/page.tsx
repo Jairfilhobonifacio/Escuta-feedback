@@ -212,20 +212,30 @@ function TemaCard({ tema, rank, maxCount }: { tema: Tema; rank: number; maxCount
         <span className="tema-volume-fill" style={{ width: `${barPct}%` }} />
       </div>
 
-      {/* Índice de dor (volume × negatividade) — mesma régua do "Mapa de dores".
-          Sem sentimento classificado, mostra o volume como medida provisória. */}
+      {/* Índice de dor (volume × negatividade) — mesma régua e MESMO layout do
+          "Mapa de dores": rótulo + trilho proporcional + número (mono) ANCORADO
+          no fim da barra (barra + valor = um bloco só). O trilho mostra a fração
+          negativa, que é o que puxa o índice. Sem sentimento classificado, vira
+          "volume (dor pendente)". */}
       {painPending ? (
         <div
-          className="cluster-pain"
+          className="pain-index"
           aria-label={`Sentimento pendente — ${tema.count} menções deste tema`}
         >
-          <span className="cluster-pain-label">Volume (dor pendente)</span>
-          <span className="cluster-pain-value">{fmtNum.format(tema.count)}</span>
+          <span className="pain-index-lbl">Volume (dor pendente)</span>
+          <span className="pain-index-track" aria-hidden />
+          <span className="pain-index-val">{fmtNum.format(tema.count)}</span>
         </div>
       ) : (
-        <div className="cluster-pain" aria-label={`Índice de dor ${pain.toFixed(1)}`}>
-          <span className="cluster-pain-label">Índice de dor</span>
-          <span className="cluster-pain-value">{pain.toFixed(1)}</span>
+        <div className="pain-index" aria-label={`Índice de dor ${pain.toFixed(1)}`}>
+          <span className="pain-index-lbl">Índice de dor</span>
+          <span className="pain-index-track">
+            <span
+              className="pain-index-fill"
+              style={{ width: `${Math.max(2, Math.round(share * 100))}%` }}
+            />
+          </span>
+          <span className="pain-index-val">{pain.toFixed(1)}</span>
         </div>
       )}
 
