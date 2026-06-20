@@ -1,15 +1,52 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Reveal, Stagger, StaggerItem } from "@/components/Motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { api, type Contact, type DispatchResult, type Survey } from "@/lib/api";
+import {
+  api,
+  clientes as clientesApi,
+  type Cliente,
+  type ClienteFiltro,
+  type DispatchResult,
+  type EstadoAssinatura,
+  type NpsBucket,
+  type Survey,
+} from "@/lib/api";
 
 // emoji em .ts/.tsx só via \u{...} (o bundler do Next no Windows corrompe literais).
 const EMOJI_ROCKET = "\u{1F680}"; // 🚀 — disparo (mensagem de sucesso)
 const EMOJI_HANDS = "\u{1F64C}"; // 🙌 — follow-up padrão (texto enviado ao cliente)
+
+/** Estados de assinatura legíveis (mesmos rótulos da tela Clientes). */
+const ESTADO_OPCOES: { value: EstadoAssinatura; label: string }[] = [
+  { value: "active_paying", label: "Pagante ativo" },
+  { value: "past_due", label: "Em atraso" },
+  { value: "paid_without_access", label: "Pago sem acesso" },
+  { value: "complimentary", label: "Cortesia" },
+  { value: "cancelled", label: "Cancelado" },
+];
+
+const NPS_OPCOES: { value: NpsBucket; label: string }[] = [
+  { value: "promotor", label: "Promotores" },
+  { value: "neutro", label: "Neutros" },
+  { value: "detrator", label: "Detratores" },
+];
+
+/** Data ISO -> "há X dias" curto (para o "último disparo" no card). */
+function relativo(iso: string | null): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const dias = Math.floor((Date.now() - t) / 86_400_000);
+  if (dias <= 0) return "hoje";
+  if (dias === 1) return "ontem";
+  if (dias < 30) return `há ${dias} dias`;
+  const meses = Math.floor(dias / 30);
+  return meses === 1 ? "há 1 mês" : `há ${meses} meses`;
+}
 
 /** Placeholder de um item de pesquisa enquanto a lista carrega (nome + perguntas
    + ação), espelhando a silhueta do .survey-item real com shimmer. */
@@ -26,7 +63,6 @@ function SurveyRowSkeleton() {
 
 export default function PesquisasPage() {
   const [surveys, setSurveys] = useState<Survey[]>([]);
-  const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
 
@@ -36,20 +72,23 @@ export default function PesquisasPage() {
   const [reasonQ, setReasonQ] = useState(`Massa! ${EMOJI_HANDS} Por quê? (pode mandar em texto)`);
   const [saving, setSaving] = useState(false);
 
-  // disparo
+  // disparo — seleção de público a partir de /api/clientes (lista rica + filtros)
   const [picking, setPicking] = useState<string | null>(null); // survey id com painel aberto
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [dispatching, setDispatching] = useState(false);
 
-  const load = useCallback(async () => {
+  // público: filtros do picker (reusa GET /api/clientes)
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [loadingClientes, setLoadingClientes] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [estado, setEstado] = useState<EstadoAssinatura | "">("");
+  const [npsBucket, setNpsBucket] = useState<NpsBucket | "">("");
+
+  const loadSurveys = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, c] = await Promise.all([
-        api.get<Survey[]>("/api/surveys"),
-        api.get<Contact[]>("/api/contacts"),
-      ]);
+      const s = await api.get<Survey[]>("/api/surveys");
       setSurveys(s);
-      setContacts(c);
     } catch (e) {
       setFlash({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -58,8 +97,35 @@ export default function PesquisasPage() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    loadSurveys();
+  }, [loadSurveys]);
+
+  // Carrega o público (clientes) com os filtros atuais — só enquanto um picker
+  // está aberto. Debounce na busca; estado/nps refazem na hora.
+  useEffect(() => {
+    if (picking === null) return;
+    let cancel = false;
+    setLoadingClientes(true);
+    const filtro: ClienteFiltro = {
+      search: busca.trim() || undefined,
+      estado: estado || undefined,
+      nps_bucket: npsBucket || undefined,
+    };
+    const t = setTimeout(async () => {
+      try {
+        const rows = await clientesApi.list(filtro);
+        if (!cancel) setClientes(rows);
+      } catch (e) {
+        if (!cancel) setFlash({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
+      } finally {
+        if (!cancel) setLoadingClientes(false);
+      }
+    }, 250);
+    return () => {
+      cancel = true;
+      clearTimeout(t);
+    };
+  }, [picking, busca, estado, npsBucket]);
 
   async function createSurvey(e: React.FormEvent) {
     e.preventDefault();
@@ -73,7 +139,7 @@ export default function PesquisasPage() {
       });
       setFlash({ kind: "ok", msg: `Pesquisa "${name}" criada.` });
       setName("");
-      await load();
+      await loadSurveys();
     } catch (e) {
       setFlash({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -81,11 +147,32 @@ export default function PesquisasPage() {
     }
   }
 
+  function abrirPicker(surveyId: string) {
+    setPicking(surveyId);
+    setPicked(new Set());
+    setBusca("");
+    setEstado("");
+    setNpsBucket("");
+    setClientes([]);
+  }
+
   function togglePick(id: string) {
     setPicked((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  }
+
+  /** Marca/desmarca todos os clientes atualmente filtrados (visíveis na lista). */
+  function toggleTodosFiltrados() {
+    const ids = clientes.map((c) => c.id);
+    const todosMarcados = ids.length > 0 && ids.every((id) => picked.has(id));
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (todosMarcados) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
       return next;
     });
   }
@@ -105,6 +192,8 @@ export default function PesquisasPage() {
       });
       setPicking(null);
       setPicked(new Set());
+      // recarrega para o acompanhamento (contagens) refletir o novo disparo
+      await loadSurveys();
     } catch (e) {
       setFlash({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -113,6 +202,11 @@ export default function PesquisasPage() {
   }
 
   const ativas = surveys.filter((s) => s.status === "active").length;
+
+  // estado de "selecionar todos" para o rótulo do botão
+  const idsFiltrados = useMemo(() => clientes.map((c) => c.id), [clientes]);
+  const todosFiltradosMarcados =
+    idsFiltrados.length > 0 && idsFiltrados.every((id) => picked.has(id));
 
   return (
     <div>
@@ -184,28 +278,114 @@ export default function PesquisasPage() {
                     <br />
                     <b>Follow-up:</b> {s.reason_prompt}
                   </div>
+
+                  {/* Acompanhamento — enviados / responderam / pendentes (badges
+                      reusam .tab-count; estilo de pílula via utilitários inline).
+                      Só aparece quando a pesquisa já disparou (sent_count > 0). */}
+                  {s.sent_count > 0 && (
+                    <div className="flex flex-wrap items-center gap-2" style={{ marginTop: 12 }}>
+                      <span
+                        className="tab-count inline-flex items-center gap-1 rounded-full border border-[var(--charcoal-2)] bg-[var(--ink-800)] px-2.5 py-0.5 text-[12px] font-semibold text-[var(--text-dim)]"
+                        title="Contatos para quem a pesquisa foi enviada"
+                      >
+                        {s.sent_count} enviada{s.sent_count === 1 ? "" : "s"}
+                      </span>
+                      <span
+                        className="tab-count inline-flex items-center gap-1 rounded-full border border-[var(--promoter-line)] bg-[var(--promoter-soft)] px-2.5 py-0.5 text-[12px] font-semibold text-[var(--indigo-light)]"
+                        title="Quantos já deram nota"
+                      >
+                        {s.answered_count} respondeu{s.answered_count === 1 ? "" : "ram"}
+                      </span>
+                      <span
+                        className="tab-count inline-flex items-center gap-1 rounded-full border border-[var(--charcoal-2)] bg-[var(--ink-800)] px-2.5 py-0.5 text-[12px] font-semibold text-[var(--text-dim)]"
+                        title="Enviados que ainda não responderam"
+                      >
+                        {s.pending_count} pendente{s.pending_count === 1 ? "" : "s"}
+                      </span>
+                      {relativo(s.last_run_at) && (
+                        <span className="faint" style={{ fontSize: 12 }}>
+                          último disparo {relativo(s.last_run_at)}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                   <div style={{ marginTop: 12 }}>
                     {picking === s.id ? (
                       <div className="contact-picker">
                         <div className="section-sub" style={{ marginBottom: 8 }}>
-                          Enviar para ({picked.size} selecionado{picked.size === 1 ? "" : "s"}):
+                          Escolha o público ({picked.size} selecionado{picked.size === 1 ? "" : "s"}):
                         </div>
-                        {contacts.length === 0 && (
+
+                        {/* Busca + filtros-chave (reusam ClienteFiltro de /api/clientes) */}
+                        <div className="toolbar" style={{ marginBottom: 10 }}>
+                          <Input
+                            value={busca}
+                            onChange={(e) => setBusca(e.target.value)}
+                            placeholder={"Buscar por nome ou telefone\u{2026}"}
+                            aria-label="Buscar clientes por nome ou telefone"
+                          />
+                          <select
+                            value={estado}
+                            onChange={(e) => setEstado(e.target.value as EstadoAssinatura | "")}
+                            aria-label="Filtrar por estado da assinatura"
+                          >
+                            <option value="">Toda assinatura</option>
+                            {ESTADO_OPCOES.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={npsBucket}
+                            onChange={(e) => setNpsBucket(e.target.value as NpsBucket | "")}
+                            aria-label="Filtrar por faixa de NPS"
+                          >
+                            <option value="">Todo NPS</option>
+                            {NPS_OPCOES.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-[12px] font-semibold uppercase tracking-[0.04em] text-[var(--indigo-light)] hover:underline disabled:opacity-50"
+                            onClick={toggleTodosFiltrados}
+                            disabled={loadingClientes || idsFiltrados.length === 0}
+                          >
+                            {todosFiltradosMarcados ? "Limpar seleção" : "Selecionar todos os filtrados"}
+                            {idsFiltrados.length > 0 ? ` (${idsFiltrados.length})` : ""}
+                          </button>
+                          {loadingClientes && <span className="faint" style={{ fontSize: 12 }}>{"Carregando\u{2026}"}</span>}
+                        </div>
+
+                        {!loadingClientes && clientes.length === 0 && (
                           <div className="faint" style={{ fontSize: 13 }}>
-                            Nenhum contato — adicione na aba Contatos.
+                            Nenhum cliente para esses filtros.
                           </div>
                         )}
-                        {contacts.map((c) => (
-                          <label key={c.id} className="pick-row">
-                            <input
-                              type="checkbox"
-                              checked={picked.has(c.id)}
-                              onChange={() => togglePick(c.id)}
-                            />
-                            <span>{c.name || "sem nome"}</span>
-                            <span className="mono dim">{c.phone}</span>
-                          </label>
-                        ))}
+
+                        <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                          {clientes.map((c) => (
+                            <label key={c.id} className="pick-row">
+                              <input
+                                type="checkbox"
+                                checked={picked.has(c.id)}
+                                onChange={() => togglePick(c.id)}
+                              />
+                              <span>{c.nome || "sem nome"}</span>
+                              <span className="mono dim">{c.whatsapp}</span>
+                              {!c.tem_whatsapp && (
+                                <Badge variant="outline" className="ml-auto">só e-mail</Badge>
+                              )}
+                              {!c.opt_in && (
+                                <Badge variant="neutral" className={c.tem_whatsapp ? "ml-auto" : ""}>sem opt-in</Badge>
+                              )}
+                            </label>
+                          ))}
+                        </div>
+
                         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                           <Button
                             variant="accent"
@@ -224,10 +404,7 @@ export default function PesquisasPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => {
-                          setPicking(s.id);
-                          setPicked(new Set());
-                        }}
+                        onClick={() => abrirPicker(s.id)}
                       >
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                           <path d="m22 2-7 20-4-9-9-4Z" />

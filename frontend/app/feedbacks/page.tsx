@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
+import { ListChecks } from "lucide-react";
 import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -17,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import {
   api,
   campanha as campanhaApi,
+  feedbacks as feedbacksApi,
   type Cliente,
   type EstadoAssinatura,
   type Feedback,
@@ -754,6 +756,16 @@ function FeedbackCard({
   const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [abordadoSaving, setAbordadoSaving] = useState(false);
+  // Criar tarefa direto do card (espelha o /board): ocupado + flash transitório.
+  const [tarefaSaving, setTarefaSaving] = useState(false);
+  const [tarefaFlash, setTarefaFlash] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  // O flash da tarefa some sozinho (mesma cadência do "✓ salvo").
+  useEffect(() => {
+    if (!tarefaFlash) return;
+    const t = setTimeout(() => setTarefaFlash(null), 2200);
+    return () => clearTimeout(t);
+  }, [tarefaFlash]);
 
   // Mantém o input de nota em sincronia quando o card é reconciliado de fora
   // (ex.: edição via modal) sem pisar no que o usuário está digitando.
@@ -801,6 +813,30 @@ function FeedbackCard({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setAbordadoSaving(false);
+    }
+  }
+
+  async function criarTarefa() {
+    // Guarda de contato: sem contato não há a quem vincular a tarefa.
+    if (!fb.contato_id) {
+      setTarefaFlash({ ok: false, msg: "Sem contato — não dá para criar tarefa." });
+      return;
+    }
+    setTarefaSaving(true);
+    setTarefaFlash(null);
+    // Título derivado, igual ao /board: trecho do texto (60 chars) ou o tipo.
+    const trecho = (fb.text ?? "").trim().slice(0, 60);
+    try {
+      await feedbacksApi.criarTarefa({
+        contact_id: fb.contato_id,
+        feedback_id: fb.id,
+        title: `Abordar feedback: ${trecho || fb.type}`,
+      });
+      setTarefaFlash({ ok: true, msg: "Tarefa criada." });
+    } catch (e) {
+      setTarefaFlash({ ok: false, msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTarefaSaving(false);
     }
   }
 
@@ -886,6 +922,16 @@ function FeedbackCard({
           </button>
           <button
             type="button"
+            className="toggle-abordado"
+            onClick={criarTarefa}
+            disabled={tarefaSaving || !fb.contato_id}
+            title={fb.contato_id ? "Criar tarefa a partir deste feedback" : "Sem contato vinculado"}
+          >
+            <ListChecks size={14} aria-hidden style={{ verticalAlign: "-2px" }} />{" "}
+            {tarefaSaving ? "…" : "tarefa"}
+          </button>
+          <button
+            type="button"
             className={`toggle-abordado ${fb.abordado ? "on" : ""}`}
             onClick={toggleAbordado}
             disabled={abordadoSaving}
@@ -917,6 +963,13 @@ function FeedbackCard({
         {saving && <span className="dim" style={{ fontSize: 12 }}>salvando…</span>}
         {justSaved && !saving && <span className="act-saved">✓ salvo</span>}
         {error && <span className="badge detractor" title={error}>erro ao salvar</span>}
+        {tarefaFlash && (
+          tarefaFlash.ok ? (
+            <span className="act-saved">✓ {tarefaFlash.msg}</span>
+          ) : (
+            <span className="badge detractor" title={tarefaFlash.msg}>{tarefaFlash.msg}</span>
+          )
+        )}
       </div>
     </div>
   );

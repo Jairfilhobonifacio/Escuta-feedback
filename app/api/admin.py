@@ -36,7 +36,15 @@ from app.models.cluster import FeedbackCluster
 from app.models.core import Contact, Organization
 from app.models.feedback import FeedbackItem
 from app.models.improvement import Improvement
-from app.models.survey import Message, Survey, SurveyResponse, SurveyRun
+from app.models.survey import (
+    STATUS_AWAITING_REASON,
+    STATUS_CLOSED,
+    STATUS_INGESTED,
+    Message,
+    Survey,
+    SurveyResponse,
+    SurveyRun,
+)
 from app.services.llm import GroqLLM
 from app.services.waha import WAHAService
 
@@ -290,9 +298,10 @@ class SurveyIn(BaseModel):
     trigger_event: str | None = Field(default=None, max_length=120)
 
 
-def _survey_out(s: Survey) -> dict[str, Any]:
+def _survey_out(s: Survey, stats: dict[str, Any] | None = None) -> dict[str, Any]:
     nps_q = next((q.get("text") for q in (s.questions or []) if q.get("kind") == "nps"), None)
     reason_q = next((q.get("text") for q in (s.questions or []) if q.get("kind") == "open"), None)
+    st = stats or {}
     return {
         "id": str(s.id),
         "name": s.name,
@@ -301,6 +310,13 @@ def _survey_out(s: Survey) -> dict[str, Any]:
         "nps_question": nps_q,
         "reason_prompt": reason_q,
         "trigger_event": s.trigger_event,
+        # Acompanhamento (0 quando a survey nunca disparou). answered = deu nota
+        # (status awaiting_reason/closed/ingested OU answer_score preenchido);
+        # pending = enviados - respondidos.
+        "sent_count": int(st.get("sent_count", 0)),
+        "answered_count": int(st.get("answered_count", 0)),
+        "pending_count": int(st.get("pending_count", 0)),
+        "last_run_at": st.get("last_run_at"),
         "created_at": s.created_at.isoformat() if s.created_at else None,
     }
 
@@ -317,7 +333,61 @@ async def list_surveys(session: AsyncSession = Depends(get_session)) -> list[dic
         .scalars()
         .all()
     )
-    return [_survey_out(s) for s in rows]
+
+    # Acompanhamento por pesquisa numa única passada agregada sobre as respostas
+    # (sent/answered) juntando o run pai para chegar na survey. "Respondido" = deu
+    # nota (status já avançou de 'sent'/'expired' OU tem answer_score). pending é
+    # derivado (sent - answered) para não depender de um status específico.
+    answered_pred = or_(
+        SurveyResponse.answer_score.is_not(None),
+        SurveyResponse.status.in_(
+            [STATUS_AWAITING_REASON, STATUS_CLOSED, STATUS_INGESTED]
+        ),
+    )
+    stat_rows = (
+        await session.execute(
+            select(
+                SurveyRun.survey_id,
+                func.count(SurveyResponse.id).label("sent"),
+                func.sum(case((answered_pred, 1), else_=0)).label("answered"),
+            )
+            .select_from(SurveyResponse)
+            .join(SurveyRun, SurveyRun.id == SurveyResponse.survey_run_id)
+            .where(SurveyResponse.organization_id == org.id)
+            .group_by(SurveyRun.survey_id)
+        )
+    ).all()
+    # last_run_at por survey (independe de haver respostas).
+    run_rows = (
+        await session.execute(
+            select(SurveyRun.survey_id, func.max(SurveyRun.created_at))
+            .where(SurveyRun.organization_id == org.id)
+            .group_by(SurveyRun.survey_id)
+        )
+    ).all()
+    last_run: dict[Any, Any] = {sid: ts for sid, ts in run_rows}
+    stats: dict[Any, dict[str, Any]] = {}
+    for sid, sent, answered in stat_rows:
+        sent_i = int(sent or 0)
+        ans_i = int(answered or 0)
+        ts = last_run.get(sid)
+        stats[sid] = {
+            "sent_count": sent_i,
+            "answered_count": ans_i,
+            "pending_count": max(sent_i - ans_i, 0),
+            "last_run_at": ts.isoformat() if ts is not None else None,
+        }
+    # Surveys com run mas sem nenhuma resposta ainda (last_run_at só).
+    for sid, ts in last_run.items():
+        if sid not in stats:
+            stats[sid] = {
+                "sent_count": 0,
+                "answered_count": 0,
+                "pending_count": 0,
+                "last_run_at": ts.isoformat() if ts is not None else None,
+            }
+
+    return [_survey_out(s, stats.get(s.id)) for s in rows]
 
 
 @router.post("/surveys", status_code=201)

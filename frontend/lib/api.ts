@@ -121,6 +121,15 @@ export interface Survey {
   status: string;
   nps_question: string | null;
   reason_prompt: string | null;
+  /** Acompanhamento — quantos receberam (todas as respostas registradas da survey).
+      0 quando nunca disparou. Exige API com o backend novo de contagens. */
+  sent_count: number;
+  /** Quantos já deram nota (status avançou de 'sent'/'expired' ou tem score). */
+  answered_count: number;
+  /** Enviados que ainda não responderam (sent_count - answered_count). */
+  pending_count: number;
+  /** Último disparo (ISO) ou null se a survey nunca rodou. */
+  last_run_at: string | null;
   created_at: string | null;
 }
 
