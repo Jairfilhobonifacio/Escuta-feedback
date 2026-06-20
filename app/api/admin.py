@@ -639,6 +639,139 @@ SENTIMENTS: tuple[str, ...] = ("positivo", "neutro", "negativo")
 # Tipos que derivam nps_bucket a partir do score (0-10).
 _BUCKET_TYPES: tuple[str, ...] = ("nps",)
 
+# Origens (FeedbackItem.source) que o sistema já produz hoje — viram os DEFAULTS de
+# origem configuráveis (o dono pode ADICIONAR as dele). NÃO restringem a escrita de
+# `source` (FeedbackCreateIn.source aceita qualquer string ≤120): servem ao /api/config
+# como vocabulário-base para a UI montar filtros/labels. São os literais REAIS gravados
+# por: registro manual ('manual'); coleta WhatsApp (from_survey/resolver/message_handler);
+# eventos do app (events.py: 'bizzu_app'/'bizzu_support'/'bizzu_platform'/'in_app') e o
+# snapshot da API de Clientes (partner_map: 'bizzu_app'/'bizzu_billing'); respostas de
+# formulário ('forms', campanha.py).
+DEFAULT_ORIGINS: tuple[str, ...] = (
+    "manual", "whatsapp", "bizzu_app", "bizzu_billing", "bizzu_support",
+    "bizzu_platform", "in_app", "forms",
+)
+
+# --- Vocabulários CONFIGURÁVEIS por org (status/tipos/origens) -----------------
+# Os 3 vocabulários acima (ACTION_STATUSES/FEEDBACK_TYPES/DEFAULT_ORIGINS) são os
+# DEFAULTS imutáveis. Uma org pode ADICIONAR itens customizados em Organization.settings
+# (sem migration — mesmo padrão copia-edita-reatribui dos boards). A lista EFETIVA usada
+# nas validações e no board de triagem é sempre `defaults ∪ custom`; os defaults NUNCA
+# somem (preservam os dados existentes). Item de status = {key,label,cor}; tipos/origens
+# = {key,label}. Sem custom => comportamento IDÊNTICO ao anterior (zero regressão).
+
+_COR_STATUS_DEFAULT = "#6366f1"  # token --indigo do painel (mesmo de boards._COR_DEFAULT).
+
+# Chaves dos settings onde vivem os customizados (só os ADICIONAIS, nunca os defaults).
+_SETTINGS_KEY_STATUSES = "action_statuses"
+_SETTINGS_KEY_TYPES = "feedback_types"
+_SETTINGS_KEY_ORIGINS = "feedback_origins"
+
+
+def _label_humano(key: str) -> str:
+    """Label default amigável a partir da key (snake_case -> 'Snake case')."""
+    return key.replace("_", " ").strip().capitalize() or key
+
+
+def _status_default_items() -> list[dict[str, str]]:
+    """Os ACTION_STATUSES como itens {key,label,cor} — base imutável dos status."""
+    return [
+        {"key": s, "label": _label_humano(s), "cor": _COR_STATUS_DEFAULT}
+        for s in ACTION_STATUSES
+    ]
+
+
+def _type_default_items() -> list[dict[str, str]]:
+    """Os FEEDBACK_TYPES como itens {key,label} — base imutável dos tipos."""
+    return [{"key": t, "label": _label_humano(t)} for t in FEEDBACK_TYPES]
+
+
+def _origin_default_items() -> list[dict[str, str]]:
+    """As DEFAULT_ORIGINS como itens {key,label} — base imutável das origens."""
+    return [{"key": o, "label": _label_humano(o)} for o in DEFAULT_ORIGINS]
+
+
+def _normalize_custom_status(raw: Any) -> dict[str, str] | None:
+    """Normaliza um status custom {key,label,cor?} dos settings; None se inválido."""
+    if not isinstance(raw, dict):
+        return None
+    key = str(raw.get("key") or "").strip()
+    if not key:
+        return None
+    label = str(raw.get("label") or "").strip() or _label_humano(key)
+    cor = str(raw.get("cor") or "").strip() or _COR_STATUS_DEFAULT
+    return {"key": key, "label": label, "cor": cor}
+
+
+def _normalize_custom_kv(raw: Any) -> dict[str, str] | None:
+    """Normaliza um item custom {key,label?} (tipos/origens) dos settings; None se inválido."""
+    if not isinstance(raw, dict):
+        return None
+    key = str(raw.get("key") or "").strip()
+    if not key:
+        return None
+    label = str(raw.get("label") or "").strip() or _label_humano(key)
+    return {"key": key, "label": label}
+
+
+def _custom_items(org: Organization, settings_key: str, *, is_status: bool) -> list[dict[str, str]]:
+    """Itens customizados da org sob `settings_key` (normalizados, dedup por key). [] se nenhum."""
+    raw = (org.settings or {}).get(settings_key)
+    out: list[dict[str, str]] = []
+    vistos: set[str] = set()
+    if isinstance(raw, list):
+        for it in raw:
+            norm = _normalize_custom_status(it) if is_status else _normalize_custom_kv(it)
+            if norm is None or norm["key"] in vistos:
+                continue
+            vistos.add(norm["key"])
+            out.append(norm)
+    return out
+
+
+def _merge_defaults_custom(
+    defaults: list[dict[str, str]], custom: list[dict[str, str]]
+) -> list[dict[str, str]]:
+    """defaults ∪ custom (defaults primeiro). Um custom cuja key colide com um default é
+    descartado (o default vence — defaults nunca somem nem são sobrescritos)."""
+    default_keys = {d["key"] for d in defaults}
+    out = list(defaults)
+    for c in custom:
+        if c["key"] not in default_keys:
+            out.append(c)
+    return out
+
+
+def effective_statuses(org: Organization) -> list[dict[str, str]]:
+    """Lista EFETIVA de status da org = defaults {key,label,cor} ∪ custom da org."""
+    return _merge_defaults_custom(
+        _status_default_items(), _custom_items(org, _SETTINGS_KEY_STATUSES, is_status=True)
+    )
+
+
+def effective_types(org: Organization) -> list[dict[str, str]]:
+    """Lista EFETIVA de tipos de feedback da org = defaults {key,label} ∪ custom da org."""
+    return _merge_defaults_custom(
+        _type_default_items(), _custom_items(org, _SETTINGS_KEY_TYPES, is_status=False)
+    )
+
+
+def effective_origins(org: Organization) -> list[dict[str, str]]:
+    """Lista EFETIVA de origens da org = defaults {key,label} ∪ custom da org."""
+    return _merge_defaults_custom(
+        _origin_default_items(), _custom_items(org, _SETTINGS_KEY_ORIGINS, is_status=False)
+    )
+
+
+def effective_status_keys(org: Organization) -> list[str]:
+    """Só as keys da lista efetiva de status (ordem: defaults, depois custom)."""
+    return [it["key"] for it in effective_statuses(org)]
+
+
+def effective_type_keys(org: Organization) -> set[str]:
+    """Conjunto de keys da lista efetiva de tipos (para validação O(1))."""
+    return {it["key"] for it in effective_types(org)}
+
 # Score de urgência: faixa fixa 0-100. A fórmula soma sinais independentes e satura
 # (clamp) em 100, para o feed priorizar sozinho o que mais pede ação. Pesos abaixo.
 URGENCIA_MIN = 0
@@ -1130,10 +1263,11 @@ async def create_feedback(
 
     if body.contato_id is None and not body.contato_whatsapp:
         raise HTTPException(status_code=422, detail="informe contato_id OU contato_whatsapp")
-    if body.type not in FEEDBACK_TYPES:
+    type_keys = effective_type_keys(org)
+    if body.type not in type_keys:
         raise HTTPException(
             status_code=422,
-            detail=f"type inválido: '{body.type}' (use {', '.join(FEEDBACK_TYPES)})",
+            detail=f"type inválido: '{body.type}' (use {', '.join(sorted(type_keys))})",
         )
     if body.sentiment is not None and body.sentiment not in SENTIMENTS:
         raise HTTPException(
@@ -1489,7 +1623,9 @@ async def list_feedbacks(
         tem_whatsapp=tem_whatsapp, nps_bucket_=nps_bucket,
     )
     counts_raw = dict((await session.execute(counts_stmt.group_by(FeedbackItem.action_status))).all())
-    counts_by_status = {s: int(counts_raw.get(s, 0)) for s in ACTION_STATUSES}
+    # Itera a lista EFETIVA de status (defaults ∪ custom da org). Sem custom => idêntico a
+    # ACTION_STATUSES (mesma ordem). Os defaults sempre presentes (zeros inclusos).
+    counts_by_status = {s: int(counts_raw.get(s, 0)) for s in effective_status_keys(org)}
 
     return {
         "items": items,
@@ -1536,16 +1672,17 @@ async def feedbacks_board(
     rows = (await session.execute(base)).all()
 
     now = datetime.now(timezone.utc)
-    # Agrupa por coluna (action_status). Itens com status fora do vocabulário conhecido
-    # são ignorados no board (não há coluna pra eles) — mas isso não acontece na prática
-    # porque a escrita valida o vocabulário.
-    grouped: dict[str, list[dict[str, Any]]] = {s: [] for s in ACTION_STATUSES}
+    # Colunas = lista EFETIVA de status (defaults ∪ custom da org). Sem custom => idêntico
+    # a ACTION_STATUSES (mesma ordem). Itens com status fora do vocabulário efetivo são
+    # ignorados no board (não há coluna pra eles) — raro na prática (a escrita valida).
+    status_keys = effective_status_keys(org)
+    grouped: dict[str, list[dict[str, Any]]] = {s: [] for s in status_keys}
     for f, c in rows:
         if f.action_status in grouped:
             grouped[f.action_status].append(_feedback_out(f, c, now))
 
     columns: dict[str, dict[str, Any]] = {}
-    for s in ACTION_STATUSES:
+    for s in status_keys:
         col = grouped[s]
         col.sort(key=lambda it: it["urgencia"], reverse=True)
         columns[s] = {"count": len(col), "items": col[:BOARD_ITEMS_PER_COLUMN]}
@@ -1582,10 +1719,11 @@ async def move_feedback(
     except ValueError:
         raise HTTPException(status_code=422, detail="id inválido")
 
-    if body.status not in ACTION_STATUSES:
+    status_keys = effective_status_keys(org)
+    if body.status not in status_keys:
         raise HTTPException(
             status_code=422,
-            detail=f"status inválido: '{body.status}' (use {', '.join(ACTION_STATUSES)})",
+            detail=f"status inválido: '{body.status}' (use {', '.join(status_keys)})",
         )
 
     feedback = (
@@ -1670,15 +1808,17 @@ async def update_feedback_action(
 
     sent = body.model_fields_set
 
-    if body.action_status is not None and body.action_status not in ACTION_STATUSES:
+    status_keys = effective_status_keys(org)
+    if body.action_status is not None and body.action_status not in status_keys:
         raise HTTPException(
             status_code=422,
-            detail=f"action_status inválido: '{body.action_status}' (use {', '.join(ACTION_STATUSES)})",
+            detail=f"action_status inválido: '{body.action_status}' (use {', '.join(status_keys)})",
         )
-    if "type" in sent and (body.type is None or body.type not in FEEDBACK_TYPES):
+    type_keys = effective_type_keys(org)
+    if "type" in sent and (body.type is None or body.type not in type_keys):
         raise HTTPException(
             status_code=422,
-            detail=f"type inválido: '{body.type}' (use {', '.join(FEEDBACK_TYPES)})",
+            detail=f"type inválido: '{body.type}' (use {', '.join(sorted(type_keys))})",
         )
     if "sentiment" in sent and body.sentiment is not None and body.sentiment not in SENTIMENTS:
         raise HTTPException(
@@ -2264,6 +2404,139 @@ async def _feedback_count(session: AsyncSession, org_id: uuid.UUID, improvement_
             )
         )
     ).scalar_one()
+
+
+# --- Configuração de vocabulários (status/tipos/origens) por org --------------
+# O dono cria os PRÓPRIOS status (os fixos "não fazem sentido"), tipos de feedback e
+# origens. Tudo em Organization.settings (sem migration; mesmo padrão copia-edita-
+# reatribui dos boards). As listas EFETIVAS = DEFAULTS (imutáveis, preservam dados
+# existentes) ∪ customizados da org. O PUT salva SÓ os customizados; uma key custom
+# NÃO pode colidir com um default (422). Idempotente: reenviar a mesma lista é no-op
+# de efeito; mandar uma lista sem um item antes salvo = REMOVE aquele custom.
+
+
+class _StatusConfigIn(BaseModel):
+    """Status customizado no corpo do PUT /api/config. `key` obrigatória."""
+
+    key: str = Field(min_length=1, max_length=60)
+    label: str | None = Field(default=None, max_length=80)
+    cor: str | None = Field(default=None, max_length=32)
+
+
+class _KVConfigIn(BaseModel):
+    """Tipo/origem customizado no corpo do PUT /api/config. `key` obrigatória."""
+
+    key: str = Field(min_length=1, max_length=60)
+    label: str | None = Field(default=None, max_length=80)
+
+
+class ConfigIn(BaseModel):
+    """Corpo do PUT /api/config: SÓ os customizados de cada vocabulário.
+
+    Campo ausente (não enviado) => aquele vocabulário fica intocado. Campo enviado
+    (mesmo `[]`) => substitui o conjunto de customizados daquele vocabulário (logo
+    `[]` limpa todos os customizados dele). `model_fields_set` distingue ausente de [].
+    """
+
+    action_statuses: list[_StatusConfigIn] | None = None
+    feedback_types: list[_KVConfigIn] | None = None
+    feedback_origins: list[_KVConfigIn] | None = None
+
+
+def _config_payload(org: Organization) -> dict[str, Any]:
+    """As 3 listas EFETIVAS (defaults ∪ custom) no contrato {key,label[,cor]}."""
+    return {
+        "action_statuses": effective_statuses(org),  # [{key,label,cor}]
+        "feedback_types": effective_types(org),       # [{key,label}]
+        "feedback_origins": effective_origins(org),   # [{key,label}]
+    }
+
+
+def _custom_from_in_status(items: list[_StatusConfigIn]) -> list[dict[str, str]]:
+    """Normaliza status customizados do corpo (dedup por key, mantém a 1ª)."""
+    out: list[dict[str, str]] = []
+    vistos: set[str] = set()
+    for it in items:
+        key = it.key.strip()
+        if not key or key in vistos:
+            continue
+        vistos.add(key)
+        out.append(
+            {
+                "key": key,
+                "label": (it.label or "").strip() or _label_humano(key),
+                "cor": (it.cor or "").strip() or _COR_STATUS_DEFAULT,
+            }
+        )
+    return out
+
+
+def _custom_from_in_kv(items: list[_KVConfigIn]) -> list[dict[str, str]]:
+    """Normaliza tipos/origens customizados do corpo (dedup por key, mantém a 1ª)."""
+    out: list[dict[str, str]] = []
+    vistos: set[str] = set()
+    for it in items:
+        key = it.key.strip()
+        if not key or key in vistos:
+            continue
+        vistos.add(key)
+        out.append({"key": key, "label": (it.label or "").strip() or _label_humano(key)})
+    return out
+
+
+def _reject_default_collisions(custom: list[dict[str, str]], defaults: tuple[str, ...], rotulo: str) -> None:
+    """422 se algum custom usa uma key reservada por um default (defaults são imutáveis)."""
+    reservadas = set(defaults)
+    colisoes = [c["key"] for c in custom if c["key"] in reservadas]
+    if colisoes:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{rotulo}: a(s) key(s) {', '.join(sorted(set(colisoes)))} já é(são) padrão "
+                f"e não pode(m) ser redefinida(s)"
+            ),
+        )
+
+
+@router.get("/config")
+async def get_config(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Vocabulários configuráveis da org: as 3 listas EFETIVAS (defaults ∪ custom).
+
+    Retorno: {"action_statuses": [{key,label,cor}, ...], "feedback_types": [{key,label},
+    ...], "feedback_origins": [{key,label}, ...]}. Os defaults vêm sempre primeiro e nunca
+    somem; os customizados da org seguem na ordem em que foram salvos."""
+    org = await _get_org(session)
+    return _config_payload(org)
+
+
+@router.put("/config")
+async def put_config(body: ConfigIn, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Salva SÓ os vocabulários CUSTOMIZADOS da org em settings (defaults nunca tocados).
+
+    Para cada campo ENVIADO no corpo, substitui o conjunto de customizados daquele
+    vocabulário (lista vazia limpa todos). Campo ausente = vocabulário intocado. Uma key
+    custom NÃO pode colidir com um default (422). Idempotente e padrão boards (copia-edita-
+    reatribui o JSONB). Retorna as 3 listas EFETIVAS já atualizadas (mesmo shape do GET)."""
+    org = await _get_org(session)
+    sent = body.model_fields_set
+    s = dict(org.settings or {})
+
+    if "action_statuses" in sent and body.action_statuses is not None:
+        custom = _custom_from_in_status(body.action_statuses)
+        _reject_default_collisions(custom, ACTION_STATUSES, "action_statuses")
+        s[_SETTINGS_KEY_STATUSES] = custom
+    if "feedback_types" in sent and body.feedback_types is not None:
+        custom = _custom_from_in_kv(body.feedback_types)
+        _reject_default_collisions(custom, FEEDBACK_TYPES, "feedback_types")
+        s[_SETTINGS_KEY_TYPES] = custom
+    if "feedback_origins" in sent and body.feedback_origins is not None:
+        custom = _custom_from_in_kv(body.feedback_origins)
+        _reject_default_collisions(custom, DEFAULT_ORIGINS, "feedback_origins")
+        s[_SETTINGS_KEY_ORIGINS] = custom
+
+    org.settings = s  # reatribui p/ marcar o JSONB como sujo (padrão boards/campanha).
+    await session.commit()
+    return _config_payload(org)
 
 
 @router.patch("/improvements/{improvement_id}")
