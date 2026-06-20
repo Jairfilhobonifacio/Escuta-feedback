@@ -41,6 +41,8 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "POST", body: JSON.stringify(body) }),
+  put: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   /** DELETE — backend responde 204 (sem corpo); por isso não tipamos o retorno. */
@@ -1500,4 +1502,47 @@ export const central = {
   /** Feedbacks por sentimento + fonte. Filtros opcionais viram query string. */
   feedbacks: (filtro?: CentralFeedbackFiltro) =>
     api.get<CentralFeedbacksResponse>(`/api/central/feedbacks${buildQuery(filtro)}`),
+};
+
+// --- Vocabulários customizáveis por org (Configurações) ---------------------
+// O backend serve os DEFAULTS do produto somados aos itens custom que a org criou
+// (mesmo shape para os três grupos). Cada lista é uma sequência de {key,label}; só
+// `action_statuses` carrega `cor` (usada nas pílulas/badges de status). A tela de
+// Configurações lê tudo daqui (GET) e grava SÓ os custom de cada lista (PUT).
+
+/** Um item de vocabulário. `cor` só vem/é aceita em `action_statuses` (status). */
+export interface ConfigItem {
+  key: string;
+  label: string;
+  /** Cor da pílula (hex, ex.: "#6366f1") — só em action_statuses. */
+  cor?: string;
+}
+
+/** Resposta de GET /api/config — defaults do produto + custom da org, por lista.
+    São SEMPRE as listas EFETIVAS (já mescladas); a UI não recebe a separação. */
+export interface ConfigResponse {
+  /** Estados do fluxo de ação sobre um feedback (com cor). */
+  action_statuses: ConfigItem[];
+  /** Tipos de feedback (nps, churn, bug, …). */
+  feedback_types: ConfigItem[];
+  /** Origens/fontes de feedback (whatsapp, manual, …). */
+  feedback_origins: ConfigItem[];
+}
+
+/** Corpo do PUT /api/config — envie SÓ os CUSTOMIZADOS de cada lista.
+    Campo AUSENTE = não mexe naquela lista; `[]` = limpa os custom dela.
+    Colidir uma `key` custom com a de um default → 422 (tratado na UI). */
+export interface ConfigUpdate {
+  action_statuses?: ConfigItem[];
+  feedback_types?: ConfigItem[];
+  feedback_origins?: ConfigItem[];
+}
+
+/** Helpers tipados das CONFIGURAÇÕES (vocabulários customizáveis da org). */
+export const config = {
+  /** Listas efetivas (defaults + custom da org) dos três vocabulários. */
+  get: () => api.get<ConfigResponse>("/api/config"),
+  /** Salva SÓ os customizados (por lista). Retorna as listas efetivas resultantes.
+      Pode lançar ApiError(422) em caso de colisão de key com um default. */
+  update: (body: ConfigUpdate) => api.put<ConfigResponse>("/api/config", body),
 };

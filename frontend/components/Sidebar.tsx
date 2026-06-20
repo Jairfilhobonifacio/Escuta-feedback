@@ -7,9 +7,11 @@ import {
   MessageSquare,
   MessageCircle,
   Kanban,
+  Map,
   Users,
   ClipboardList,
   Smartphone,
+  Settings,
   Radar,
 } from "lucide-react";
 
@@ -27,7 +29,7 @@ type NavItem = { href: string; label: string; icon: IconType; feature?: boolean 
    As telas que o dono considerou ruído saíram do MENU mas continuam EXISTINDO e
    acessíveis por URL (nada foi apagado). Reverter = devolver o item a um grupo:
      /dashboard  -> substituído pela Monitorar
-     /temas      -> clustering de dores ("me explique melhor o que seria")
+     /temas      -> "Mapeamento": mapa de dores (clustering por significado)
      /melhorias  -> roadmap ("pra que serve?")
      /campanha   -> win-back ("inútil, dados errôneos")
      /tarefas    -> "deveria estar no board, não separado"
@@ -42,6 +44,7 @@ const groups: { label: string; items: NavItem[] }[] = [
       { href: "/feedbacks", label: "Feedbacks", icon: MessageSquare, feature: true },
       { href: "/chat", label: "Chat", icon: MessageCircle, feature: true },
       { href: "/board", label: "Board", icon: Kanban },
+      { href: "/temas", label: "Mapeamento", icon: Map },
     ],
   },
   {
@@ -53,7 +56,10 @@ const groups: { label: string; items: NavItem[] }[] = [
   },
   {
     label: "Config",
-    items: [{ href: "/conexao", label: "Conexão", icon: Smartphone }],
+    items: [
+      { href: "/conexao", label: "Conexão", icon: Smartphone },
+      { href: "/config", label: "Configurações", icon: Settings },
+    ],
   },
 ];
 

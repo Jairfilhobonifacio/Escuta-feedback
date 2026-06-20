@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -18,8 +19,10 @@ import { Button } from "@/components/ui/button";
 import {
   api,
   campanha as campanhaApi,
+  config as configApi,
   feedbacks as feedbacksApi,
   type Cliente,
+  type ConfigItem,
   type EstadoAssinatura,
   type Feedback,
   type FeedbackCounts,
@@ -63,7 +66,9 @@ const PERFIL_OPTIONS: { value: string; label: string }[] = [
 /** Selos de campanha win-back sugeridos no controle "+ selo" do card. */
 const SELOS_CAMPANHA = ["contatado", "respondeu", "cortesia", "reativou"];
 
-const STATUS_TABS: { key: FeedbackStatus; label: string }[] = [
+/** FALLBACK dos status (usado se GET /api/config falhar). O conjunto efetivo —
+    defaults + custom da org — vem de config.get() e é passado por props. */
+const STATUS_TABS_FALLBACK: ConfigItem[] = [
   { key: "novo", label: "Novo" },
   { key: "em_analise", label: "Em análise" },
   { key: "planejado", label: "Planejado" },
@@ -71,18 +76,11 @@ const STATUS_TABS: { key: FeedbackStatus; label: string }[] = [
   { key: "descartado", label: "Descartado" },
 ];
 
-const STATUS_LABEL: Record<FeedbackStatus, string> = {
-  novo: "Novo",
-  em_analise: "Em análise",
-  planejado: "Planejado",
-  resolvido: "Resolvido",
-  descartado: "Descartado",
-};
-
 const EMPTY_COUNTS: FeedbackCounts = {
   novo: 0, em_analise: 0, planejado: 0, resolvido: 0, descartado: 0,
 };
 
+/** Labels fixos de fallback p/ tipos legados/sem custom (badge e textos). */
 const TYPE_LABEL: Record<string, string> = {
   nps: "NPS",
   churn: "Cancelamento",
@@ -94,15 +92,30 @@ const TYPE_LABEL: Record<string, string> = {
   outro: "Outro",
 };
 
-/** Tipos oferecidos ao criar/editar feedback (ordem do menu). */
-const TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: "nps", label: "NPS" },
-  { value: "churn", label: "Cancelamento" },
-  { value: "elogio", label: "Elogio" },
-  { value: "sugestao", label: "Sugestão" },
-  { value: "bug", label: "Bug" },
-  { value: "outro", label: "Outro" },
+/** FALLBACK dos tipos oferecidos ao criar/editar/filtrar (se config.get falhar).
+    O conjunto efetivo vem de config.get() e é passado por props. */
+const TYPE_OPTIONS_FALLBACK: ConfigItem[] = [
+  { key: "nps", label: "NPS" },
+  { key: "churn", label: "Cancelamento" },
+  { key: "elogio", label: "Elogio" },
+  { key: "sugestao", label: "Sugestão" },
+  { key: "bug", label: "Bug" },
+  { key: "outro", label: "Outro" },
 ];
+
+/** Constrói {key: label} a partir de uma lista de vocabulário (para badges/labels). */
+function labelMap(items: ConfigItem[]): Record<string, string> {
+  const m: Record<string, string> = {};
+  for (const it of items) m[it.key] = it.label;
+  return m;
+}
+
+/** Garante que o valor ATUAL (ex.: um tipo legado fora do vocabulário) apareça no
+    select, para a edição não "perder" o valor selecionado. */
+function withCurrent(items: ConfigItem[], current: string | null | undefined): ConfigItem[] {
+  if (!current || items.some((it) => it.key === current)) return items;
+  return [...items, { key: current, label: TYPE_LABEL[current] ?? current }];
+}
 
 const SOURCE_LABEL: Record<string, string> = {
   whatsapp: "WhatsApp",
@@ -126,8 +139,8 @@ const SENT_META: Record<string, { cls: string; label: string }> = {
   negativo: { cls: "s-neg", label: "negativo" },
 };
 
-function typeBadge(type: string) {
-  const label = TYPE_LABEL[type] ?? type;
+function typeBadge(type: string, typeLabels?: Record<string, string>) {
+  const label = typeLabels?.[type] ?? TYPE_LABEL[type] ?? type;
   const cls = type === "churn" || type === "exit" ? "t-exit" : "t-nps";
   return <span className={`badge type ${cls}`}>{label}</span>;
 }
@@ -177,10 +190,12 @@ function EditFeedbackModal({
   feedback,
   onCancel,
   onSaved,
+  typeOptions,
 }: {
   feedback: Feedback;
   onCancel: () => void;
   onSaved: (updated: Feedback) => void;
+  typeOptions: ConfigItem[];
 }) {
   const titleId = useId();
   const [type, setType] = useState(feedback.type);
@@ -242,8 +257,8 @@ function EditFeedbackModal({
                 value={type}
                 onChange={(e) => setType(e.target.value)}
               >
-                {TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
+                {withCurrent(typeOptions, feedback.type).map((o) => (
+                  <option key={o.key} value={o.key}>{o.label}</option>
                 ))}
               </select>
             </div>
@@ -414,9 +429,11 @@ function ClientePicker({
 function CreateFeedbackModal({
   onCancel,
   onCreated,
+  typeOptions,
 }: {
   onCancel: () => void;
   onCreated: (created: Feedback) => void;
+  typeOptions: ConfigItem[];
 }) {
   const titleId = useId();
   const [cliente, setCliente] = useState<Cliente | null>(null);
@@ -529,8 +546,8 @@ function CreateFeedbackModal({
                 value={type}
                 onChange={(e) => setType(e.target.value)}
               >
-                {TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
+                {withCurrent(typeOptions, type).map((o) => (
+                  <option key={o.key} value={o.key}>{o.label}</option>
                 ))}
               </select>
             </div>
@@ -743,6 +760,8 @@ function FeedbackCard({
   onDelete,
   onAbordar,
   onSelosChanged,
+  statusOptions,
+  typeLabels,
 }: {
   fb: Feedback;
   onPatched: (updated: Feedback, previousStatus: FeedbackStatus) => void;
@@ -750,6 +769,8 @@ function FeedbackCard({
   onDelete: (fb: Feedback) => void;
   onAbordar: (fb: Feedback) => void;
   onSelosChanged: (id: string, selos: string[]) => void;
+  statusOptions: ConfigItem[];
+  typeLabels: Record<string, string>;
 }) {
   const [note, setNote] = useState(fb.action_note ?? "");
   const [saving, setSaving] = useState(false);
@@ -865,7 +886,7 @@ function FeedbackCard({
           <span className="fb-who">{fb.contato_nome || "sem contato"}</span>
         )}
         <span className="mono dim fb-phone">{fb.contato_whatsapp}</span>
-        {typeBadge(fb.type)}
+        {typeBadge(fb.type, typeLabels)}
         <span className="dim" style={{ fontSize: 12 }}>
           via {SOURCE_LABEL[fb.source] ?? fb.source}
         </span>
@@ -893,7 +914,7 @@ function FeedbackCard({
       <div className="fb-actions">
         <span className="act-label">Status</span>
         <select value={fb.action_status} onChange={onStatusChange} disabled={saving}>
-          {STATUS_TABS.map((s) => (
+          {withCurrent(statusOptions, fb.action_status).map((s) => (
             <option key={s.key} value={s.key}>{s.label}</option>
           ))}
         </select>
@@ -1013,11 +1034,13 @@ function FiltersModal({
   perfil, setPerfil,
   npsBucket, setNpsBucket,
   temWhatsapp, setTemWhatsapp,
+  typeOptions,
   activeCount,
   onClear,
   onClose,
 }: {
   type: string; setType: (v: string) => void;
+  typeOptions: ConfigItem[];
   sentiment: string; setSentiment: (v: string) => void;
   source: string; setSource: (v: string) => void;
   abordado: "" | "sim" | "nao" | "hoje" | "7d" | "30d";
@@ -1041,8 +1064,9 @@ function FiltersModal({
             <label htmlFor={`${titleId}-type`}>Tipo</label>
             <select id={`${titleId}-type`} value={type} onChange={(e) => setType(e.target.value)}>
               <option value="">Todos os tipos</option>
-              <option value="nps">NPS</option>
-              <option value="churn">Cancelamento</option>
+              {withCurrent(typeOptions, type).map((o) => (
+                <option key={o.key} value={o.key}>{o.label}</option>
+              ))}
             </select>
           </div>
           <div className="field">
@@ -1185,8 +1209,35 @@ export default function FeedbacksPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  // filtros
-  const [status, setStatus] = useState<FeedbackStatus | "">("");
+  // Vocabulários da org (status + tipos) — defaults + custom, via GET /api/config.
+  // Iniciam nos FALLBACKS para a tela já renderizar; trocam quando o config chega.
+  const [statusOptions, setStatusOptions] = useState<ConfigItem[]>(STATUS_TABS_FALLBACK);
+  const [typeOptions, setTypeOptions] = useState<ConfigItem[]>(TYPE_OPTIONS_FALLBACK);
+
+  useEffect(() => {
+    let alive = true;
+    configApi
+      .get()
+      .then((cfg) => {
+        if (!alive) return;
+        // Fallback defensivo: se a lista vier vazia, mantém os fallbacks.
+        if (cfg.action_statuses?.length) setStatusOptions(cfg.action_statuses);
+        if (cfg.feedback_types?.length) setTypeOptions(cfg.feedback_types);
+      })
+      .catch(() => {
+        /* sem config (API antiga / offline): segue com os fallbacks. */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Labels efetivos dos tipos e status (para badges e o estado vazio).
+  const typeLabels = useMemo(() => labelMap(typeOptions), [typeOptions]);
+  const statusLabels = useMemo(() => labelMap(statusOptions), [statusOptions]);
+
+  // filtros. `status` é string aberta: além dos fixos, pode ser um status custom.
+  const [status, setStatus] = useState<string>("");
   const [type, setType] = useState("");
   const [sentiment, setSentiment] = useState("");
   const [source, setSource] = useState("");
@@ -1431,14 +1482,16 @@ export default function FeedbacksPage() {
         >
           Todos
         </button>
-        {STATUS_TABS.map((s) => (
+        {statusOptions.map((s) => (
           <button
             key={s.key}
             className={`status-tab ${status === s.key ? "active" : ""}`}
             onClick={() => setStatus(s.key)}
           >
             {s.label}
-            <span className="tab-count">{counts[s.key] ?? 0}</span>
+            <span className="tab-count">
+              {(counts as unknown as Record<string, number>)[s.key] ?? 0}
+            </span>
           </button>
         ))}
       </div>
@@ -1526,7 +1579,7 @@ export default function FeedbacksPage() {
             </div>
             <div className="empty-title">
               {status
-                ? `Nada em "${STATUS_LABEL[status]}"`
+                ? `Nada em "${statusLabels[status] ?? status}"`
                 : hasFilters
                 ? "Nenhum feedback bate com os filtros"
                 : "Nenhum feedback ainda"}
@@ -1558,6 +1611,8 @@ export default function FeedbacksPage() {
                 onDelete={setDeleting}
                 onAbordar={setAbordando}
                 onSelosChanged={onSelosChanged}
+                statusOptions={statusOptions}
+                typeLabels={typeLabels}
               />
             </StaggerItem>
           ))}
@@ -1584,6 +1639,7 @@ export default function FeedbacksPage() {
           perfil={perfil} setPerfil={setPerfil}
           npsBucket={npsBucket} setNpsBucket={setNpsBucket}
           temWhatsapp={temWhatsapp} setTemWhatsapp={setTemWhatsapp}
+          typeOptions={typeOptions}
           activeCount={advancedFilterCount}
           onClear={clearAdvancedFilters}
           onClose={() => setShowFilters(false)}
@@ -1593,6 +1649,7 @@ export default function FeedbacksPage() {
         <CreateFeedbackModal
           onCancel={() => setCreating(false)}
           onCreated={onCreated}
+          typeOptions={typeOptions}
         />
       )}
       {editing && (
@@ -1600,6 +1657,7 @@ export default function FeedbacksPage() {
           feedback={editing}
           onCancel={() => setEditing(null)}
           onSaved={onEdited}
+          typeOptions={typeOptions}
         />
       )}
       {deleting && (

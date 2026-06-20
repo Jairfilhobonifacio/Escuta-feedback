@@ -25,8 +25,10 @@ import { Badge } from "@/components/ui/badge";
 import {
   api,
   campanha as campanhaApi,
+  config as configApi,
   feedbacks as feedbacksApi,
   whatsapp as whatsappApi,
+  type ConfigItem,
   type Contact360,
   type Feedback,
   type FeedbackInput,
@@ -84,13 +86,22 @@ const SENT_META: Record<string, { cls: string; label: string }> = {
   negativo: { cls: "s-neg", label: "negativo" },
 };
 
-const STATUS_OPTIONS: { key: FeedbackStatus; label: string }[] = [
+/** FALLBACK dos status (usado se GET /api/config falhar). O conjunto efetivo —
+    defaults + custom da org — vem de config.get() e é passado por props. */
+const STATUS_OPTIONS_FALLBACK: ConfigItem[] = [
   { key: "novo", label: "Novo" },
   { key: "em_analise", label: "Em análise" },
   { key: "planejado", label: "Planejado" },
   { key: "resolvido", label: "Resolvido" },
   { key: "descartado", label: "Descartado" },
 ];
+
+/** Garante que o status ATUAL (ex.: um custom fora do vocabulário carregado)
+    apareça no select, para a edição não "perder" o valor selecionado. */
+function withCurrentStatus(items: ConfigItem[], current: string | null | undefined): ConfigItem[] {
+  if (!current || items.some((it) => it.key === current)) return items;
+  return [...items, { key: current, label: current }];
+}
 
 /** Selos de campanha win-back sugeridos no controle do cabeçalho. */
 const SELOS_CAMPANHA = ["contatado", "respondeu", "cortesia", "reativou"];
@@ -499,11 +510,13 @@ function TimelineRow({
   index,
   onPatch,
   onEdit,
+  statusOptions,
 }: {
   t: Timeline360Item;
   index: number;
   onPatch: (id: string, patch: FeedbackPatch) => Promise<void>;
   onEdit: (t: Timeline360Item) => void;
+  statusOptions: ConfigItem[];
 }) {
   const [busy, setBusy] = useState(false);
   const dotCls =
@@ -562,7 +575,7 @@ function TimelineRow({
             disabled={busy}
             aria-label="Status da ação"
           >
-            {STATUS_OPTIONS.map((s) => (
+            {withCurrentStatus(statusOptions, t.action_status ?? "novo").map((s) => (
               <option key={s.key} value={s.key}>{s.label}</option>
             ))}
           </select>
@@ -905,6 +918,24 @@ export default function Contact360Page() {
   const [err, setErr] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<Timeline360Item | null>(null);
   const [addingEvent, setAddingEvent] = useState(false);
+  // Status efetivos da org (defaults + custom) p/ o dropdown da timeline. Inicia
+  // no fallback; troca quando GET /api/config chega. Falha = segue no fallback.
+  const [statusOptions, setStatusOptions] = useState<ConfigItem[]>(STATUS_OPTIONS_FALLBACK);
+
+  useEffect(() => {
+    let alive = true;
+    configApi
+      .get()
+      .then((cfg) => {
+        if (alive && cfg.action_statuses?.length) setStatusOptions(cfg.action_statuses);
+      })
+      .catch(() => {
+        /* sem config (API antiga / offline): mantém o fallback. */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -1069,6 +1100,7 @@ export default function Contact360Page() {
                     index={i}
                     onPatch={patchItem}
                     onEdit={setEditingItem}
+                    statusOptions={statusOptions}
                   />
                 ))}
               </ul>

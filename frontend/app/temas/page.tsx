@@ -137,6 +137,9 @@ function TemaCard({ tema, rank, maxCount }: { tema: Tema; rank: number; maxCount
   // Dor "alta" = bom volume com maioria negativa. Vira destaque visual.
   const isPain = neg >= 2 && share >= 0.5;
   const barPct = maxCount > 0 ? Math.max(6, (tema.count / maxCount) * 100) : 0;
+  // Mesmo "índice de dor" dos clusters (volume × fração negativa): deixa o card
+  // de tema legível como entrada de um mapa de dores, não só uma contagem.
+  const pain = painScore(tema);
 
   return (
     <div className={`card tema-card ${isPain ? "is-pain" : ""}`}>
@@ -163,6 +166,12 @@ function TemaCard({ tema, rank, maxCount }: { tema: Tema; rank: number; maxCount
       {/* barra de volume relativo ao tema mais citado */}
       <div className="tema-volume" aria-hidden>
         <span className="tema-volume-fill" style={{ width: `${barPct}%` }} />
+      </div>
+
+      {/* Índice de dor (volume × negatividade) — mesma régua do "Mapa de dores" */}
+      <div className="cluster-pain" aria-label={`Índice de dor ${pain.toFixed(1)}`}>
+        <span className="cluster-pain-label">Índice de dor</span>
+        <span className="cluster-pain-value">{pain.toFixed(1)}</span>
       </div>
 
       <SentimentBar tema={tema} />
@@ -377,12 +386,15 @@ function TemaGridSkeleton({ count = 6 }: { count?: number }) {
 // ===== página ===============================================================
 
 const TAB_OPTIONS: { key: TabKey; label: string }[] = [
-  { key: "tags", label: "Por tag" },
-  { key: "clusters", label: "Por significado" },
+  { key: "clusters", label: "Mapa de dores" },
+  { key: "tags", label: "Por tema" },
 ];
 
 export default function TemasPage() {
-  const [tab, setTab] = useState<TabKey>("tags");
+  // Abre no "Mapa de dores" (clusters por significado) — é a leitura que o dono
+  // pediu: as dores agrupadas e ordenadas pelo que mais dói. A aba "Por tema"
+  // (contagem de tags) fica como visão secundária.
+  const [tab, setTab] = useState<TabKey>("clusters");
   const [days, setDays] = useState(30);
 
   // --- aba "Por tag" (contagem de tags da IA) ---
@@ -457,9 +469,9 @@ export default function TemasPage() {
     <div>
       <div className="page-head">
         <div>
-          <h1 className="page-title">Temas</h1>
+          <h1 className="page-title">Mapeamento</h1>
           <div className="page-sub">
-            O que mais aparece nos feedbacks, agrupado por tema — priorize as dores
+            As dores dos clientes agrupadas por significado — o que mais aparece e o que mais dói
           </div>
         </div>
         {isTags
@@ -498,8 +510,8 @@ export default function TemasPage() {
         <span className="note-ico">💡</span>
         {isTags ? (
           <span>
-            Os temas são extraídos e normalizados pela IA a partir do texto dos feedbacks.
-            Conforme mais respostas são classificadas, o ranking fica mais rico — quem tem{" "}
+            Visão por <b>tema</b>: as tags que a IA extrai e normaliza do texto dos feedbacks.
+            Cada tema mostra seu <b>índice de dor</b> (volume × negatividade) — quem tem{" "}
             <b>volume e maioria negativa</b> é o que mais vale corrigir no produto.
           </span>
         ) : (
