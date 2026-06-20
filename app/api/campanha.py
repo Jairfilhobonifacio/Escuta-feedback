@@ -19,6 +19,7 @@ todos os endpoints filtram por `organization_id`. O router é montado com prefix
 """
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -30,12 +31,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import _get_org
+from app.config import settings
 from app.db import get_session
 from app.domain.contacts.whatsapp import alcance as _wa_alcance
 from app.domain.contacts.whatsapp import sem_whatsapp as _wa_sem
 from app.domain.survey.parsers import nps_bucket
 from app.models.core import Contact, Organization
 from app.models.feedback import FeedbackItem
+from app.models.survey import Message
+from app.services.llm import GroqLLM
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["campanha"])
 
@@ -52,6 +58,30 @@ SELO_CONTATADO = "contatado"
 SELO_RESPONDEU = "respondeu"
 SELO_CORTESIA = "cortesia"
 SELO_REATIVOU = "reativou"
+
+# Selos VIVOS (derivados do estado, em app/domain/selos_vivos.py) — a IA NÃO deve
+# sugeri-los: eles já aparecem sozinhos na UI e mudam quando o estado muda. A
+# comparação no filtro é case-insensitive (ver `_normalizar_nome`).
+_SELOS_VIVOS_NOMES = frozenset(
+    n.lower() for n in ("VIP", "Detrator", "Em risco", "Novo", "Renovação próxima", "Renovação")
+)
+
+
+def get_llm() -> GroqLLM | None:
+    """Cliente Groq quando o LLM está configurado; None = IA desligada.
+
+    Mesma checagem/gating dos demais pontos do projeto (`admin.get_brain`,
+    `events`, `ingest`): `llm_enabled` já exige `GROQ_API_KEY`. Injetável via
+    `dependency_overrides` nos testes — assim a sugestão de selos é exercitada com
+    um FAKE de GroqLLM, sem tocar a Groq real.
+    """
+    if not (settings.llm_enabled and settings.groq_api_key):
+        return None
+    return GroqLLM(
+        settings.groq_api_key,
+        settings.groq_model,
+        fallback_model=settings.groq_fallback_model or None,
+    )
 
 
 # --- helpers de catálogo/aplicação de selos (copia-edita-reatribui) -----------
@@ -342,6 +372,184 @@ async def remove_selo(
         await session.commit()
 
     return {"contato_id": str(contact.id), "selos": _selos_do_contato(contact)}
+
+
+# --- SELOS: sugestão por IA (Groq) --------------------------------------------
+
+
+# Quantos sinais no máximo entram no prompt — janela enxuta pra não estourar tokens
+# nem custo (a Groq tem cota diária). Os mais RECENTES primeiro.
+_SUGERIR_MAX_FEEDBACKS = 12
+_SUGERIR_MAX_MESSAGES = 12
+
+_SUGERIR_SELOS_SYSTEM = """Você é um analista de Voz do Cliente de uma empresa (português do Brasil). A partir do contexto de UM cliente, sugira de 2 a 4 SELOS DE NEGÓCIO — etiquetas curtas e acionáveis que ajudam a equipe a agir sobre este cliente. Responda SOMENTE com JSON válido:
+
+{"sugestoes": [{"nome": "<selo curto, 1-4 palavras, minúsculas>", "motivo": "<por que, 1 frase curta fundamentada nos dados>"}]}
+
+O que é um bom selo de NEGÓCIO (exemplos do estilo desejado):
+"pediu desconto", "promessa de retorno", "cliente irritado", "elogiou atendimento", "risco de churn", "candidato a cortesia", "reclamou de preço", "problema técnico recorrente", "indicou amigos", "pediu cancelamento".
+
+Regras (siga TODAS):
+- Sugira APENAS o que os DADOS sustentam (feedbacks, conversa, NPS, assinatura). NÃO invente fatos nem sentimentos que o texto não mostra.
+- Cada "motivo" deve citar a evidência concreta (ex.: "reclamou que o app trava no comentário do NPS").
+- "nome" curto, em minúsculas, sem pontuação final, sem emoji, sem aspas.
+- NÃO repita selos que o cliente JÁ tem (lista no contexto) nem os selos automáticos de estado (VIP, Detrator, Em risco, Novo, Renovação) — esses já aparecem sozinhos.
+- Se os dados forem fracos/insuficientes para qualquer selo honesto, devolva {"sugestoes": []}. É melhor não sugerir do que forçar."""
+
+
+def _partner_resumo(contact: Contact) -> dict[str, Any]:
+    """Resumo enxuto do snapshot `partner` (perfil/NPS/assinatura) pro prompt.
+
+    Tolerante a None/sujeira: campo ausente simplesmente não entra. Só os campos
+    que ajudam a IA a entender o cliente — não despeja o snapshot inteiro."""
+    partner = (contact.profile_data or {}).get("partner")
+    if not isinstance(partner, dict):
+        return {}
+    nps = partner.get("nps") if isinstance(partner.get("nps"), dict) else {}
+    sub = partner.get("subscription") if isinstance(partner.get("subscription"), dict) else {}
+    out: dict[str, Any] = {}
+    if partner.get("profile"):
+        out["perfil"] = str(partner["profile"])
+    if isinstance(nps.get("score"), (int, float)):
+        out["nps"] = int(nps["score"])
+    if sub.get("state"):
+        out["assinatura"] = str(sub["state"])
+    if sub.get("planType"):
+        out["plano"] = str(sub["planType"])
+    return out
+
+
+def _normalizar_nome(nome: Any) -> str:
+    """Normaliza um nome de selo para comparar/dedup (strip + lower)."""
+    return str(nome or "").strip().lower()
+
+
+@router.post("/contacts/{contact_id}/sugerir-selos")
+async def sugerir_selos(
+    contact_id: str,
+    session: AsyncSession = Depends(get_session),
+    llm: GroqLLM | None = Depends(get_llm),
+) -> dict[str, Any]:
+    """Sugere selos de NEGÓCIO para um contato via IA (Groq). NÃO aplica nada.
+
+    Monta o contexto org-scoped do contato (perfil/NPS/assinatura do snapshot
+    `partner`, selos já aplicados, catálogo da org, os FeedbackItem com texto/
+    sentimento/tipo e as Message recentes da conversa) e pede ao LLM 2-4 selos
+    curtos, cada um com um motivo fundamentado. O operador confirma um a um via
+    o `POST /contacts/{id}/selos` existente.
+
+    DEGRADAÇÃO GRACIOSA (nunca 500): sem GROQ_API_KEY / LLM desligado (llm=None),
+    ou qualquer falha/JSON inválido do LLM ⇒ devolve {"sugestoes": []} + log. O
+    GroqLLM já é à prova de queda (chat_json devolve dict ou None, jamais lança).
+
+    FILTRO: remove selos que o contato JÁ tem e os selos VIVOS de estado (VIP/
+    Detrator/Em risco/Novo/Renovação), dedup case-insensitive entre as próprias
+    sugestões. Retorno: {"sugestoes": [{"nome", "motivo"}]}.
+    """
+    org = await _get_org(session)
+    contact = await _get_contact(session, org, contact_id)
+
+    # IA desligada (sem chave/flag): degrada gracioso, sem tocar a Groq.
+    if llm is None:
+        logger.info("sugerir-selos: LLM desligado (sem GROQ_API_KEY/flag) — devolvendo []")
+        return {"sugestoes": []}
+
+    selos_atuais = _selos_do_contato(contact)
+    catalogo = [it["nome"] for it in _catalogo(org)]
+
+    feedbacks = (
+        (
+            await session.execute(
+                select(FeedbackItem)
+                .where(
+                    FeedbackItem.organization_id == org.id,
+                    FeedbackItem.contact_id == contact.id,
+                )
+                .order_by(FeedbackItem.occurred_at.desc().nullslast(), FeedbackItem.created_at.desc())
+                .limit(_SUGERIR_MAX_FEEDBACKS)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    fb_ctx = [
+        {
+            "tipo": f.type,
+            "sentimento": f.sentiment,
+            "nota": f.score,
+            "texto": (f.text or "").strip()[:500] or None,
+        }
+        for f in feedbacks
+    ]
+
+    msgs = (
+        (
+            await session.execute(
+                select(Message)
+                .where(
+                    Message.organization_id == org.id,
+                    Message.contact_id == contact.id,
+                )
+                .order_by(Message.created_at.desc())
+                .limit(_SUGERIR_MAX_MESSAGES)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Cronológica (a query traz desc p/ pegar as mais recentes; invertemos pra ler).
+    conversa = [
+        {"de": "cliente" if str(m.direction).lower().startswith("in") else "empresa",
+         "texto": (m.body or "").strip()[:500]}
+        for m in reversed(msgs)
+        if (m.body or "").strip()
+    ]
+
+    import json
+
+    contexto = {
+        "cliente": {"nome": contact.name or None, **_partner_resumo(contact)},
+        "selos_ja_aplicados": selos_atuais,
+        "catalogo_de_selos": catalogo,
+        "feedbacks": fb_ctx,
+        "conversa_recente": conversa,
+    }
+    user = (
+        "Contexto do cliente (JSON):\n"
+        + json.dumps(contexto, ensure_ascii=False)
+        + "\n\nSugira de 2 a 4 selos de NEGÓCIO no formato pedido."
+    )
+
+    data = await llm.chat_json(_SUGERIR_SELOS_SYSTEM, user, temperature=0.3, max_tokens=400)
+    if not data:
+        logger.info("sugerir-selos: LLM indisponível/JSON inválido — devolvendo []")
+        return {"sugestoes": []}
+
+    raw = data.get("sugestoes")
+    if not isinstance(raw, list):
+        logger.info("sugerir-selos: payload sem lista 'sugestoes' — devolvendo []")
+        return {"sugestoes": []}
+
+    # Filtro defensivo: nome+motivo presentes; fora os já aplicados e os vivos; dedup.
+    bloqueados = {_normalizar_nome(s) for s in selos_atuais} | set(_SELOS_VIVOS_NOMES)
+    vistos: set[str] = set()
+    sugestoes: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        nome = str(item.get("nome") or "").strip()[:60]
+        motivo = str(item.get("motivo") or "").strip()[:280]
+        if not nome or not motivo:
+            continue
+        chave = _normalizar_nome(nome)
+        if chave in bloqueados or chave in vistos:
+            continue
+        vistos.add(chave)
+        sugestoes.append({"nome": nome, "motivo": motivo})
+        if len(sugestoes) >= 4:
+            break
+
+    return {"sugestoes": sugestoes}
 
 
 # --- OUTREACH: histórico de abordagens 1:1 ------------------------------------

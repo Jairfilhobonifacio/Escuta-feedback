@@ -20,6 +20,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Sparkles,
   StickyNote,
   Tag,
   ThumbsUp,
@@ -50,6 +51,7 @@ import {
   type FeedbackInput,
   type FeedbackPatch,
   type FeedbackStatus,
+  type SeloSugestao,
   type SeloVivo,
   type SeloOrigem,
   type Timeline360Item,
@@ -448,6 +450,158 @@ function ProfileCard({ partner }: { partner: Record<string, unknown> }) {
   );
 }
 
+// ===== Sugestões de selo pela IA (cabeçalho) =================================
+// Botão "Sugerir selos (IA)" que chama POST /sugerir-selos (a IA PROPÕE selos de
+// negócio, não aplica). As sugestões aparecem como CHIPS clicáveis, com visual de
+// SUGESTÃO (borda pontilhada âmbar + ✨) distinto dos selos VIVOS (dashed + emoji) e
+// dos MANUAIS (borda sólida + ponto). Clicar numa sugestão aplica via applySelo,
+// some da lista e recarrega a ficha. Estados graciosos: loading / vazio / IA off.
+
+function SugestoesSelos({
+  contactId,
+  selos,
+  onApplied,
+}: {
+  contactId: string;
+  /** Selos manuais já aplicados — sugestões já aplicadas são filtradas para fora. */
+  selos: string[];
+  /** Após aplicar uma sugestão: recarrega a ficha (selos vivos/timeline atualizam). */
+  onApplied: () => void;
+}) {
+  // 'idle' antes de pedir; 'loading' enquanto busca; 'done' com sugestoes resolvidas;
+  // 'error' quando a chamada falha (IA indisponível).
+  const [estado, setEstado] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [sugestoes, setSugestoes] = useState<SeloSugestao[]>([]);
+  // Nome da sugestão em processo de aplicação (desabilita só o chip clicado).
+  const [aplicando, setAplicando] = useState<string | null>(null);
+  const [aplicado, setAplicado] = useState<string | null>(null);
+
+  async function pedir() {
+    if (estado === "loading") return;
+    setEstado("loading");
+    setAplicado(null);
+    try {
+      const out = await campanhaApi.sugerirSelos(contactId);
+      // Filtra fora o que o cliente já tem (a IA pode repetir um selo existente).
+      const novas = (out.sugestoes ?? []).filter((s) => !selos.includes(s.nome));
+      setSugestoes(novas);
+      setEstado("done");
+    } catch {
+      setSugestoes([]);
+      setEstado("error");
+    }
+  }
+
+  async function aplicar(s: SeloSugestao) {
+    if (aplicando) return;
+    setAplicando(s.nome);
+    try {
+      await campanhaApi.applySelo(contactId, { nome: s.nome });
+      // Some da lista de sugestões e recarrega a ficha (selo vira "manual"/"vivo").
+      setSugestoes((prev) => prev.filter((x) => x.nome !== s.nome));
+      setAplicado(s.nome);
+      onApplied();
+    } catch {
+      /* erro silencioso: a sugestão fica para nova tentativa. */
+    } finally {
+      setAplicando(null);
+    }
+  }
+
+  return (
+    <div className="mt-2.5 flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={pedir}
+          disabled={estado === "loading"}
+          aria-busy={estado === "loading"}
+          title="A IA analisa este cliente e sugere selos de negócio"
+          className="inline-flex items-center gap-1.5 rounded-full border border-dashed px-2.5 py-[5px] text-[11.5px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--gold,#b45309)] disabled:cursor-progress"
+          style={{
+            color: "var(--gold, #b45309)",
+            borderColor: "color-mix(in srgb, var(--gold, #b45309) 45%, transparent)",
+            background: "color-mix(in srgb, var(--gold, #b45309) 8%, transparent)",
+          }}
+        >
+          <Sparkles size={13} strokeWidth={2.2} aria-hidden />
+          {estado === "loading"
+            ? "Analisando…"
+            : estado === "done" || estado === "error"
+              ? "Sugerir de novo"
+              : "Sugerir selos (IA)"}
+        </button>
+        {aplicado && (
+          <span
+            className="inline-flex items-center gap-1 text-[11.5px] font-medium"
+            style={{ color: "var(--indigo-light)" }}
+          >
+            <Check size={12} strokeWidth={2.6} aria-hidden /> {aplicado} aplicado
+          </span>
+        )}
+      </div>
+
+      {estado === "loading" && (
+        <div className="flex flex-wrap gap-2" aria-busy aria-hidden>
+          {[88, 116, 72].map((w, i) => (
+            <span
+              key={i}
+              className="sk-line"
+              style={{ width: w, height: 24, borderRadius: 999, margin: 0 }}
+            />
+          ))}
+        </div>
+      )}
+
+      {estado === "error" && (
+        <p className="m-0 text-[12px]" style={{ color: "var(--text-faint)" }}>
+          IA indisponível agora — tente de novo em instantes.
+        </p>
+      )}
+
+      {estado === "done" && sugestoes.length === 0 && (
+        <p className="m-0 text-[12px]" style={{ color: "var(--text-faint)" }}>
+          Nenhuma sugestão no momento.
+        </p>
+      )}
+
+      {estado === "done" && sugestoes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {sugestoes.map((s) => {
+            const gold = "var(--gold, #b45309)";
+            const busy = aplicando === s.nome;
+            return (
+              <button
+                key={s.nome}
+                type="button"
+                onClick={() => aplicar(s)}
+                disabled={busy}
+                title={s.motivo ? `${s.motivo} — clique para aplicar` : "Clique para aplicar"}
+                aria-label={`Aplicar selo sugerido ${s.nome}`}
+                className="selo-chip transition-colors disabled:cursor-progress"
+                style={{
+                  borderStyle: "dashed",
+                  borderColor: `color-mix(in srgb, ${gold} 55%, transparent)`,
+                  color: gold,
+                  background: `color-mix(in srgb, ${gold} 9%, transparent)`,
+                }}
+              >
+                <Sparkles size={11} strokeWidth={2.2} aria-hidden />
+                {s.nome}
+                {busy ? (
+                  <span aria-hidden style={{ opacity: 0.7 }}>{"…"}</span>
+                ) : (
+                  <Plus size={11} strokeWidth={2.4} aria-hidden style={{ opacity: 0.8 }} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== Selos do contato (cabeçalho) =========================================
 
 function ContatoSelos({
@@ -455,12 +609,15 @@ function ContatoSelos({
   selos,
   selosVivos,
   onChanged,
+  onApplied,
 }: {
   contactId: string;
   selos: string[];
   /** Selos vivos derivados do estado (READ-ONLY) — renderizados antes dos manuais. */
   selosVivos: SeloVivo[];
   onChanged: (selos: string[]) => void;
+  /** Recarrega a ficha inteira (usado após aplicar uma sugestão da IA). */
+  onApplied: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -495,6 +652,7 @@ function ContatoSelos({
   }
 
   return (
+    <>
     <div className="c360-selos">
       {/* Selos VIVOS (automáticos, read-only) primeiro; depois um separador sutil
           e os selos MANUAIS (editáveis, com "x" + "+selo"). */}
@@ -563,6 +721,8 @@ function ContatoSelos({
         )}
       </SeloPopover>
     </div>
+    <SugestoesSelos contactId={contactId} selos={selos} onApplied={onApplied} />
+    </>
   );
 }
 
@@ -1598,6 +1758,7 @@ export default function Contact360Page() {
                     selos={selos}
                     selosVivos={selosVivos}
                     onChanged={onSelosChanged}
+                    onApplied={load}
                   />
                 </div>
               )}

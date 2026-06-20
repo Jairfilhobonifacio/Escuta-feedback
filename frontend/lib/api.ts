@@ -1106,6 +1106,19 @@ export interface FormsImportResult {
   skipped: number;
 }
 
+/** Uma sugestão de selo de NEGÓCIO proposta pela IA (analisa o cliente; NÃO aplica).
+    `nome` é o rótulo do selo; `motivo` é a justificativa curta (vai no tooltip). */
+export interface SeloSugestao {
+  nome: string;
+  motivo: string;
+}
+
+/** Resposta de POST /api/contacts/{id}/sugerir-selos — a IA propõe selos a aplicar.
+    `sugestoes` pode vir vazia ([]) quando a IA não tem proposta ou está indisponível. */
+export interface SugerirSelosResponse {
+  sugestoes: SeloSugestao[];
+}
+
 /** Helpers tipados da camada de campanha (todos sob o prefixo /api). */
 export const campanha = {
   /** Catálogo de selos + uso por contato. */
@@ -1120,6 +1133,10 @@ export const campanha = {
       `/api/contacts/${contactId}/selos`,
       body,
     ),
+  /** A IA analisa o cliente e PROPÕE selos de negócio (não aplica). Pode devolver
+      `{sugestoes: []}` quando não há proposta ou a IA está indisponível. */
+  sugerirSelos: (contactId: string) =>
+    api.post<SugerirSelosResponse>(`/api/contacts/${contactId}/sugerir-selos`, {}),
   /** Remove o selo daquele contato (não mexe no catálogo). */
   removeSeloFromContact: (contactId: string, nome: string) =>
     api.del(`/api/contacts/${contactId}/selos/${encodeURIComponent(nome)}`),
