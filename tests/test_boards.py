@@ -80,15 +80,28 @@ async def _contact(session, org, phone, name, **kw):
 
 @pytest.mark.asyncio
 async def test_boards_default_quando_vazio(client, org):
-    """GET /api/boards sem boards salvos -> 6 defaults: 2 de feedback (Triagem +
-    Campanha win-back) + 2 de cliente (Win-back clientes + Cancelados por estado) +
-    2 do board universal (Tarefas (CS) + Roadmap)."""
+    """GET /api/boards sem boards salvos -> 7 defaults: Follow-up (o Trello simples que
+    abre por padrão) + 2 de feedback (Triagem + Campanha win-back) + 2 de cliente
+    (Win-back clientes + Cancelados por estado) + 2 do board universal (Tarefas + Roadmap)."""
     data = (await client.get("/api/boards")).json()
-    assert isinstance(data, list) and len(data) == 6
+    assert isinstance(data, list) and len(data) == 7
     by_id = {b["id"]: b for b in data}
-    assert {"default-triagem", "default-winback",
+    assert {"default-followup", "default-triagem", "default-winback",
             "default-clientes-winback", "default-clientes-estado",
             "default-tarefas", "default-roadmap"} <= set(by_id)
+
+    # Follow-up vem PRIMEIRO (é o board que abre por padrão em /board).
+    assert data[0]["id"] == "default-followup"
+    followup = by_id["default-followup"]
+    assert followup["nome"] == "Follow-up"
+    assert followup["entidade"] == "feedback" and followup["campo"] == "selo"
+    assert [c["valor"] for c in followup["colunas"]] == [
+        "contatado", "respondeu", "nao_respondeu"
+    ]
+    by_valor = {c["valor"]: c for c in followup["colunas"]}
+    assert by_valor["contatado"]["nome"] == "Contatados"
+    assert by_valor["respondeu"]["nome"] == "Respondidos"
+    assert by_valor["nao_respondeu"]["nome"] == "Não responderam"
 
     triagem = by_id["default-triagem"]
     assert triagem["entidade"] == "feedback"
@@ -186,6 +199,7 @@ async def test_boards_crud_completo(client, org, session):
     assert r.json()["removido"] is True
     lista = (await client.get("/api/boards")).json()
     assert {b["id"] for b in lista} == {
+        "default-followup",
         "default-triagem", "default-winback",
         "default-clientes-winback", "default-clientes-estado",
         "default-tarefas", "default-roadmap",
@@ -532,6 +546,44 @@ async def test_board_move_selo_aplica_no_contato(client, org, session):
     )
     c = (await session.execute(select(Contact).where(Contact.id == ana.id))).scalar_one()
     assert c.profile_data["selos"] == ["contatado"]
+
+
+@pytest.mark.asyncio
+async def test_board_move_selo_followup_single_membership(client, org, session):
+    """Board Follow-up (Trello simples): os selos contatado/respondeu/nao_respondeu são
+    MUTUAMENTE EXCLUSIVOS — aplicar um remove os outros do contato (card vive em UMA
+    coluna). Selos fora do grupo (ex.: cortesia) convivem normalmente."""
+    ana = await _contact(session, org, "5531900000009", "Ana")
+    fb = FeedbackItem(
+        organization_id=org.id, contact_id=ana.id, source="bizzu_billing", type="churn",
+        external_id="sm1", text="cancelei", action_status="novo", occurred_at=_dt(2026, 6, 1),
+    )
+    session.add(fb)
+    await session.commit()
+
+    base = f"/api/feedbacks/{fb.id}/board-move"
+
+    # Contatado -> só 'contatado'.
+    await client.post(base, json={"campo": "selo", "valor": "contatado"})
+    c = (await session.execute(select(Contact).where(Contact.id == ana.id))).scalar_one()
+    assert c.profile_data["selos"] == ["contatado"]
+
+    # Um selo FORA do grupo coexiste (campanha multi-coluna).
+    await client.post(base, json={"campo": "selo", "valor": "cortesia"})
+    c = (await session.execute(select(Contact).where(Contact.id == ana.id))).scalar_one()
+    assert set(c.profile_data["selos"]) == {"contatado", "cortesia"}
+
+    # Mover para 'respondeu' tira 'contatado' (exclusivo) mas mantém 'cortesia'.
+    r = await client.post(base, json={"campo": "selo", "valor": "respondeu"})
+    assert r.status_code == 200, r.text
+    assert "respondeu" in r.json()["selos"] and "contatado" not in r.json()["selos"]
+    c = (await session.execute(select(Contact).where(Contact.id == ana.id))).scalar_one()
+    assert set(c.profile_data["selos"]) == {"respondeu", "cortesia"}
+
+    # Mover para 'nao_respondeu' tira 'respondeu'.
+    await client.post(base, json={"campo": "selo", "valor": "nao_respondeu"})
+    c = (await session.execute(select(Contact).where(Contact.id == ana.id))).scalar_one()
+    assert set(c.profile_data["selos"]) == {"nao_respondeu", "cortesia"}
 
 
 @pytest.mark.asyncio

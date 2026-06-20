@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import tailwindcssAnimate from "tailwindcss-animate";
 
 /* ============================================================================
    Tailwind — fundação da NOVA UI do painel Escuta (tema CLARO, marca Bizzu).
@@ -101,7 +102,7 @@ const config: Config = {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [tailwindcssAnimate],
 };
 
 export default config;

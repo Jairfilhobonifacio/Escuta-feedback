@@ -648,6 +648,7 @@ function BoardCard({
   onDragEnd,
   onChanged,
   colunaPlanejado = false,
+  compact = false,
 }: {
   fb: Feedback;
   dragging: boolean;
@@ -658,10 +659,27 @@ function BoardCard({
   /** true só no board de action_status, na coluna cujo valor é "planejado".
       Combinado com improvement_id == null, liga o nudge de vincular melhoria. */
   colunaPlanejado?: boolean;
+  /** Board Follow-up (Trello simples do dono): card ENXUTO — só nome + 1 linha do
+      texto + 1 chip (o tipo). Sem barra de urgência, sem a pilha de chips de conexão
+      e sem o menu de ações. Tira o ruído da visão padrão. */
+  compact?: boolean;
 }) {
   // Nudge da esteira do roadmap: feedback PLANEJADO ainda sem melhoria vinculada.
-  const destacarVincular = colunaPlanejado && fb.improvement_id == null;
-  const inner = (
+  const destacarVincular = !compact && colunaPlanejado && fb.improvement_id == null;
+  const inner = compact ? (
+    <>
+      <div className="board-card-top cell-person">
+        <Avatar name={fb.contato_nome} seed={fb.contato_id ?? fb.contato_whatsapp} size={24} />
+        <span className="board-card-who">{fb.contato_nome || "sem contato"}</span>
+      </div>
+      {fb.text ? (
+        <p className="board-card-text board-card-text-1">{snippet(fb.text, 90)}</p>
+      ) : (
+        <p className="board-card-text board-card-text-1 empty-text">sem texto {"—"} só a nota</p>
+      )}
+      <div className="board-card-meta">{typeBadge(fb.type)}</div>
+    </>
+  ) : (
     <>
       <div className="board-card-top cell-person">
         <Avatar name={fb.contato_nome} seed={fb.contato_id ?? fb.contato_whatsapp} size={26} />
@@ -698,7 +716,7 @@ function BoardCard({
 
   return (
     <article
-      className={`card board-card ${dragging ? "is-dragging" : ""}`}
+      className={`card board-card ${compact ? "board-card-compact" : ""} ${dragging ? "is-dragging" : ""}`}
       style={{ position: "relative" }}
       draggable
       onDragStart={(e) => {
@@ -717,11 +735,12 @@ function BoardCard({
         inner
       )}
 
-      {/* Fase B: menu de ações — fora do <Link>, não dispara drag/navegação. O
-          kebab fica fixo no topo-direito (position:absolute, independe da ordem
-          no DOM); o nudge `destacarVincular` evidencia o CTA de melhoria no
-          rodapé do card quando ele está planejado e sem melhoria vinculada. */}
-      <FeedbackAcoes fb={fb} onChanged={onChanged} destacarVincular={destacarVincular} />
+      {/* Fase B: menu de ações — escondido na visão enxuta (compact). Fora do <Link>,
+          não dispara drag/navegação; o kebab fica fixo no topo-direito; o nudge
+          `destacarVincular` evidencia o CTA de melhoria quando planejado sem melhoria. */}
+      {!compact && (
+        <FeedbackAcoes fb={fb} onChanged={onChanged} destacarVincular={destacarVincular} />
+      )}
     </article>
   );
 }
@@ -1142,6 +1161,125 @@ function BoardFormModal({
   );
 }
 
+// ===== modal "+ feedback" numa coluna (board Follow-up) =====================
+
+/** Tipos de feedback oferecidos no "+ feedback" do board simples (subconjunto enxuto
+    do vocabulário do backend — FEEDBACK_TYPES). "Outro" é o default neutro. */
+const NOVO_CARD_TIPOS: { value: string; label: string }[] = [
+  { value: "outro", label: "Outro" },
+  { value: "nps", label: "NPS" },
+  { value: "elogio", label: "Elogio" },
+  { value: "sugestao", label: "Sugestão" },
+  { value: "bug", label: "Problema / bug" },
+  { value: "churn", label: "Cancelamento" },
+];
+
+/** Cria um feedback DENTRO de uma coluna do board Follow-up. Reusa o endpoint que já
+    existe (POST /api/feedbacks via `feedbacksApi.create`) e, em seguida, aplica o selo
+    da coluna ao contato (POST /api/feedbacks/{id}/board-move via `boardsApi.move`) — o
+    mesmo fluxo manual de selo do board. Contato fora da base via WhatsApp + nome. */
+function NovoCardModal({
+  coluna,
+  onClose,
+  onCreated,
+}: {
+  coluna: BoardItemsColuna;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const titleId = useId();
+  const [nome, setNome] = useState("");
+  const [whats, setWhats] = useState("");
+  const [tipo, setTipo] = useState("outro");
+  const [texto, setTexto] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!whats.trim()) {
+      setError("Informe o WhatsApp do contato.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await feedbacksApi.create({
+        type: tipo,
+        text: texto.trim() || null,
+        contato_whatsapp: whats.trim(),
+        contato_nome: nome.trim() || undefined,
+        source: "manual",
+      });
+      // Aplica o selo da coluna ao contato (mesmo fluxo do drag-and-drop de selo).
+      await boardsApi.move(created.id, { campo: "selo", valor: coluna.valor });
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title={`Novo feedback · ${coluna.nome}`} onClose={onClose} labelledById={titleId}>
+      <form onSubmit={save}>
+        <div className="modal-body">
+          <div className="form-row-2">
+            <div className="field">
+              <label htmlFor={`${titleId}-nome`}>Nome do cliente</label>
+              <input
+                id={`${titleId}-nome`}
+                value={nome}
+                onChange={(e) => setNome(e.target.value)}
+                placeholder="ex.: Maria Souza"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`${titleId}-whats`}>WhatsApp</label>
+              <input
+                id={`${titleId}-whats`}
+                value={whats}
+                onChange={(e) => setWhats(e.target.value)}
+                placeholder="ex.: 5577999450083"
+                inputMode="tel"
+              />
+            </div>
+          </div>
+
+          <div className="field">
+            <label htmlFor={`${titleId}-tipo`}>Tipo</label>
+            <select id={`${titleId}-tipo`} value={tipo} onChange={(e) => setTipo(e.target.value)}>
+              {NOVO_CARD_TIPOS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label htmlFor={`${titleId}-texto`}>O que o cliente disse</label>
+            <textarea
+              id={`${titleId}-texto`}
+              value={texto}
+              onChange={(e) => setTexto(e.target.value)}
+              placeholder="opcional…"
+            />
+          </div>
+
+          {error && <div className="flash err" style={{ marginBottom: 0 }}>{error}</div>}
+        </div>
+        <div className="modal-foot">
+          <Button variant="ghost" type="button" onClick={onClose} disabled={saving}>
+            Cancelar
+          </Button>
+          <Button type="submit" disabled={saving}>
+            {saving ? "Criando…" : "Criar feedback"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ===== página ===============================================================
 
 export default function BoardPage() {
@@ -1175,12 +1313,21 @@ export default function BoardPage() {
   const [fPriority, setFPriority] = useState<TarefaPriority | "">("");
   const [fEffort, setFEffort] = useState<ImprovementEffort | "">("");
 
+  // Board Follow-up (o "Trello simples" do dono, default-followup): visão ENXUTA —
+  // cards mínimos, barra de filtros recolhida (só busca) e "+ feedback" por coluna.
+  const [busca, setBusca] = useState("");
+  // Qual coluna está com o modal "+ feedback" aberto (null = nenhum).
+  const [novoCardCol, setNovoCardCol] = useState<BoardItemsColuna | null>(null);
+
   const selected = boardList.find((b) => b.id === selectedId) ?? null;
   const isCliente = selected?.entidade === "cliente";
   const isTarefa = selected?.entidade === "tarefa";
   const isMelhoria = selected?.entidade === "melhoria";
   const isReadonly = selected ? CAMPOS_READONLY.has(selected.campo) : false;
   const isFeedback = !isCliente && !isTarefa && !isMelhoria;
+  // O board Follow-up é de feedback+selo; identificado pelo id default (e tolerante a
+  // qualquer board que o dono renomeie, contanto que o id seja o do default).
+  const isFollowup = selected?.id === "default-followup";
 
   // Filtros "por tipo de cliente" (via o contato) valem para feedback e cliente.
   const mostraContatoFiltros = isFeedback || isCliente;
@@ -1558,7 +1705,9 @@ export default function BoardPage() {
         <div>
           <h1 className="page-title">Board</h1>
           <div className="page-sub">
-            Kanban dinâmico {"—"} arraste para mover entre as colunas
+            {isFollowup
+              ? "Acompanhamento dos clientes — arraste o card entre Contatados, Respondidos e Não responderam."
+              : "Kanban dinâmico — arraste para mover entre as colunas"}
           </div>
         </div>
         <div className="page-head-actions">
@@ -1612,10 +1761,29 @@ export default function BoardPage() {
         </Button>
       </div>
 
+      {/* Board Follow-up: barra recolhida — só uma BUSCA (filtra os cards visíveis por
+          nome/texto no cliente, sem a barra pesada de filtros). */}
+      {selected && isFollowup && (
+        <div className="toolbar board-busca">
+          <input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar por nome ou texto…"
+            aria-label="Buscar cards"
+            className="board-busca-input"
+          />
+          {busca && (
+            <Button variant="ghost" size="sm" onClick={() => setBusca("")}>
+              Limpar
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Barra de filtros dos items (Fase E): só os controles que valem para a entidade
           do board selecionado. Aplicados ANTES do agrupamento no backend, então items E
-          counts de cada coluna refletem o filtro. */}
-      {selected && (
+          counts de cada coluna refletem o filtro. Recolhida no board Follow-up. */}
+      {selected && !isFollowup && (
         <div className="toolbar board-filtros">
           {mostraContatoFiltros && (
             <>
@@ -1756,7 +1924,10 @@ export default function BoardPage() {
         </div>
       )}
 
-      {selected?.campo === "selo" && (
+      {/* Nota de selo: explica o efeito do drag nos boards de selo de CAMPANHA
+          (multi-coluna). No board Follow-up (Trello simples) o card vive em UMA
+          coluna só — a nota seria ruído, então fica escondida ali. */}
+      {selected?.campo === "selo" && !isFollowup && (
         <div className="note">
           <span className="note-ico">{"\u{1F3F7}\u{FE0F}"}</span>
           <span>
@@ -1855,6 +2026,19 @@ export default function BoardPage() {
                 <span className="badge neutral">{col.count}</span>
               </header>
 
+              {/* "+ feedback" da coluna (board Follow-up): cria um feedback já com o
+                  selo desta coluna aplicado (reusa POST /api/feedbacks + board-move). */}
+              {isFollowup && (
+                <button
+                  type="button"
+                  className="board-add-card"
+                  onClick={() => setNovoCardCol(col)}
+                  aria-label={`Adicionar feedback em ${col.nome}`}
+                >
+                  <span aria-hidden>{"\u{FF0B}"}</span> feedback
+                </button>
+              )}
+
               <div className="board-col-body">
                 {isCliente ? (
                   (col.items as BoardClienteCard[]).map((cli) => (
@@ -1897,22 +2081,33 @@ export default function BoardPage() {
                     />
                   ))
                 ) : (
-                  (col.items as Feedback[]).map((fb) => (
-                    <BoardCard
-                      key={fb.id}
-                      fb={fb}
-                      dragging={draggingId === fb.id}
-                      onDragStart={(f) => setDraggingId(f.id)}
-                      onDragEnd={() => {
-                        setDraggingId(null);
-                        setOverColumn(null);
-                      }}
-                      onChanged={() => {
-                        if (selected) void loadItems(selected.id);
-                      }}
-                      colunaPlanejado={colunaPlanejado}
-                    />
-                  ))
+                  (col.items as Feedback[])
+                    .filter((fb) => {
+                      // Busca client-side só no board Follow-up (barra recolhida).
+                      if (!isFollowup || !busca.trim()) return true;
+                      const q = busca.trim().toLowerCase();
+                      return (
+                        (fb.contato_nome || "").toLowerCase().includes(q) ||
+                        (fb.text || "").toLowerCase().includes(q)
+                      );
+                    })
+                    .map((fb) => (
+                      <BoardCard
+                        key={fb.id}
+                        fb={fb}
+                        dragging={draggingId === fb.id}
+                        onDragStart={(f) => setDraggingId(f.id)}
+                        onDragEnd={() => {
+                          setDraggingId(null);
+                          setOverColumn(null);
+                        }}
+                        onChanged={() => {
+                          if (selected) void loadItems(selected.id);
+                        }}
+                        colunaPlanejado={colunaPlanejado}
+                        compact={isFollowup}
+                      />
+                    ))
                 )}
 
                 {col.count === 0 && !loading && (
@@ -2001,6 +2196,19 @@ export default function BoardPage() {
             // os filtros já foram limpos, então não vaza recorte antigo.
             selecionarBoard(b.id);
             await loadItems(b.id, {});
+          }}
+        />
+      )}
+
+      {/* "+ feedback" numa coluna do board Follow-up: cria o feedback e aplica o selo
+          da coluna; ao concluir, recarrega os items do board. */}
+      {novoCardCol && (
+        <NovoCardModal
+          coluna={novoCardCol}
+          onClose={() => setNovoCardCol(null)}
+          onCreated={() => {
+            setNovoCardCol(null);
+            if (selected) void loadItems(selected.id);
           }}
         />
       )}

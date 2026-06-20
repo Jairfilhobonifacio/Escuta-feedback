@@ -122,6 +122,45 @@ _COR_DEFAULT = "#6366f1"  # token --indigo do design system do painel.
 # --- Boards default (quando a org ainda não tem nenhum board salvo) -----------
 
 
+# Selos do board "Follow-up" (Trello simples do dono): grupo MUTUAMENTE EXCLUSIVO.
+# Aplicar um remove os outros dois do contato (single-membership = card vive em UMA
+# coluna só). "nao_respondeu" = abordado e ainda sem resposta. Reusa o mecanismo de
+# selo existente (catálogo + profile_data["selos"]); a exclusividade é aplicada no move.
+FOLLOWUP_SELO_CONTATADO = "contatado"
+FOLLOWUP_SELO_RESPONDEU = "respondeu"
+FOLLOWUP_SELO_NAO_RESPONDEU = "nao_respondeu"
+FOLLOWUP_SELOS: tuple[str, ...] = (
+    FOLLOWUP_SELO_CONTATADO,
+    FOLLOWUP_SELO_RESPONDEU,
+    FOLLOWUP_SELO_NAO_RESPONDEU,
+)
+
+
+def _board_default_followup() -> dict[str, Any]:
+    """Board default que ABRE por padrão em /board: o "Trello simples" do dono.
+
+    3 colunas de acompanhamento por SELO (mecanismo de campanha já existente):
+    Contatados (selo 'contatado'), Respondidos ('respondeu') e Não responderam
+    ('nao_respondeu' = abordado e ainda sem resposta). Os 3 selos formam um grupo
+    mutuamente exclusivo (ver FOLLOWUP_SELOS): mover um card aplica o selo da coluna
+    e remove os outros dois — o card vive em UMA coluna só (single-membership Trello).
+    """
+    etapas = [
+        (FOLLOWUP_SELO_CONTATADO, "Contatados", "#6c5ce7"),
+        (FOLLOWUP_SELO_RESPONDEU, "Respondidos", "#22c55e"),
+        (FOLLOWUP_SELO_NAO_RESPONDEU, "Não responderam", "#82809a"),
+    ]
+    return {
+        "id": "default-followup",
+        "nome": "Follow-up",
+        "entidade": ENTIDADE_FEEDBACK,
+        "campo": "selo",
+        "colunas": [
+            {"id": valor, "nome": nome, "valor": valor, "cor": cor} for valor, nome, cor in etapas
+        ],
+    }
+
+
 def _board_default_triagem() -> dict[str, Any]:
     """Board operacional default: 1 coluna por action_status do funil do admin.py."""
     return {
@@ -232,7 +271,10 @@ def _board_default_roadmap() -> dict[str, Any]:
 
 
 def _boards_default() -> list[dict[str, Any]]:
+    # Follow-up vem PRIMEIRO: é o board que abre por padrão em /board (o "Trello
+    # simples" do dono). Os demais seguem na ordem canônica anterior.
     return [
+        _board_default_followup(),
         _board_default_triagem(),
         _board_default_winback(),
         _board_default_winback_clientes(),
@@ -1439,6 +1481,25 @@ async def board_items(
 # --- BOARD MOVE (drag-and-drop genérico) --------------------------------------
 
 
+def _aplicar_selo(contact: Contact, valor: str) -> None:
+    """Aplica o selo `valor` ao contato (idempotente). Se `valor` pertence ao grupo
+    de follow-up (FOLLOWUP_SELOS), remove os OUTROS selos do grupo — single-membership:
+    o card vive em UMA coluna só do board Follow-up (Trello). Selos fora do grupo são
+    apenas acrescentados, como antes (multi-coluna por campanha)."""
+    selos = _selos_do_contato(contact)
+    if valor in FOLLOWUP_SELOS:
+        # Tira os demais selos do grupo (mantém a ordem; remove duplicatas do grupo).
+        outros_do_grupo = {s for s in FOLLOWUP_SELOS if s != valor}
+        novos = [s for s in selos if s not in outros_do_grupo]
+        if valor not in novos:
+            novos.append(valor)
+        if novos != selos:
+            _set_selos_do_contato(contact, novos)
+        return
+    if valor not in selos:
+        _set_selos_do_contato(contact, [*selos, valor])
+
+
 class BoardMoveIn(BaseModel):
     """Move um feedback no board: aplica o `campo` com o `valor` da coluna destino.
 
@@ -1510,9 +1571,7 @@ async def board_move(
             )
         # Reusa a lógica de selos do campanha.py: garante no catálogo + idempotente.
         _upsert_catalogo(org, valor, None)
-        selos = _selos_do_contato(contact)
-        if valor not in selos:
-            _set_selos_do_contato(contact, [*selos, valor])
+        _aplicar_selo(contact, valor)
 
     await session.commit()
 
@@ -1580,9 +1639,7 @@ async def contact_board_move(
 
     # campo == "selo": reusa a lógica de selos do campanha.py (catálogo + idempotente).
     _upsert_catalogo(org, valor, None)
-    selos = _selos_do_contato(contact)
-    if valor not in selos:
-        _set_selos_do_contato(contact, [*selos, valor])
+    _aplicar_selo(contact, valor)
 
     await session.commit()
     return {"id": str(contact.id), "selos": _selos_do_contato(contact)}

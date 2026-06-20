@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Search, AlertTriangle, Info, Mail, Plus, X } from "lucide-react";
+import { Search, AlertTriangle, Info, Mail, Plus, X, SlidersHorizontal } from "lucide-react";
 import Avatar from "@/components/Avatar";
 import { healthCell } from "@/components/HealthCell";
 import { Reveal } from "@/components/Motion";
@@ -52,6 +52,22 @@ function npsTag(score: number | null) {
   );
 }
 
+/** Estado da assinatura (snapshot partner) -> badge legível com cor por situação. */
+const ESTADO_META: Record<string, { variant: BadgeVariant; label: string }> = {
+  active_paying: { variant: "positive", label: "Pagante" },
+  past_due: { variant: "negative", label: "Em atraso" },
+  paid_without_access: { variant: "neutral", label: "Pago s/ acesso" },
+  complimentary: { variant: "outline", label: "Cortesia" },
+  cancelled: { variant: "negative", label: "Cancelado" },
+};
+
+function estadoBadge(estado: string | null) {
+  if (!estado) return <span className="faint">—</span>;
+  const m = ESTADO_META[estado];
+  if (!m) return <Badge variant="neutral">{estado.replace(/_/g, " ")}</Badge>;
+  return <Badge variant={m.variant}>{m.label}</Badge>;
+}
+
 function renovaCell(dias: number | null) {
   if (dias === null || dias === undefined) return <span className="faint">—</span>;
   const soon = dias <= 7;
@@ -69,9 +85,10 @@ const TIPO_LABEL: Record<string, string> = {
   csat: "CSAT",
 };
 
-/** Linha-fantasma da tabela durante o load: espelha as 9 colunas (avatar + barra
-    de Health + chips), para a transição conteúdo↔skeleton não "pular". */
-function SkeletonRow() {
+/** Linha-fantasma da tabela durante o load. Recebe `cols` (nº de colunas visíveis)
+    para espelhar a tabela atual (5 essenciais, ou 10 com os detalhes abertos) e a
+    transição conteúdo↔skeleton não "pular". */
+function SkeletonRow({ cols }: { cols: number }) {
   return (
     <tr aria-hidden>
       <td>
@@ -89,13 +106,18 @@ function SkeletonRow() {
           <div className="sk-line sk-sm" style={{ width: 24, margin: 0 }} />
         </div>
       </td>
-      <td><div className="sk-line w-60" style={{ margin: 0 }} /></td>
-      <td><div className="sk-line w-50" style={{ margin: 0 }} /></td>
-      <td><div className="sk-line" style={{ width: 56, margin: 0 }} /></td>
       <td><div className="sk-line w-50" style={{ margin: 0 }} /></td>
       <td><div className="sk-line w-60" style={{ margin: 0 }} /></td>
-      <td><div className="sk-line" style={{ width: 28, margin: 0 }} /></td>
       <td><div className="sk-line w-70" style={{ margin: 0 }} /></td>
+      {cols > 5 && (
+        <>
+          <td><div className="sk-line w-60" style={{ margin: 0 }} /></td>
+          <td><div className="sk-line w-50" style={{ margin: 0 }} /></td>
+          <td><div className="sk-line" style={{ width: 56, margin: 0 }} /></td>
+          <td><div className="sk-line w-50" style={{ margin: 0 }} /></td>
+          <td><div className="sk-line" style={{ width: 28, margin: 0 }} /></td>
+        </>
+      )}
     </tr>
   );
 }
@@ -130,6 +152,15 @@ const HEALTH_OPCOES: { value: HealthBand; label: string }[] = [
   { value: "healthy", label: "Saudável" },
   { value: "watch", label: "Atenção" },
   { value: "at_risk", label: "Em risco" },
+];
+
+/** Recortes de alcance — o segmentado que define quem aparece por padrão.
+    'sim' (contatáveis no WhatsApp) é o DEFAULT: esconde grupos/fixos/inválidos.
+    'nao' = leads só-e-mail (winback legítimo). '' = todos (inclui o lixo). */
+const ALCANCE_OPCOES: { value: TemWhatsappFiltro | ""; label: string; hint: string }[] = [
+  { value: "sim", label: "Contatáveis", hint: "Com WhatsApp válido — quem dá para abordar" },
+  { value: "nao", label: "Winback", hint: "Só e-mail — leads de reativação por e-mail" },
+  { value: "", label: "Todos", hint: "Inclui grupos, fixos e inválidos (não-clientes)" },
 ];
 
 function fmtDate(iso: string | null): string {
@@ -307,10 +338,14 @@ export default function ClientesPage() {
   const [estado, setEstado] = useState<EstadoAssinatura | "">("");
   const [npsBucket, setNpsBucket] = useState<NpsBucket | "">("");
   const [healthBand, setHealthBand] = useState<HealthBand | "">("");
-  const [temWa, setTemWa] = useState<TemWhatsappFiltro | "">("");
+  // Alcance: DEFAULT 'sim' (contatáveis). Esconde grupos/fixos/inválidos do webhook.
+  const [temWa, setTemWa] = useState<TemWhatsappFiltro | "">("sim");
   // Refinos client-side (não fazem parte do ClienteFiltro do backend).
   const [seloFiltro, setSeloFiltro] = useState("");
   const [soRisco, setSoRisco] = useState(false);
+  // UI: filtros avançados recolhidos + colunas de detalhe recolhidas (densidade).
+  const [filtrosAbertos, setFiltrosAbertos] = useState(false);
+  const [detalhes, setDetalhes] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -389,9 +424,9 @@ export default function ClientesPage() {
     );
   }, []);
 
-  // Fila de risco: contas que não estão saudáveis, pior Health primeiro.
+  // Fila de risco REAL: só a banda 'at_risk' (acionável), não "tudo que não é healthy".
   const emRiscoCount = useMemo(
-    () => clientes.filter((c) => c.health_band !== "healthy").length,
+    () => clientes.filter((c) => c.health_band === "at_risk").length,
     [clientes],
   );
   const visiveis = useMemo(() => {
@@ -399,27 +434,25 @@ export default function ClientesPage() {
     if (seloFiltro) base = base.filter((c) => c.selos.includes(seloFiltro));
     if (!soRisco) return base;
     return [...base]
-      .filter((c) => c.health_band !== "healthy")
+      .filter((c) => c.health_band === "at_risk")
       .sort((a, b) => a.health - b.health);
   }, [clientes, soRisco, seloFiltro]);
 
-  // Quantos do conjunto carregado são "só e-mail" (sem WhatsApp real).
+  // Quantos do conjunto carregado são "só e-mail" (sem WhatsApp real). Só faz sentido
+  // alertar quando o recorte atual mistura não-contatáveis (alcance != 'sim').
   const semWaCount = useMemo(
     () => clientes.filter((c) => !c.tem_whatsapp).length,
     [clientes],
   );
 
-  // Há algum filtro ativo? (controla o botão "limpar filtros" e o texto do vazio).
+  // Filtros avançados ativos (os que ficam dentro do painel recolhível).
+  const avancadosAtivos =
+    [perfil, planType, estado, npsBucket, healthBand, seloFiltro].filter(Boolean).length;
+
+  // Há algum filtro ativo? (controla "limpar filtros" e o texto do vazio). O alcance
+  // só conta como filtro quando NÃO está no default 'sim' (contatáveis).
   const algumFiltro =
-    !!search ||
-    !!perfil ||
-    !!planType ||
-    !!estado ||
-    !!npsBucket ||
-    !!healthBand ||
-    !!temWa ||
-    !!seloFiltro ||
-    soRisco;
+    !!search || avancadosAtivos > 0 || temWa !== "sim" || soRisco;
 
   const limparFiltros = useCallback(() => {
     setSearch("");
@@ -428,28 +461,38 @@ export default function ClientesPage() {
     setEstado("");
     setNpsBucket("");
     setHealthBand("");
-    setTemWa("");
+    setTemWa("sim");
     setSeloFiltro("");
     setSoRisco(false);
   }, []);
+
+  const recorteLabel =
+    temWa === "sim" ? "contatáveis" : temWa === "nao" ? "winback (só e-mail)" : "no total";
+  const colCount = detalhes ? 10 : 5;
 
   return (
     <div>
       <Reveal className="page-head">
         <div>
           <h1 className="page-title">Clientes</h1>
-          <div className="page-sub">Todos os clientes — perfil, plano, NPS, selos e alcance (WhatsApp vs. só e-mail)</div>
+          <div className="page-sub">
+            Por padrão, só quem dá para abordar (WhatsApp válido) — grupos, fixos e
+            inválidos ficam de fora. Troque o alcance para ver o winback ou todos.
+          </div>
         </div>
-        {!loading && <span className="refresh-note">{clientes.length} clientes</span>}
+        {!loading && (
+          <span className="refresh-note">
+            {clientes.length} {recorteLabel}
+          </span>
+        )}
       </Reveal>
 
-      {semWaCount > 0 && (
+      {temWa === "nao" && semWaCount > 0 && (
         <Reveal delay={0.04} className="note">
           <span className="note-ico"><Info size={16} aria-hidden /></span>
           <span>
-            <b>{semWaCount}</b> cliente{semWaCount === 1 ? "" : "s"} <b>sem WhatsApp</b> (só e-mail) no universo
-            atual — fora do alcance das pesquisas por WhatsApp, mas alvo do win-back por e-mail. Use o filtro
-            de alcance para isolá-los.
+            Estes <b>{semWaCount}</b> são leads <b>só de e-mail</b> — fora do alcance das
+            pesquisas por WhatsApp, mas alvo do win-back por e-mail.
           </span>
         </Reveal>
       )}
@@ -463,72 +506,64 @@ export default function ClientesPage() {
             placeholder="Buscar por nome ou WhatsApp…"
           />
         </label>
-        <select
-          value={estado}
-          onChange={(e) => setEstado(e.target.value as EstadoAssinatura | "")}
-          aria-label="Filtrar por estado da assinatura"
+
+        {/* Alcance — segmentado: Contatáveis (default) · Winback · Todos */}
+        <div
+          role="group"
+          aria-label="Recorte de alcance"
+          className="inline-flex items-center gap-0.5 rounded-[var(--radius-sm)] border border-[var(--charcoal-2)] bg-[var(--ink-800)] p-1"
         >
-          <option value="">Toda assinatura</option>
-          {ESTADO_OPCOES.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
-        <select value={planType} onChange={(e) => setPlanType(e.target.value)} aria-label="Filtrar por plano">
-          <option value="">Todos os planos</option>
-          {planOptions.map((p) => (
-            <option key={p} value={p}>{p}</option>
-          ))}
-        </select>
-        <select value={perfil} onChange={(e) => setPerfil(e.target.value)} aria-label="Filtrar por perfil">
-          <option value="">Todos os perfis</option>
-          {perfilOptions.map((p) => (
-            <option key={p} value={p}>{p.replace(/_/g, " ")}</option>
-          ))}
-        </select>
-        <select
-          value={npsBucket}
-          onChange={(e) => setNpsBucket(e.target.value as NpsBucket | "")}
-          aria-label="Filtrar por faixa de NPS"
-        >
-          <option value="">Todo NPS</option>
-          {NPS_OPCOES.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
-        <select
-          value={healthBand}
-          onChange={(e) => setHealthBand(e.target.value as HealthBand | "")}
-          aria-label="Filtrar por banda de saúde"
-        >
-          <option value="">Toda saúde</option>
-          {HEALTH_OPCOES.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
-        <select
-          value={temWa}
-          onChange={(e) => setTemWa(e.target.value as TemWhatsappFiltro | "")}
-          aria-label="Filtrar por alcance no WhatsApp"
-        >
-          <option value="">Todo alcance</option>
-          <option value="sim">Com WhatsApp</option>
-          <option value="nao">Sem WhatsApp (só e-mail)</option>
-        </select>
-        <select value={seloFiltro} onChange={(e) => setSeloFiltro(e.target.value)} aria-label="Filtrar por selo">
-          <option value="">Todos os selos</option>
-          {seloOptions.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
+          {ALCANCE_OPCOES.map((o) => {
+            const on = temWa === o.value;
+            return (
+              <button
+                key={o.label}
+                type="button"
+                onClick={() => setTemWa(o.value)}
+                aria-pressed={on}
+                title={o.hint}
+                className={[
+                  "rounded-[calc(var(--radius-sm)-3px)] px-3 py-[7px] text-[13px] font-medium transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--indigo)]",
+                  on
+                    ? "bg-[image:var(--grad-indigo)] text-white shadow-[var(--btn-indigo-shadow)]"
+                    : "text-[var(--text-faint)] hover:text-[var(--text)]",
+                ].join(" ")}
+              >
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Em risco REAL (banda at_risk) — atalho de fila acionável */}
         <button
           type="button"
           className={`risk-chip ${soRisco ? "on" : ""}`}
           onClick={() => setSoRisco((v) => !v)}
           aria-pressed={soRisco}
-          title="Mostrar só contas que precisam de atenção — pior Health primeiro"
+          title="Mostrar só contas em risco real (at_risk) — pior Health primeiro"
         >
           <AlertTriangle size={15} aria-hidden /> Em risco <span className="risk-n">{emRiscoCount}</span>
         </button>
+
+        {/* Filtros avançados — recolhidos por padrão (densidade) */}
+        <button
+          type="button"
+          onClick={() => setFiltrosAbertos((v) => !v)}
+          aria-expanded={filtrosAbertos}
+          className={[
+            "inline-flex items-center gap-2 rounded-[var(--radius-sm)] border px-3 py-[10px] text-[13.5px] font-medium transition-colors",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--indigo)]",
+            filtrosAbertos || avancadosAtivos > 0
+              ? "border-[var(--promoter-line)] bg-[var(--promoter-soft)] text-[var(--indigo-light)]"
+              : "border-[var(--charcoal-2)] bg-[var(--ink-800)] text-[var(--text-dim)] hover:text-[var(--text)]",
+          ].join(" ")}
+        >
+          <SlidersHorizontal size={15} aria-hidden /> Filtros
+          {avancadosAtivos > 0 && <span className="risk-n">{avancadosAtivos}</span>}
+        </button>
+
         {algumFiltro && (
           <Button variant="ghost" size="sm" onClick={limparFiltros}>
             Limpar filtros
@@ -536,13 +571,67 @@ export default function ClientesPage() {
         )}
       </Reveal>
 
+      {/* Painel de filtros avançados — só monta quando aberto */}
+      {filtrosAbertos && (
+        <Reveal className="toolbar" style={{ marginTop: -6 }}>
+          <select
+            value={estado}
+            onChange={(e) => setEstado(e.target.value as EstadoAssinatura | "")}
+            aria-label="Filtrar por estado da assinatura"
+          >
+            <option value="">Toda assinatura</option>
+            {ESTADO_OPCOES.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <select value={planType} onChange={(e) => setPlanType(e.target.value)} aria-label="Filtrar por plano">
+            <option value="">Todos os planos</option>
+            {planOptions.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          <select value={perfil} onChange={(e) => setPerfil(e.target.value)} aria-label="Filtrar por perfil">
+            <option value="">Todos os perfis</option>
+            {perfilOptions.map((p) => (
+              <option key={p} value={p}>{p.replace(/_/g, " ")}</option>
+            ))}
+          </select>
+          <select
+            value={npsBucket}
+            onChange={(e) => setNpsBucket(e.target.value as NpsBucket | "")}
+            aria-label="Filtrar por faixa de NPS"
+          >
+            <option value="">Todo NPS</option>
+            {NPS_OPCOES.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <select
+            value={healthBand}
+            onChange={(e) => setHealthBand(e.target.value as HealthBand | "")}
+            aria-label="Filtrar por banda de saúde"
+          >
+            <option value="">Toda saúde</option>
+            {HEALTH_OPCOES.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <select value={seloFiltro} onChange={(e) => setSeloFiltro(e.target.value)} aria-label="Filtrar por selo">
+            <option value="">Todos os selos</option>
+            {seloOptions.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </Reveal>
+      )}
+
       <div className="count-line">
         {loading ? (
           "Carregando…"
         ) : (
           <>
             <b>{visiveis.length}</b> cliente{visiveis.length === 1 ? "" : "s"}
-            {algumFiltro ? " com os filtros atuais" : " no total"}
+            {algumFiltro ? " com os filtros atuais" : ` ${recorteLabel}`}
           </>
         )}
       </div>
@@ -561,21 +650,35 @@ export default function ClientesPage() {
               <tr>
                 <th>Cliente</th>
                 <th>Saúde</th>
-                <th>Perfil</th>
-                <th>Plano</th>
-                <th>NPS</th>
-                <th>Renova em</th>
+                <th>Assinatura</th>
                 <th>Último feedback</th>
-                <th>Feedbacks</th>
-                <th>Selos</th>
+                {detalhes && (
+                  <>
+                    <th>Perfil</th>
+                    <th>Plano</th>
+                    <th>NPS</th>
+                    <th>Renova em</th>
+                    <th>Feedbacks</th>
+                  </>
+                )}
+                <th>
+                  <button
+                    type="button"
+                    onClick={() => setDetalhes((v) => !v)}
+                    aria-expanded={detalhes}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--indigo-light)] hover:underline"
+                  >
+                    {detalhes ? "− menos colunas" : "+ mais colunas"}
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody aria-busy={loading || undefined}>
               {loading && clientes.length === 0 &&
-                Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)}
+                Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} cols={colCount} />)}
               {!loading && !err && visiveis.length === 0 && (
                 <tr>
-                  <td colSpan={9}>
+                  <td colSpan={colCount}>
                     <div className="empty">
                       <div className="empty-illu">{EMPTY_PEOPLE}</div>
                       <div className="empty-title">
@@ -587,7 +690,7 @@ export default function ClientesPage() {
                       </div>
                       <p className="empty-sub">
                         {soRisco
-                          ? "Toda a base está saudável por enquanto \u{2014} bom trabalho."
+                          ? "Nenhuma conta na banda de risco neste recorte \u{2014} bom trabalho."
                           : algumFiltro
                           ? "Tente afrouxar a busca ou limpar os filtros."
                           : "Quando houver clientes contatáveis, eles aparecem aqui."}
@@ -627,12 +730,7 @@ export default function ClientesPage() {
                     </div>
                   </td>
                   <td>{healthCell(c.health, c.health_band, c.health_factors)}</td>
-                  <td>{perfilBadge(c.perfil)}</td>
-                  <td className="dim">
-                    {c.plano || c.plan_type || <span className="faint">—</span>}
-                  </td>
-                  <td>{npsTag(c.nps_score)}</td>
-                  <td>{renovaCell(c.dias_para_renovar)}</td>
+                  <td>{estadoBadge(c.estado)}</td>
                   <td className="dim">
                     {c.ultimo_feedback_em ? (
                       <>
@@ -647,7 +745,17 @@ export default function ClientesPage() {
                       <span className="faint">nunca</span>
                     )}
                   </td>
-                  <td className="dim">{c.total_feedbacks}</td>
+                  {detalhes && (
+                    <>
+                      <td>{perfilBadge(c.perfil)}</td>
+                      <td className="dim">
+                        {c.plano || c.plan_type || <span className="faint">—</span>}
+                      </td>
+                      <td>{npsTag(c.nps_score)}</td>
+                      <td>{renovaCell(c.dias_para_renovar)}</td>
+                      <td className="dim">{c.total_feedbacks}</td>
+                    </>
+                  )}
                   <td>
                     <SelosCell
                       cliente={c}

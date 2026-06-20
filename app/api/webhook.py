@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api._security import require_waha_webhook_secret
 from app.config import settings
 from app.db import get_session
+from app.domain.contacts.whatsapp import classify_phone
 from app.domain.survey.brain import OPT_OUT_CONFIRM_MSG, SurveyBrain
 from app.domain.survey.message_handler import InboundMessageHandler
 from app.domain.survey.resolver import (
@@ -247,6 +248,26 @@ def _extract_inbound(payload: dict[str, Any]) -> dict[str, Any] | None:
     sender = msg.get("from")
     if not sender:
         return None
+
+    # --- DEFESA EM PROFUNDIDADE: descarta GRUPO / BROADCAST na PORTA DE ENTRADA --
+    # A Central é de conversa 1:1 com o cliente. Mensagens de GRUPO (sufixo @g.us /
+    # JID 120363...) e de listas de transmissão/STATUS (@broadcast, status@broadcast)
+    # NÃO são conversas de cliente e poluíam o Chat (chegavam a ~39% das "conversas").
+    # Barramos AQUI — antes de criar Contact/Message — em vez de só na listagem.
+    # 1) Pelo sufixo do JID (sinal forte e barato), cobrindo o self-chat também:
+    #    self-chat real é sempre @c.us/@lid, então este filtro não o atinge.
+    sender_str = str(sender)
+    suffix = sender_str.split("@", 1)[1].lower() if "@" in sender_str else ""
+    if suffix == "g.us" or suffix.endswith("broadcast"):
+        return None
+    # 2) Reforço estrutural por classe do número (pega JID de grupo legado
+    #    '<phone>-<ts>' e ids malformados): só barra quando NÃO é @lid (LID precisa
+    #    de I/O p/ resolver — '...@lid' tem parte-local não-numérica e cairia em
+    #    'invalid' por engano; deixamos o resolve_lid adiante cuidar dele).
+    if suffix != "lid":
+        local_part = sender_str.split("@", 1)[0]
+        if classify_phone(local_part) in ("group", "invalid", "empty"):
+            return None
 
     # Detecta ÁUDIO (voz): WAHA manda type 'audio'/'ptt'/'voice' e/ou media com
     # mimetype 'audio/...'. Nesses casos não há body de texto — transcrevemos depois.

@@ -4,20 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ComponentType } from "react";
 import {
-  LayoutDashboard,
   MessageSquare,
   MessageCircle,
-  Tag,
   Kanban,
-  Lightbulb,
   Users,
   ClipboardList,
-  Phone,
-  Megaphone,
-  ListChecks,
-  BookOpen,
   Smartphone,
-  Plug,
   Radar,
 } from "lucide-react";
 
@@ -27,40 +19,41 @@ import {
 type IconType = ComponentType<{ size?: number; strokeWidth?: number; "aria-hidden"?: boolean }>;
 type NavItem = { href: string; label: string; icon: IconType; feature?: boolean };
 
-/* Navegação agrupada por intenção do usuário (mantém TODOS os itens e rotas):
-     MONITORAR - onde se observa a voz do cliente (telas de leitura/insight)
-     GERIR     - onde se organiza e prioriza (triagem, roadmap, base)
-     OPERAR    - onde se age e se conecta (execucao + infra do WhatsApp) */
+/* Navegação ENXUTA, organizada pelo FLUXO real da operação manual (decisão do dono:
+   simplicidade — "bato o olho e entendo"):
+     OPERAÇÃO - o dia a dia: ver, registrar, conversar, organizar
+     CLIENTES - a base e a coleta
+     CONFIG   - infra do WhatsApp
+   As telas que o dono considerou ruído saíram do MENU mas continuam EXISTINDO e
+   acessíveis por URL (nada foi apagado). Reverter = devolver o item a um grupo:
+     /dashboard  -> substituído pela Monitorar
+     /temas      -> clustering de dores ("me explique melhor o que seria")
+     /melhorias  -> roadmap ("pra que serve?")
+     /campanha   -> win-back ("inútil, dados errôneos")
+     /tarefas    -> "deveria estar no board, não separado"
+     /playbooks  -> automação ("não faz sentido")
+     /contatos   -> coberto pela visão de Clientes
+     /integracao -> documentação técnica de API */
 const groups: { label: string; items: NavItem[] }[] = [
   {
-    label: "Monitorar",
+    label: "Operação",
     items: [
-      { href: "/central", label: "Central", icon: Radar, feature: true },
-      { href: "/", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/", label: "Monitorar", icon: Radar, feature: true },
       { href: "/feedbacks", label: "Feedbacks", icon: MessageSquare, feature: true },
       { href: "/chat", label: "Chat", icon: MessageCircle, feature: true },
-      { href: "/temas", label: "Temas", icon: Tag },
+      { href: "/board", label: "Board", icon: Kanban },
     ],
   },
   {
-    label: "Gerir",
+    label: "Clientes",
     items: [
-      { href: "/board", label: "Board", icon: Kanban },
-      { href: "/melhorias", label: "Melhorias", icon: Lightbulb },
       { href: "/clientes", label: "Clientes", icon: Users },
       { href: "/pesquisas", label: "Pesquisas", icon: ClipboardList },
-      { href: "/contatos", label: "Contatos", icon: Phone },
     ],
   },
   {
-    label: "Operar",
-    items: [
-      { href: "/campanha", label: "Campanha", icon: Megaphone },
-      { href: "/tarefas", label: "Tarefas", icon: ListChecks },
-      { href: "/playbooks", label: "Playbooks", icon: BookOpen },
-      { href: "/conexao", label: "Conexao", icon: Smartphone },
-      { href: "/integracao", label: "Integracao", icon: Plug },
-    ],
+    label: "Config",
+    items: [{ href: "/conexao", label: "Conexão", icon: Smartphone }],
   },
 ];
 
@@ -82,7 +75,12 @@ export default function Sidebar() {
           <div className="nav-group" key={g.label} role="group" aria-label={g.label}>
             <div className="nav-group-label" aria-hidden>{g.label}</div>
             {g.items.map((it) => {
-              const active = it.href === "/" ? path === "/" : path.startsWith(it.href);
+              // "Monitorar" (href "/") é a Central: a home redireciona para
+              // /central, então o item fica ativo nas duas rotas.
+              const active =
+                it.href === "/"
+                  ? path === "/" || path === "/central" || path.startsWith("/central")
+                  : path.startsWith(it.href);
               const cls = [active ? "active" : "", it.feature ? "feature" : ""]
                 .filter(Boolean)
                 .join(" ");

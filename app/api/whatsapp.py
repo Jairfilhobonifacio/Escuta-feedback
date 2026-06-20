@@ -296,7 +296,7 @@ def _estado_do_contato(contact: Contact) -> str | None:
 @router.get("/whatsapp/conversations")
 async def whatsapp_conversations(
     search: str | None = None,
-    excluir_grupos: bool = False,
+    excluir_grupos: bool = True,
     limit: int = 200,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -305,8 +305,9 @@ async def whatsapp_conversations(
 
     Cada item: {contact_id, nome, whatsapp, tem_whatsapp, is_grupo, estado, selos,
     total, ultima_mensagem, ultima_em, ultima_direction}. `search` filtra
-    nome/telefone. `excluir_grupos` (default false): quando true, omite contatos
-    cujo telefone é classe 'group' (JID de grupo/comunidade do WhatsApp).
+    nome/telefone. `excluir_grupos` (default TRUE): por padrão omite contatos cujo
+    telefone é classe 'group' (JID de grupo/comunidade do WhatsApp) — a Central é de
+    conversa 1:1. Passe `excluir_grupos=false` explicitamente para incluí-los.
     """
     org = await _get_org(session)
     # UMA query: mensagens + contato juntados, mais recentes primeiro. Agrupa em

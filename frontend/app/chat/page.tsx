@@ -405,16 +405,6 @@ export default function ChatPage() {
           )}
         </section>
       </div>
-
-      {/* a lista de balões usa o mesmo flex-column da .chat-thread (a wrapper
-         <Stagger> apenas orquestra a entrada — herda o gap visual). */}
-      <style jsx>{`
-        :global(.chat-thread-list) {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-      `}</style>
     </div>
   );
 }

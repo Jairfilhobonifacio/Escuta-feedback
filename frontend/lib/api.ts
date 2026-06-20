@@ -1286,6 +1286,8 @@ export const feedbacks = {
   /** Feed paginado de feedbacks. Filtros opcionais viram query string. */
   list: (filtro?: FeedbackFiltro) =>
     api.get<FeedbacksResponse>(`/api/feedbacks${buildQuery(filtro)}`),
+  /** Cria um feedback manual (201). Exige contato_id OU (contato_whatsapp + nome). */
+  create: (body: FeedbackInput) => api.post<Feedback>("/api/feedbacks", body),
   /** PATCH parcial de um feedback (`FeedbackPatch`): só o que vier no corpo é tocado.
       Retorna o item no formato do feed (já com assignee/team_tag/improvement_id). */
   patch: (id: string, body: FeedbackPatch) =>
@@ -1416,7 +1418,7 @@ export interface CentralOverview {
 }
 
 /** Bucket textual do NPS de um item da lista detalhada. */
-export type CentralNpsBucket = "promotor" | "neutro" | "detrator";
+export type CentralNpsBucket = "promoter" | "passive" | "detractor";
 
 /** Uma linha da lista de quem deu NPS — GET /api/central/nps. */
 export interface CentralNpsItem {

@@ -106,6 +106,62 @@ def test_self_chat_formato_misto_marca_self_check():
     assert got["self_check_to"] == lid
 
 
+# --- Defesa em profundidade: GRUPO / BROADCAST descartados na ingestão ---------
+GRUPO = "120363041234567890@g.us"      # JID de grupo/comunidade
+GRUPO_LEGADO = "553193398851-1603107298@g.us"  # JID de grupo legado '<phone>-<ts>'
+BROADCAST = "120363001234567890@broadcast"     # lista de transmissão
+STATUS = "status@broadcast"                      # status do WhatsApp
+
+
+def test_grupo_inbound_descartado():
+    """Mensagem de GRUPO (@g.us) NÃO vira conversa de cliente — descartada na entrada."""
+    _with_flag(False)
+    assert _extract_inbound(_payload("oi pessoal", from_=GRUPO, from_me=False)) is None
+
+
+def test_grupo_legado_descartado():
+    """JID de grupo LEGADO '<phone>-<ts>@g.us' também é descartado."""
+    _with_flag(False)
+    assert _extract_inbound(_payload("alguém tem material?", from_=GRUPO_LEGADO, from_me=False)) is None
+
+
+def test_broadcast_descartado():
+    """Lista de transmissão (@broadcast) é descartada."""
+    _with_flag(False)
+    assert _extract_inbound(_payload("promoção", from_=BROADCAST, from_me=False)) is None
+
+
+def test_status_broadcast_descartado():
+    """status@broadcast (status/stories) é descartado."""
+    _with_flag(False)
+    assert _extract_inbound(_payload("meu status", from_=STATUS, from_me=False)) is None
+
+
+def test_grupo_nao_passa_nem_em_self_chat():
+    """Mesmo no modo self-chat, GRUPO continua descartado (self-chat real é @c.us/@lid)."""
+    _with_flag(True)
+    assert _extract_inbound(_payload("9", from_=GRUPO, to=GRUPO, source="app")) is None
+
+
+def test_grupo_por_classe_sem_sufixo_gus_descartado():
+    """Reforço: JID de grupo SEM o sufixo @g.us (só o número 120363...) cai por classe."""
+    _with_flag(False)
+    assert _extract_inbound(_payload("oi", from_="120363041234567890", from_me=False)) is None
+
+
+def test_remetente_invalido_descartado():
+    """Remetente malformado (classe 'invalid') é descartado pelo reforço estrutural."""
+    _with_flag(False)
+    assert _extract_inbound(_payload("oi", from_="123@c.us", from_me=False)) is None
+
+
+def test_inbound_1a1_continua_passando_apos_filtro_de_grupo():
+    """Regressão: o filtro de grupo NÃO afeta o 1:1 legítimo (celular @c.us)."""
+    _with_flag(False)
+    got = _extract_inbound(_payload("9", from_=OTHER, to=ME, from_me=False))
+    assert got is not None and got["from"] == "5531999990001"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

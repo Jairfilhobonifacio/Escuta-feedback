@@ -386,15 +386,27 @@ async def test_conversations_excluir_grupos(make_client, org, session):
     await session.commit()
 
     fake = FakeWAHA(connected=False)
-    # Sem o filtro: os dois aparecem; o grupo vem marcado is_grupo=true.
+    # excluir_grupos=false (explícito): os dois aparecem; o grupo vem marcado
+    # is_grupo=true. (O default agora é TRUE — grupos saem por padrão; este caso
+    # pede explicitamente para incluí-los.)
     async with make_client(fake) as client:
-        data = (await client.get("/api/whatsapp/conversations")).json()
+        data = (
+            await client.get(
+                "/api/whatsapp/conversations", params={"excluir_grupos": "false"}
+            )
+        ).json()
     assert data["total"] == 2
     by_name = {c["nome"]: c for c in data["conversations"]}
     assert by_name["Turma TI"]["is_grupo"] is True
     assert by_name["Ana"]["is_grupo"] is False
 
-    # Com excluir_grupos=true: o grupo some, só sobra a Ana.
+    # Default (sem param) já exclui grupos: o grupo some, só sobra a Ana.
+    async with make_client(fake) as client:
+        data = (await client.get("/api/whatsapp/conversations")).json()
+    assert data["total"] == 1
+    assert data["conversations"][0]["nome"] == "Ana"
+
+    # E com excluir_grupos=true explícito: idem (grupo fora).
     async with make_client(fake) as client:
         data = (
             await client.get(

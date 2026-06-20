@@ -944,6 +944,184 @@ function FeedbackCardSkeleton() {
   );
 }
 
+// ===== Painel de filtros avançados (Modal) ==================================
+
+/** Os ~9 filtros que poluíam a barra moram aqui, num Modal reusado (Esc/backdrop/
+   foco já vêm do componente). Os filtros aplicam AO VIVO (a página re-carrega
+   por efeito) — então "Aplicar" só fecha; "Limpar" zera tudo de uma vez. */
+function FiltersModal({
+  type, setType,
+  sentiment, setSentiment,
+  source, setSource,
+  abordado, setAbordado,
+  selo, setSelo,
+  estado, setEstado,
+  planType, setPlanType,
+  perfil, setPerfil,
+  npsBucket, setNpsBucket,
+  temWhatsapp, setTemWhatsapp,
+  activeCount,
+  onClear,
+  onClose,
+}: {
+  type: string; setType: (v: string) => void;
+  sentiment: string; setSentiment: (v: string) => void;
+  source: string; setSource: (v: string) => void;
+  abordado: "" | "sim" | "nao" | "hoje" | "7d" | "30d";
+  setAbordado: (v: "" | "sim" | "nao" | "hoje" | "7d" | "30d") => void;
+  selo: string; setSelo: (v: string) => void;
+  estado: EstadoAssinatura | ""; setEstado: (v: EstadoAssinatura | "") => void;
+  planType: string; setPlanType: (v: string) => void;
+  perfil: string; setPerfil: (v: string) => void;
+  npsBucket: NpsBucket | ""; setNpsBucket: (v: NpsBucket | "") => void;
+  temWhatsapp: TemWhatsappFiltro | ""; setTemWhatsapp: (v: TemWhatsappFiltro | "") => void;
+  activeCount: number;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  const titleId = useId();
+  return (
+    <Modal title="Filtros" onClose={onClose} labelledById={titleId}>
+      <div className="modal-body">
+        <div className="form-row-2">
+          <div className="field">
+            <label htmlFor={`${titleId}-type`}>Tipo</label>
+            <select id={`${titleId}-type`} value={type} onChange={(e) => setType(e.target.value)}>
+              <option value="">Todos os tipos</option>
+              <option value="nps">NPS</option>
+              <option value="churn">Cancelamento</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor={`${titleId}-sent`}>Sentimento</label>
+            <select id={`${titleId}-sent`} value={sentiment} onChange={(e) => setSentiment(e.target.value)}>
+              <option value="">Todo sentimento</option>
+              <option value="positivo">Positivo</option>
+              <option value="neutro">Neutro</option>
+              <option value="negativo">Negativo</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="form-row-2">
+          <div className="field">
+            <label htmlFor={`${titleId}-source`}>Origem</label>
+            <select id={`${titleId}-source`} value={source} onChange={(e) => setSource(e.target.value)}>
+              <option value="">Toda origem</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="bizzu_app">App Bizzu</option>
+              <option value="bizzu_billing">Cobrança</option>
+              <option value="bizzu_support">Suporte</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor={`${titleId}-abordado`}>Abordado</label>
+            <select
+              id={`${titleId}-abordado`}
+              value={abordado}
+              onChange={(e) =>
+                setAbordado(e.target.value as "" | "sim" | "nao" | "hoje" | "7d" | "30d")
+              }
+            >
+              <option value="">Abordado: todos</option>
+              <option value="nao">Não abordados</option>
+              <option value="sim">Já abordados</option>
+              <option value="hoje">Abordados hoje</option>
+              <option value="7d">Últimos 7 dias</option>
+              <option value="30d">Últimos 30 dias</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="form-row-2">
+          <div className="field">
+            <label htmlFor={`${titleId}-selo`}>Selo de campanha</label>
+            <select id={`${titleId}-selo`} value={selo} onChange={(e) => setSelo(e.target.value)}>
+              <option value="">Todos os selos</option>
+              {SELOS_CAMPANHA.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor={`${titleId}-estado`}>Assinatura do cliente</label>
+            <select
+              id={`${titleId}-estado`}
+              value={estado}
+              onChange={(e) => setEstado(e.target.value as EstadoAssinatura | "")}
+            >
+              <option value="">Toda assinatura</option>
+              {ESTADO_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="form-row-2">
+          <div className="field">
+            <label htmlFor={`${titleId}-plan`}>Plano do cliente</label>
+            <select id={`${titleId}-plan`} value={planType} onChange={(e) => setPlanType(e.target.value)}>
+              <option value="">Todos os planos</option>
+              <option value="mensal">Mensal</option>
+              <option value="anual">Anual</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor={`${titleId}-perfil`}>Perfil do cliente</label>
+            <select id={`${titleId}-perfil`} value={perfil} onChange={(e) => setPerfil(e.target.value)}>
+              <option value="">Todos os perfis</option>
+              {PERFIL_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="form-row-2">
+          <div className="field">
+            <label htmlFor={`${titleId}-nps`}>Faixa de NPS</label>
+            <select
+              id={`${titleId}-nps`}
+              value={npsBucket}
+              onChange={(e) => setNpsBucket(e.target.value as NpsBucket | "")}
+            >
+              <option value="">Todo NPS</option>
+              <option value="promotor">Promotores</option>
+              <option value="neutro">Neutros</option>
+              <option value="detrator">Detratores</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor={`${titleId}-reach`}>Alcance no WhatsApp</label>
+            <select
+              id={`${titleId}-reach`}
+              value={temWhatsapp}
+              onChange={(e) => setTemWhatsapp(e.target.value as TemWhatsappFiltro | "")}
+            >
+              <option value="">Todo alcance</option>
+              <option value="sim">Com WhatsApp</option>
+              <option value="nao">Sem WhatsApp (só e-mail)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div className="modal-foot">
+        <Button
+          variant="ghost"
+          onClick={onClear}
+          disabled={activeCount === 0}
+        >
+          Limpar filtros
+        </Button>
+        <Button onClick={onClose}>
+          {activeCount > 0 ? `Aplicar (${activeCount})` : "Fechar"}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 // ===== Página ===============================================================
 
 export default function FeedbacksPage() {
@@ -988,11 +1166,12 @@ export default function FeedbacksPage() {
     if (th) setTheme(th);
   }, []);
 
-  // overlays (criar / editar / excluir)
+  // overlays (criar / editar / excluir) + painel de filtros avançados
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Feedback | null>(null);
   const [deleting, setDeleting] = useState<Feedback | null>(null);
   const [abordando, setAbordando] = useState<Feedback | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
 
   const offsetRef = useRef(0);
 
@@ -1153,6 +1332,27 @@ export default function FeedbacksPage() {
     clusterId || theme
   );
 
+  // Filtros AVANÇADOS = os que vivem no painel "Filtros" (busca/status/deep-link
+  // ficam de fora — têm controle próprio visível). Conta quantos estão ativos
+  // para o selo no botão e decide se mostramos o atalho "Limpar filtros".
+  const advancedFilterCount = [
+    type, sentiment, source, abordado, selo,
+    estado, planType, perfil, npsBucket, temWhatsapp,
+  ].filter(Boolean).length;
+
+  const clearAdvancedFilters = useCallback(() => {
+    setType("");
+    setSentiment("");
+    setSource("");
+    setAbordado("");
+    setSelo("");
+    setEstado("");
+    setPlanType("");
+    setPerfil("");
+    setNpsBucket("");
+    setTemWhatsapp("");
+  }, []);
+
   return (
     <div>
       <div className="page-head">
@@ -1190,7 +1390,8 @@ export default function FeedbacksPage() {
         ))}
       </div>
 
-      {/* Filtros adicionais */}
+      {/* Barra enxuta: só BUSCA + botão "Filtros" (os avançados ficam no painel).
+         Os ~9 dropdowns moraram aqui e quebravam em 3 linhas — agora colapsados. */}
       <div className="toolbar">
         <label className="search">
           <span className="ico">🔍</span>
@@ -1200,98 +1401,25 @@ export default function FeedbacksPage() {
             placeholder="Buscar no texto, nome ou WhatsApp…"
           />
         </label>
-        <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Filtrar por tipo">
-          <option value="">Todos os tipos</option>
-          <option value="nps">NPS</option>
-          <option value="churn">Cancelamento</option>
-        </select>
-        <select
-          value={sentiment}
-          onChange={(e) => setSentiment(e.target.value)}
-          aria-label="Filtrar por sentimento"
+        <Button
+          variant="secondary"
+          onClick={() => setShowFilters(true)}
+          aria-haspopup="dialog"
+          className="gap-2"
         >
-          <option value="">Todo sentimento</option>
-          <option value="positivo">Positivo</option>
-          <option value="neutro">Neutro</option>
-          <option value="negativo">Negativo</option>
-        </select>
-        <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Filtrar por origem">
-          <option value="">Toda origem</option>
-          <option value="whatsapp">WhatsApp</option>
-          <option value="bizzu_app">App Bizzu</option>
-          <option value="bizzu_billing">Cobrança</option>
-          <option value="bizzu_support">Suporte</option>
-        </select>
-        <select
-          value={abordado}
-          onChange={(e) =>
-            setAbordado(
-              e.target.value as "" | "sim" | "nao" | "hoje" | "7d" | "30d",
-            )
-          }
-          aria-label="Filtrar por abordado"
-        >
-          <option value="">Abordado: todos</option>
-          <option value="nao">Não abordados</option>
-          <option value="sim">Já abordados</option>
-          <option value="hoje">Abordados hoje</option>
-          <option value="7d">Últimos 7 dias</option>
-          <option value="30d">Últimos 30 dias</option>
-        </select>
-        <select value={selo} onChange={(e) => setSelo(e.target.value)} aria-label="Filtrar por selo de campanha">
-          <option value="">Todos os selos</option>
-          {SELOS_CAMPANHA.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <select
-          value={estado}
-          onChange={(e) => setEstado(e.target.value as EstadoAssinatura | "")}
-          aria-label="Filtrar por estado da assinatura do cliente"
-        >
-          <option value="">Toda assinatura</option>
-          {ESTADO_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
-        <select
-          value={planType}
-          onChange={(e) => setPlanType(e.target.value)}
-          aria-label="Filtrar por plano do cliente"
-        >
-          <option value="">Todos os planos</option>
-          <option value="mensal">Mensal</option>
-          <option value="anual">Anual</option>
-        </select>
-        <select
-          value={perfil}
-          onChange={(e) => setPerfil(e.target.value)}
-          aria-label="Filtrar por perfil do cliente"
-        >
-          <option value="">Todos os perfis</option>
-          {PERFIL_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
-        <select
-          value={npsBucket}
-          onChange={(e) => setNpsBucket(e.target.value as NpsBucket | "")}
-          aria-label="Filtrar por faixa de NPS do cliente"
-        >
-          <option value="">Todo NPS</option>
-          <option value="promotor">Promotores</option>
-          <option value="neutro">Neutros</option>
-          <option value="detrator">Detratores</option>
-        </select>
-        <select
-          value={temWhatsapp}
-          onChange={(e) => setTemWhatsapp(e.target.value as TemWhatsappFiltro | "")}
-          aria-label="Filtrar por alcance no WhatsApp do cliente"
-        >
-          <option value="">Todo alcance</option>
-          <option value="sim">Com WhatsApp</option>
-          <option value="nao">Sem WhatsApp (só e-mail)</option>
-        </select>
+          <span aria-hidden>⚙</span>
+          Filtros
+          {advancedFilterCount > 0 && (
+            <span className="tab-count" style={{ background: "var(--indigo)", color: "#fff" }}>
+              {advancedFilterCount}
+            </span>
+          )}
+        </Button>
+        {advancedFilterCount > 0 && (
+          <Button variant="ghost" onClick={clearAdvancedFilters}>
+            Limpar filtros
+          </Button>
+        )}
       </div>
 
       {/* Filtro vindo da tela Temas (deep-link): mostra e permite limpar. */}
@@ -1391,6 +1519,23 @@ export default function FeedbacksPage() {
         </div>
       )}
 
+      {showFilters && (
+        <FiltersModal
+          type={type} setType={setType}
+          sentiment={sentiment} setSentiment={setSentiment}
+          source={source} setSource={setSource}
+          abordado={abordado} setAbordado={setAbordado}
+          selo={selo} setSelo={setSelo}
+          estado={estado} setEstado={setEstado}
+          planType={planType} setPlanType={setPlanType}
+          perfil={perfil} setPerfil={setPerfil}
+          npsBucket={npsBucket} setNpsBucket={setNpsBucket}
+          temWhatsapp={temWhatsapp} setTemWhatsapp={setTemWhatsapp}
+          activeCount={advancedFilterCount}
+          onClear={clearAdvancedFilters}
+          onClose={() => setShowFilters(false)}
+        />
+      )}
       {creating && (
         <CreateFeedbackModal
           onCancel={() => setCreating(false)}
