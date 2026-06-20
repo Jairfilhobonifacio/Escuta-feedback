@@ -2589,3 +2589,27 @@ tbody tr:hover td { color: var(--text); }
 }
 .board-card-compact .board-card-meta { margin-top: 0; }
 
+/* === Timeline 360 editável === */
+/* Cabeçalho da linha do tempo: contador + botão "adicionar à linha do tempo".
+   Alinha à direita do card-head, com respiro; quebra em telas estreitas. */
+.tl-head-actions {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* Nota interna do operador, exibida sob o texto do evento (só o time vê).
+   Reusa os tokens do tema claro; discreta, com um filete indigo à esquerda. */
+.tl-note {
+  margin-top: 9px; padding: 8px 11px;
+  font-size: 13px; line-height: 1.5; color: var(--text-dim);
+  background: var(--promoter-soft);
+  border: 1px solid var(--promoter-line);
+  border-left-width: 3px;
+  border-radius: var(--radius-xs);
+  white-space: pre-wrap;
+}
+.tl-note-tag {
+  display: inline-block; margin-right: 7px;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--indigo-light);
+}
+

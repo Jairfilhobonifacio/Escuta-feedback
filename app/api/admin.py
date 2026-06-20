@@ -501,6 +501,8 @@ async def contact_360(contact_id: str, session: AsyncSession = Depends(get_sessi
                 "sentiment": f.sentiment,
                 "themes": f.themes,
                 "action_status": f.action_status,
+                # Nota interna do operador — editável na 360 (PATCH action_note).
+                "action_note": f.action_note,
                 "abordado": f.abordado,
                 "at": when.isoformat() if when else None,
             }
@@ -557,8 +559,11 @@ _FEEDBACK_TERMINAL_STATUSES: frozenset[str] = frozenset({"resolvido", "descartad
 
 # Tipos de feedback aceitos no registro manual (Felipe registra o que o cliente
 # deixou por qualquer canal). Mesmo espírito do ACTION_STATUSES: validado na API,
-# sem CHECK no banco (vocabulário pode crescer).
-FEEDBACK_TYPES: tuple[str, ...] = ("nps", "churn", "elogio", "sugestao", "bug", "outro")
+# sem CHECK no banco (vocabulário pode crescer). 'nota'/'abordagem' são os tipos da
+# linha do tempo editável da ficha 360 (registro à mão de um evento do cliente).
+FEEDBACK_TYPES: tuple[str, ...] = (
+    "nps", "churn", "elogio", "sugestao", "bug", "nota", "abordagem", "outro"
+)
 # Sentimentos aceitos (espelha a semântica da IA). None = sem classificação.
 SENTIMENTS: tuple[str, ...] = ("positivo", "neutro", "negativo")
 # Tipos que derivam nps_bucket a partir do score (0-10).
@@ -986,6 +991,9 @@ class FeedbackCreateIn(BaseModel):
     assignee: str | None = Field(default=None, max_length=120)
     team_tag: str | None = Field(default=None, max_length=60)
     abordado: bool = False
+    # Data do evento na linha do tempo (quando o cliente disse/aconteceu). None = agora.
+    # Aceita ISO-8601 (com ou sem fuso) ou só a data ('YYYY-MM-DD'); normalizada p/ UTC.
+    occurred_at: datetime | None = None
 
 
 async def _auto_classify_feedback(
@@ -1068,6 +1076,11 @@ async def create_feedback(
     )
 
     now = datetime.now(timezone.utc)
+    # Data do evento na linha do tempo: a informada (normalizada p/ UTC) ou agora.
+    # Futuro é rejeitado (uma "memória" do cliente não acontece amanhã).
+    occurred = _coerce_dt(body.occurred_at) or now
+    if occurred > now:
+        raise HTTPException(status_code=422, detail="a data do evento não pode estar no futuro")
     text = (body.text.strip() or None) if body.text else None
     bucket = nps_bucket(body.score) if (body.type in _BUCKET_TYPES and body.score is not None) else None
 
@@ -1095,7 +1108,7 @@ async def create_feedback(
         ai_meta=ai_meta,
         assignee=(body.assignee.strip() or None) if body.assignee else None,
         team_tag=(body.team_tag.strip() or None) if body.team_tag else None,
-        occurred_at=now,
+        occurred_at=occurred,
         abordado=body.abordado,
         abordado_em=now if body.abordado else None,
     )

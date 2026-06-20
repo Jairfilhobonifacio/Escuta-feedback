@@ -157,6 +157,8 @@ export interface Timeline360Item {
   themes?: string[] | null;
   /** Estado de ação do feedback (só kind='feedback_item') — editável na 360. */
   action_status?: FeedbackStatus;
+  /** Nota interna do operador (só kind='feedback_item') — editável na 360. */
+  action_note?: string | null;
   /** Já abordamos o cliente sobre este feedback? (só kind='feedback_item'). */
   abordado?: boolean;
   at: string | null;
@@ -415,6 +417,9 @@ export interface FeedbackInput {
   sentiment?: string | null;
   themes?: string[] | null;
   abordado?: boolean;
+  /** Data do evento na linha do tempo (ISO ou 'YYYY-MM-DD'); ausente/null = agora.
+      O backend rejeita data no futuro (422). */
+  occurred_at?: string | null;
 }
 
 /** Corpo parcial do PATCH /api/feedbacks/{id}. */

@@ -24,9 +24,11 @@ import { Badge } from "@/components/ui/badge";
 import {
   api,
   campanha as campanhaApi,
+  feedbacks as feedbacksApi,
   whatsapp as whatsappApi,
   type Contact360,
   type Feedback,
+  type FeedbackInput,
   type FeedbackPatch,
   type FeedbackStatus,
   type Timeline360Item,
@@ -45,8 +47,27 @@ const TYPE_LABEL: Record<string, string> = {
   elogio: "Elogio",
   sugestao: "Sugestão",
   bug: "Bug",
+  nota: "Nota",
+  abordagem: "Abordagem",
   outro: "Outro",
 };
+
+/** Tipos oferecidos ao registrar um evento à mão na linha do tempo. */
+const MANUAL_TYPE_OPTIONS: { key: string; label: string }[] = [
+  { key: "nota", label: "Nota" },
+  { key: "abordagem", label: "Abordagem" },
+  { key: "elogio", label: "Elogio" },
+  { key: "sugestao", label: "Sugestão" },
+  { key: "bug", label: "Bug" },
+  { key: "churn", label: "Cancelamento" },
+  { key: "outro", label: "Outro" },
+];
+
+/** ISO (UTC) -> valor de <input type="datetime-local"> no fuso local (sem 'Z'). */
+function toLocalInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 const SOURCE_LABEL: Record<string, string> = {
   bizzu_app: "app Bizzu",
@@ -324,10 +345,11 @@ function EditItemModal({
 }: {
   item: Timeline360Item;
   onClose: () => void;
-  onSaved: (id: string, patch: { text: string | null }) => void;
+  onSaved: (id: string, patch: { text: string | null; action_note: string | null }) => void;
 }) {
   const titleId = useId();
   const [text, setText] = useState(item.text ?? "");
+  const [note, setNote] = useState(item.action_note ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -336,10 +358,13 @@ function EditItemModal({
     if (!item.id) return;
     setSaving(true);
     setError(null);
-    const body: FeedbackPatch = { text: text.trim() || null };
+    const nextText = text.trim() || null;
+    // action_note: o backend faz `.strip() or None`; "" zera a nota.
+    const nextNote = note.trim();
+    const body: FeedbackPatch = { text: nextText, action_note: nextNote };
     try {
       await api.patch<Feedback>(`/api/feedbacks/${item.id}`, body);
-      onSaved(item.id, { text: text.trim() || null });
+      onSaved(item.id, { text: nextText, action_note: nextNote || null });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSaving(false);
@@ -347,16 +372,25 @@ function EditItemModal({
   }
 
   return (
-    <Modal title="Editar feedback" onClose={onClose} labelledById={titleId}>
+    <Modal title="Editar evento" onClose={onClose} labelledById={titleId}>
       <form onSubmit={save}>
         <div className="modal-body">
           <div className="field">
-            <label htmlFor={`${titleId}-text`}>Texto</label>
+            <label htmlFor={`${titleId}-text`}>O que o cliente disse</label>
             <textarea
               id={`${titleId}-text`}
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder="O que o cliente disse…"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor={`${titleId}-note`}>Nota interna (só o time vê)</label>
+            <textarea
+              id={`${titleId}-note`}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Anotação do time sobre este evento…"
             />
           </div>
           {error && <div className="flash err" style={{ marginBottom: 0 }}>{error}</div>}
@@ -367,6 +401,96 @@ function EditItemModal({
           </Button>
           <Button type="submit" disabled={saving}>
             {saving ? "Salvando…" : "Salvar"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ===== Modal de ADICIONAR um evento à linha do tempo (FeedbackItem manual) ===
+
+function AddEventModal({
+  contactId,
+  onClose,
+  onAdded,
+}: {
+  contactId: string;
+  onClose: () => void;
+  /** Chamado após criar — o pai recarrega a ficha (a timeline re-ordena por data). */
+  onAdded: () => void;
+}) {
+  const titleId = useId();
+  const [type, setType] = useState("nota");
+  const [text, setText] = useState("");
+  // datetime-local começa em "agora" (fuso local); o operador pode recuar a data.
+  const [quando, setQuando] = useState(() => toLocalInputValue(new Date()));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    // datetime-local é "horário de parede" sem fuso; new Date() o lê no fuso local
+    // e toISOString() o manda em UTC — alinhado ao que o backend espera.
+    const occurred = quando ? new Date(quando) : null;
+    const body: FeedbackInput = {
+      contato_id: contactId,
+      type,
+      text: text.trim() || null,
+      source: "manual",
+      occurred_at: occurred ? occurred.toISOString() : null,
+    };
+    try {
+      await feedbacksApi.create(body);
+      onAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title="Adicionar à linha do tempo" onClose={onClose} labelledById={titleId}>
+      <form onSubmit={save}>
+        <div className="modal-body">
+          <div className="field">
+            <label htmlFor={`${titleId}-type`}>Tipo</label>
+            <select id={`${titleId}-type`} value={type} onChange={(e) => setType(e.target.value)}>
+              {MANUAL_TYPE_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor={`${titleId}-text`}>O que aconteceu</label>
+            <textarea
+              id={`${titleId}-text`}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Ex.: ligou reclamando da cobrança; pediu desconto…"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor={`${titleId}-quando`}>Quando</label>
+            <input
+              id={`${titleId}-quando`}
+              type="datetime-local"
+              value={quando}
+              max={toLocalInputValue(new Date())}
+              onChange={(e) => setQuando(e.target.value)}
+            />
+          </div>
+          {error && <div className="flash err" style={{ marginBottom: 0 }}>{error}</div>}
+        </div>
+        <div className="modal-foot">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
+            Cancelar
+          </Button>
+          <Button type="submit" disabled={saving || !text.trim()}>
+            {saving ? "Adicionando…" : "Adicionar"}
           </Button>
         </div>
       </form>
@@ -423,6 +547,12 @@ function TimelineRow({
         <span className="tl-when">{fmtDate(t.at)}</span>
       </div>
       {t.text && <div className="tl-text">“{t.text}”</div>}
+      {editable && t.action_note && (
+        <div className="tl-note">
+          <span className="tl-note-tag">nota do time</span>
+          {t.action_note}
+        </div>
+      )}
       {themeChips(t.themes)}
       <div className="tl-src">
         via {SOURCE_LABEL[t.source] ?? t.source}
@@ -780,6 +910,7 @@ export default function Contact360Page() {
   const [data, setData] = useState<Contact360 | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<Timeline360Item | null>(null);
+  const [addingEvent, setAddingEvent] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -820,14 +951,24 @@ export default function Contact360Page() {
     });
   }, []);
 
-  const onItemEdited = useCallback((itemId: string, patch: { text: string | null }) => {
-    setData((prev) =>
-      prev
-        ? { ...prev, timeline: prev.timeline.map((t) => (t.id === itemId ? { ...t, ...patch } : t)) }
-        : prev,
-    );
-    setEditingItem(null);
-  }, []);
+  const onItemEdited = useCallback(
+    (itemId: string, patch: { text: string | null; action_note: string | null }) => {
+      setData((prev) =>
+        prev
+          ? { ...prev, timeline: prev.timeline.map((t) => (t.id === itemId ? { ...t, ...patch } : t)) }
+          : prev,
+      );
+      setEditingItem(null);
+    },
+    [],
+  );
+
+  // Após criar um evento manual: fecha o modal e recarrega a ficha (a timeline
+  // re-ordena por data e o resumo/contagens batem com o backend).
+  const onEventAdded = useCallback(() => {
+    setAddingEvent(false);
+    load();
+  }, [load]);
 
   const onSelosChanged = useCallback((selos: string[]) => {
     setData((prev) => (prev ? { ...prev, contact: { ...prev.contact, selos } } : prev));
@@ -840,8 +981,8 @@ export default function Contact360Page() {
     <div>
       <Reveal className="page-head">
         <div className="c360-head">
-          <Link href="/contatos" className="back-link inline-flex items-center gap-1.5">
-            <ArrowLeft size={15} aria-hidden /> Contatos
+          <Link href="/clientes" className="back-link inline-flex items-center gap-1.5">
+            <ArrowLeft size={15} aria-hidden /> Clientes
           </Link>
           <div className="c360-head-row">
             <Avatar name={data?.contact.name} seed={id} size={52} />
@@ -898,17 +1039,32 @@ export default function Contact360Page() {
                 <div className="section-title">Linha do tempo do cliente</div>
                 <div className="card-head-sub">todas as fontes de feedback, unificadas e editáveis</div>
               </div>
-              <span className="exit-counter">
-                {data.summary.feedback_items} sinais · {data.summary.survey_responses} pesquisas
-              </span>
+              <div className="tl-head-actions">
+                <span className="exit-counter">
+                  {data.summary.feedback_items} sinais · {data.summary.survey_responses} pesquisas
+                </span>
+                {id && (
+                  <Button type="button" size="sm" onClick={() => setAddingEvent(true)}>
+                    <Plus size={14} strokeWidth={2.2} aria-hidden /> adicionar à linha do tempo
+                  </Button>
+                )}
+              </div>
             </div>
             {data.timeline.length === 0 ? (
               <div className="empty">
                 <div className="empty-illu">{EMPTY_TIMELINE}</div>
                 <div className="empty-title">Sem feedback ainda</div>
                 <p className="empty-sub">
-                  Quando este cliente responder a uma pesquisa ou falar com vocês, tudo aparece aqui.
+                  Quando este cliente responder a uma pesquisa ou falar com vocês, tudo aparece aqui —
+                  ou registre você mesmo um evento à mão.
                 </p>
+                {id && (
+                  <div className="empty-cta">
+                    <Button type="button" size="sm" onClick={() => setAddingEvent(true)}>
+                      <Plus size={14} strokeWidth={2.2} aria-hidden /> adicionar à linha do tempo
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : (
               <ul className="tl">
@@ -932,6 +1088,14 @@ export default function Contact360Page() {
           item={editingItem}
           onClose={() => setEditingItem(null)}
           onSaved={onItemEdited}
+        />
+      )}
+
+      {addingEvent && id && (
+        <AddEventModal
+          contactId={id}
+          onClose={() => setAddingEvent(false)}
+          onAdded={onEventAdded}
         />
       )}
     </div>
