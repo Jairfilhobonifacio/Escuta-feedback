@@ -63,6 +63,124 @@ def classify_phone(phone: str | None) -> PhoneClass:
     return "invalid"
 
 
+def _digits(phone: str | None) -> str:
+    """Só os dígitos do telefone (descarta '+', espaços, parênteses, '-')."""
+    return re.sub(r"\D", "", str(phone or ""))
+
+
+def _nacional(digits: str) -> str:
+    """Parte nacional: remove o DDI 55 quando presente (>=12 díg). Espelha classify_phone."""
+    return digits[2:] if digits.startswith("55") and len(digits) >= 12 else digits
+
+
+def phone_key(phone: str | None) -> str | None:
+    """Forma CANÔNICA E.164 (sem '+') p/ GRAVAR o contato: `55` + parte nacional.
+
+    Canoniza um telefone BR para uma forma estável de armazenamento:
+
+      - celular  -> `55` + DDD(2) + `9` + 8 díg (13)   ex.: 8599058955 -> 5585999058955
+      - fixo     -> `55` + DDD(2) + 8 díg (12)          ex.: 3132973323 -> 553132973323
+
+    Regras:
+      - remove tudo que não é dígito; DDI `55` é opcional na entrada;
+      - insere o 9º dígito SÓ quando vier SEM DDI, com 10 díg (DDD + 8), e o assinante
+        começa na faixa de CELULAR (6/7/8/9). NÃO promove fixo real (assinante 2-5) e,
+        com DDI presente, NÃO promove cegamente um 12-díg (DDI+DDD+8) — seria
+        indistinguível de um fixo real (ex.: 553192973323). É o que une as grafias
+        para o dedup é a match-key, não a forma canônica;
+      - entrada já-canônica (11 díg móvel com o 9 / 12-13 com DDI) passa idêntica;
+      - grupo/placeholder/vazio/inválido -> None (não há telefone canônico a gravar).
+
+    É a forma a usar ao CRIAR um Contact; para BUSCAR um já-existente em formato
+    divergente use `phone_match_key` / `phone_variants`.
+    """
+    digits = _digits(phone)
+    if not digits or str(phone or "").strip().startswith("nowa-"):
+        return None
+    # Grupos/JIDs e lixo: sem telefone canônico.
+    if digits.startswith("120363") or len(digits) > 13:
+        return None
+
+    tem_ddi = digits.startswith("55") and len(digits) >= 12
+    nac = _nacional(digits)
+
+    # Celular já completo (DDD + 9 + 8 = 11, 3º == '9'): canônico = 55 + nac.
+    if len(nac) == 11 and nac[2] == "9":
+        return "55" + nac
+
+    if len(nac) == 10:
+        # DDD(2) + assinante(8). Ambíguo SÓ quando NÃO veio DDI: aí o início do
+        # assinante decide a faixa (Anatel) — 6-9 = CELULAR sem o 9 (insere o 9),
+        # 2-5 = FIXO (mantém). COM DDI, o comprimento já fixou que é fixo (DDI+DDD+8):
+        # NÃO promovemos cegamente, mesmo que o assinante comece em 9
+        # (ex.: 553192973323 é fixo, não vira celular).
+        if not tem_ddi and nac[2] in "6789":
+            return "55" + nac[:2] + "9" + nac[2:]
+        return "55" + nac  # fixo
+    return None
+
+
+def phone_match_key(phone: str | None) -> str | None:
+    """Chave TOLERANTE p/ casar telefones: DDD(2) + últimos 8 dígitos.
+
+    Ignora o DDI `55` e o 9º dígito do celular — então os MESMOS números escritos
+    com/sem DDI e com/sem o 9 colidem na mesma chave. Usada para ACHAR um contato já
+    cadastrado num formato divergente (evita duplicata), não para gravar.
+
+      5585999058955 | 85999058955 | 558599058955 | 8599058955  -> '8599058955'
+
+    Grupo/placeholder/vazio/inválido -> None (nada a casar).
+    """
+    digits = _digits(phone)
+    if not digits or str(phone or "").strip().startswith("nowa-"):
+        return None
+    if digits.startswith("120363") or len(digits) > 13:
+        return None
+    nac = _nacional(digits)
+    # Remove o 9 inicial do assinante (só quando há 9 díg de assinante: DDD + 9 + 8).
+    if len(nac) == 11 and nac[2] == "9":
+        nac = nac[:2] + nac[3:]
+    if len(nac) != 10:
+        return None  # curto/comprido demais p/ formar DDD + 8.
+    return nac  # DDD(2) + 8 dígitos
+
+
+def phone_variants(phone: str | None) -> list[str]:
+    """Variantes plausíveis de um telefone p/ um SELECT por igualdade em `Contact.phone`.
+
+    Cobre as 4 combinações com/sem DDI × com/sem o 9 do celular, mais a forma como
+    chegou (digits crus) e a canônica — assim achamos um contato gravado em QUALQUER
+    desses formatos. Ordem estável, sem duplicatas; lista vazia p/ grupo/lixo/vazio.
+
+      8599058955 -> ['8599058955','558599058955','85999058955','5585999058955',...]
+    """
+    key = phone_match_key(phone)
+    if key is None:
+        return []
+    ddd, assinante = key[:2], key[2:]
+    cands = [
+        key,                                  # DDD + 8 (sem DDI, sem 9)
+        "55" + key,                           # DDI + DDD + 8
+        ddd + "9" + assinante,                # DDD + 9 + 8
+        "55" + ddd + "9" + assinante,         # DDI + DDD + 9 + 8
+    ]
+    # Inclui a forma crua recebida e a canônica (cobre fixo, que não ganha o 9).
+    raw = _digits(phone)
+    if raw:
+        cands.append(raw)
+    canon = phone_key(phone)
+    if canon:
+        cands.append(canon)
+    # Dedup preservando a ordem.
+    seen: set[str] = set()
+    out: list[str] = []
+    for c in cands:
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
 def tem_whatsapp(phone: str | None) -> bool:
     """True só se for um celular BR válido (alcançável no WhatsApp)."""
     return classify_phone(phone) == "mobile"

@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
+from app.domain.contacts.whatsapp import phone_key, phone_variants
 from app.domain.interfaces.messaging_service import IMessagingService
 from app.domain.survey.brain import SurveyBrain
 from app.domain.survey.constants import STATUS_INGESTED
@@ -182,16 +183,22 @@ async def _get_or_create_contact(
     session: AsyncSession, org: Organization, payload: "BizzuEvent", phone: str
 ) -> Contact:
     """get-or-create do contato pelo telefone; eleva opt-in se o emissor sinalizar.
-    Consentimento vem do emissor (sistema do cliente é a fonte do opt-in); nunca rebaixamos aqui."""
+    Consentimento vem do emissor (sistema do cliente é a fonte do opt-in); nunca rebaixamos aqui.
+
+    Casa por VARIANTES (com/sem DDI 55, com/sem o 9 do celular BR) p/ não duplicar um
+    contato já cadastrado em formato diferente; ao CRIAR, grava a forma CANÔNICA."""
+    variantes = phone_variants(phone) or [phone]
     contact = (
         await session.execute(
-            select(Contact).where(Contact.organization_id == org.id, Contact.phone == phone)
+            select(Contact).where(
+                Contact.organization_id == org.id, Contact.phone.in_(variantes)
+            )
         )
-    ).scalar_one_or_none()
+    ).scalars().first()
     if contact is None:
         contact = Contact(
             organization_id=org.id,
-            phone=phone,
+            phone=phone_key(phone) or phone,
             name=(payload.user.name or "").strip() or None,
             opt_in=payload.user.whatsapp_opt_in,
             profile_data={"bizzu_user_id": payload.user.id},

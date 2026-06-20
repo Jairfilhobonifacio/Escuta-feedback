@@ -89,6 +89,7 @@ async def _fetch_bizzu_users() -> list[dict]:
 async def sync(dry_run: bool) -> int:
     from sqlalchemy import select
     from app.db import SessionLocal
+    from app.domain.contacts.whatsapp import phone_key, phone_variants
     from app.models.core import Contact, Organization
 
     if SessionLocal is None:
@@ -114,22 +115,26 @@ async def sync(dry_run: bool) -> int:
                 print(f"  ~ telefone inválido, pulado: {u['telefone']!r} (user {u['bizzu_user_id']})")
                 continue
 
+            # Casa por VARIANTES (com/sem DDI 55, com/sem o 9 do celular BR): evita
+            # criar um 2º contato p/ quem já está cadastrado em formato diferente.
+            variantes = phone_variants(phone) or [phone]
             contact = (
                 await session.execute(
                     select(Contact).where(
-                        Contact.organization_id == org.id, Contact.phone == phone
+                        Contact.organization_id == org.id, Contact.phone.in_(variantes)
                     )
                 )
-            ).scalar_one_or_none()
+            ).scalars().first()
 
             if contact is None:
+                canonico = phone_key(phone) or phone  # grava a forma E.164 canônica
                 created += 1
-                print(f"  + criar {phone} name={u['name']!r}")
+                print(f"  + criar {canonico} name={u['name']!r}")
                 if not dry_run:
                     session.add(
                         Contact(
                             organization_id=org.id,
-                            phone=phone,
+                            phone=canonico,
                             name=(u["name"] or "").strip() or None,
                             opt_in=True,
                             profile_data={"bizzu_user_id": u["bizzu_user_id"]},

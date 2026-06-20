@@ -11,6 +11,9 @@ import pytest
 from app.domain.contacts.whatsapp import (
     alcance,
     classify_phone,
+    phone_key,
+    phone_match_key,
+    phone_variants,
     sem_whatsapp,
     tem_whatsapp,
 )
@@ -69,3 +72,77 @@ def test_alcance_buckets():
     assert alcance("120363247633739480") == "grupo"
     assert alcance("") == "sem_contato"
     assert alcance("123") == "invalido"
+
+
+# --- normalização canônica BR: phone_key / phone_match_key / phone_variants -----
+
+# As 4 grafias do MESMO celular (85 99058955): com/sem DDI 55, com/sem o 9º dígito.
+_MESMO_CELULAR = ["5585999058955", "85999058955", "558599058955", "8599058955"]
+
+
+@pytest.mark.parametrize("phone", _MESMO_CELULAR)
+def test_match_key_celular_colide_entre_formatos(phone):
+    """As 4 grafias do mesmo celular casam na MESMA match-key (DDD + últimos 8)."""
+    assert phone_match_key(phone) == "8599058955"
+
+
+def test_phone_key_canoniza_por_formato():
+    """phone_key insere o 9 só quando há base segura p/ isso (entrada COM o 9, ou
+    bare 10 díg de faixa móvel) — NUNCA promove um 12-díg DDI cegamente (seria
+    indistinguível de um fixo real; o que unifica as grafias é a match-key)."""
+    # Já tem o 9 (com/sem DDI) -> 13 díg canônico.
+    assert phone_key("5585999058955") == "5585999058955"
+    assert phone_key("85999058955") == "5585999058955"
+    # Bare 10 díg, assinante na faixa móvel (9...) -> insere o 9.
+    assert phone_key("8599058955") == "5585999058955"
+    # 12 díg com DDI, sem o 9: fica como veio (NÃO promove — vide fixo homólogo).
+    assert phone_key("558599058955") == "558599058955"
+
+
+def test_match_key_unifica_as_quatro_grafias_do_celular():
+    """A garantia que mata a duplicata: as 4 grafias colidem numa ÚNICA match-key."""
+    assert len({phone_match_key(p) for p in _MESMO_CELULAR}) == 1
+    assert phone_match_key("558599058955") == phone_match_key("5585999058955")
+
+
+def test_fixo_nao_vira_celular():
+    """Fixo (DDD + 8, assinante começa em 2-5) NÃO ganha o 9 — preserva classify_phone."""
+    # 10 díg, sem DDI: canônico = 55 + os 10 díg (continua fixo, 12 díg).
+    assert phone_key("3132973323") == "553132973323"
+    assert classify_phone(phone_key("3132973323")) == "landline"
+    # já com DDI (12 díg): idêntico, sem promover.
+    assert phone_key("553192973323") == "553192973323"
+    assert classify_phone(phone_key("553192973323")) == "landline"
+    # match-key do fixo é DDD + 8 e NÃO colide com um celular de mesmo final.
+    assert phone_match_key("3132973323") == "3132973323"
+
+
+def test_celular_de_10_digitos_ganha_o_9():
+    """10 díg cujo assinante começa em 6-9 é CELULAR sem o 9 -> insere o 9 no canônico."""
+    assert phone_key("8599058955") == "5585999058955"  # assinante começa em '9'
+    assert phone_key("1186543210") == "5511986543210"  # assinante começa em '8'
+    assert classify_phone(phone_key("8599058955")) == "mobile"
+
+
+def test_phone_key_e_match_key_descartam_grupo_e_placeholder():
+    for ruim in ["120363247633739480", "553193398851-1603107298", "nowa-42", "", None, "12"]:
+        assert phone_key(ruim) is None
+        assert phone_match_key(ruim) is None
+        assert phone_variants(ruim) == []
+
+
+def test_variants_incluem_as_quatro_formas_do_celular():
+    vs = phone_variants("8599058955")
+    # As 4 grafias canônicas precisam estar entre as variantes buscáveis.
+    for esperado in _MESMO_CELULAR:
+        assert esperado in vs, (esperado, vs)
+    # Sem duplicatas.
+    assert len(vs) == len(set(vs))
+
+
+def test_variants_de_qualquer_grafia_cobrem_a_canonica():
+    """Buscar por QUALQUER grafia inclui a forma canônica (e a forma como chegou)."""
+    for p in _MESMO_CELULAR:
+        vs = phone_variants(p)
+        assert "5585999058955" in vs
+        assert "".join(c for c in p if c.isdigit()) in vs

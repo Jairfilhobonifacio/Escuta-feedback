@@ -229,8 +229,8 @@ const HEALTH_OPCOES: { value: HealthBand; label: string }[] = [
 ];
 
 /** Recortes de alcance — o segmentado que define quem aparece por padrão.
-    'sim' (contatáveis no WhatsApp) é o DEFAULT: esconde grupos/fixos/inválidos.
-    'nao' = leads só-e-mail (winback legítimo). '' = todos (inclui o lixo). */
+    '' (todos) é o DEFAULT: a base inteira, com ou sem contato.
+    'sim' = contatáveis no WhatsApp. 'nao' = leads só-e-mail (winback legítimo). */
 const ALCANCE_OPCOES: { value: TemWhatsappFiltro | ""; label: string; hint: string }[] = [
   { value: "sim", label: "Contatáveis", hint: "Com WhatsApp válido — quem dá para abordar" },
   { value: "nao", label: "Winback", hint: "Só e-mail — leads de reativação por e-mail" },
@@ -403,8 +403,9 @@ export default function ClientesPage() {
   const [estado, setEstado] = useState<EstadoAssinatura | "">("");
   const [npsBucket, setNpsBucket] = useState<NpsBucket | "">("");
   const [healthBand, setHealthBand] = useState<HealthBand | "">("");
-  // Alcance: DEFAULT 'sim' (contatáveis). Esconde grupos/fixos/inválidos do webhook.
-  const [temWa, setTemWa] = useState<TemWhatsappFiltro | "">("sim");
+  // Alcance: DEFAULT '' (todos). Mostra a base inteira por padrão — o dono quer ver
+  // todos os clientes, com ou sem contato. Os chips ainda recortam Contatáveis/Winback.
+  const [temWa, setTemWa] = useState<TemWhatsappFiltro | "">("");
   // Refinos client-side (não fazem parte do ClienteFiltro do backend).
   const [seloFiltro, setSeloFiltro] = useState("");
   const [soRisco, setSoRisco] = useState(false);
@@ -567,9 +568,9 @@ export default function ClientesPage() {
     [perfil, planType, estado, npsBucket, healthBand, seloFiltro].filter(Boolean).length;
 
   // Há algum filtro ativo? (controla "limpar filtros" e o texto do vazio). O alcance
-  // só conta como filtro quando NÃO está no default 'sim' (contatáveis).
+  // só conta como filtro quando NÃO está no default '' (todos).
   const algumFiltro =
-    !!search || avancadosAtivos > 0 || temWa !== "sim" || soRisco || !!canalChip;
+    !!search || avancadosAtivos > 0 || temWa !== "" || soRisco || !!canalChip;
 
   const limparFiltros = useCallback(() => {
     setSearch("");
@@ -578,7 +579,7 @@ export default function ClientesPage() {
     setEstado("");
     setNpsBucket("");
     setHealthBand("");
-    setTemWa("sim");
+    setTemWa("");
     setSeloFiltro("");
     setSoRisco(false);
     setCanalChip("");
@@ -603,13 +604,17 @@ export default function ClientesPage() {
         <div>
           <h1 className="page-title">Clientes</h1>
           <div className="page-sub">
-            Por padrão, só quem dá para abordar (WhatsApp válido) — grupos, fixos e
-            inválidos ficam de fora. Troque o alcance para ver o winback ou todos.
+            Toda a base por padrão — todos os clientes, com ou sem contato. Use os
+            recortes para ver só os contatáveis (WhatsApp) ou o winback (só e-mail).
           </div>
         </div>
         {!loading && (
           <span className="refresh-note">
-            {clientes.length} {recorteLabel}
+            <b className="font-mono tabular-nums">{base.length}</b> cliente
+            {base.length === 1 ? "" : "s"} na base
+            {temWa !== "" && (
+              <> · {clientes.length} {recorteLabel}</>
+            )}
           </span>
         )}
       </Reveal>

@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api._security import require_waha_webhook_secret
 from app.config import settings
 from app.db import get_session
-from app.domain.contacts.whatsapp import classify_phone
+from app.domain.contacts.whatsapp import classify_phone, phone_key, phone_variants
 from app.domain.survey.brain import OPT_OUT_CONFIRM_MSG, SurveyBrain
 from app.domain.survey.message_handler import InboundMessageHandler
 from app.domain.survey.resolver import (
@@ -389,16 +389,24 @@ async def waha_webhook(
         org_waha_session = (org.settings or {}).get("waha_session") or settings.waha_session
 
         # --- get-or-create do contato --------------------------------------
+        # Casa por VARIANTES do telefone (com/sem DDI 55, com/sem o 9º dígito do
+        # celular BR) — sem isso, o MESMO cliente escrito em formato diferente do
+        # cadastrado vira um contato DUPLICADO. Ao CRIAR, grava a forma CANÔNICA
+        # (E.164 sem '+'); fixo/grupo/lixo, em que phone_key é None, caem na forma
+        # como chegou (preserva o número recebido).
+        variantes = phone_variants(phone) or [phone]
         contact = (
             await session.execute(
                 select(Contact).where(
                     Contact.organization_id == org.id,
-                    Contact.phone == phone,
+                    Contact.phone.in_(variantes),
                 )
             )
-        ).scalar_one_or_none()
+        ).scalars().first()
         if contact is None:
-            contact = Contact(organization_id=org.id, phone=phone, opt_in=False)
+            contact = Contact(
+                organization_id=org.id, phone=phone_key(phone) or phone, opt_in=False
+            )
             session.add(contact)
             await session.flush()  # materializa contact.id para o resolver.
 

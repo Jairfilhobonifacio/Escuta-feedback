@@ -19,6 +19,7 @@ standalone. Por isso este módulo NÃO chama inject_into_ssl() nem passa verify=
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any, AsyncIterator
@@ -35,6 +36,13 @@ DEFAULT_TIMEOUT_SECONDS = 20.0
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 500  # limite da API (doc §1)
 
+# Retry da paginação: tenta de novo em falhas TRANSITÓRIAS (502/503/504/429/rede/timeout)
+# para não truncar o sync silenciosamente quando uma página falha pontualmente.
+DEFAULT_MAX_RETRIES = 4  # = 1 tentativa + 3 retries
+RETRY_BACKOFF_BASE_SECONDS = 0.5  # backoff exponencial: 0.5s, 1s, 2s, ...
+# Status HTTP considerados transitórios (vale a pena re-tentar).
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
 
 class BizzuPartnerError(RuntimeError):
     """Erro de chamada à API de Clientes da Bizzu (rede/HTTP)."""
@@ -42,6 +50,10 @@ class BizzuPartnerError(RuntimeError):
 
 class BizzuPartnerAuthError(BizzuPartnerError):
     """401 — chave ausente/ inválida (X-API-Key)."""
+
+
+class BizzuPartnerRetryableError(BizzuPartnerError):
+    """Erro TRANSITÓRIO (502/503/504/429/rede/timeout) — vale re-tentar a página."""
 
 
 class BizzuPartnerClient:
@@ -76,9 +88,9 @@ class BizzuPartnerClient:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.get(url, params=params, headers=self._headers())
-        except httpx.HTTPError as exc:  # rede/timeout
+        except httpx.HTTPError as exc:  # rede/timeout -> transitório (vale re-tentar)
             logger.warning("BizzuPartner: falha de rede em GET %s (%s)", path, type(exc).__name__)
-            raise BizzuPartnerError(f"falha de rede em GET {path}") from exc
+            raise BizzuPartnerRetryableError(f"falha de rede em GET {path}") from exc
 
         if resp.status_code == 401:
             logger.warning("BizzuPartner: 401 em GET %s (chave inválida/ausente)", path)
@@ -87,6 +99,10 @@ class BizzuPartnerClient:
             # 404 é semântico (by-email de não-cliente); deixa o chamador decidir.
             logger.info("BizzuPartner: 404 em GET %s", path)
             raise BizzuPartnerError(f"404 em GET {path}")
+        if resp.status_code in RETRYABLE_STATUS:
+            # 5xx/429: instabilidade momentânea da API -> transitório (vale re-tentar).
+            logger.warning("BizzuPartner: HTTP %s (transitório) em GET %s", resp.status_code, path)
+            raise BizzuPartnerRetryableError(f"HTTP {resp.status_code} em GET {path}")
         if resp.status_code >= 400:
             logger.warning("BizzuPartner: HTTP %s em GET %s", resp.status_code, path)
             raise BizzuPartnerError(f"HTTP {resp.status_code} em GET {path}")
@@ -119,20 +135,59 @@ class BizzuPartnerClient:
         )
         return data
 
+    async def _list_customers_with_retry(
+        self, page: int, page_size: int, search: str, max_retries: int
+    ) -> dict[str, Any]:
+        """`list_customers` com retry+backoff em erro TRANSITÓRIO (502/503/504/429/rede/timeout).
+
+        Re-tenta a MESMA página até `max_retries` tentativas (backoff exponencial). 401/404
+        e demais 4xx NÃO são re-tentados (não-transitórios). Se esgotar as tentativas,
+        propaga o último erro transitório (subclasse de BizzuPartnerError) — assim a
+        paginação falha ALTO em vez de truncar silenciosamente.
+        """
+        attempt = 0
+        while True:
+            try:
+                return await self.list_customers(page=page, page_size=page_size, search=search)
+            except BizzuPartnerRetryableError as exc:
+                attempt += 1
+                if attempt >= max_retries:
+                    logger.warning(
+                        "BizzuPartner: página %s falhou após %s tentativa(s) (%s) — desistindo",
+                        page, attempt, exc,
+                    )
+                    raise
+                delay = RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+                logger.warning(
+                    "BizzuPartner: página %s falhou (%s); re-tentando em %.1fs (tentativa %s/%s)",
+                    page, exc, delay, attempt + 1, max_retries,
+                )
+                await asyncio.sleep(delay)
+
     async def iter_all_customers(
-        self, page_size: int = DEFAULT_PAGE_SIZE, search: str = ""
+        self,
+        page_size: int = DEFAULT_PAGE_SIZE,
+        search: str = "",
+        max_retries: int = DEFAULT_MAX_RETRIES,
     ) -> AsyncIterator[dict[str, Any]]:
         """Itera TODOS os clientes, paginando até `items` vir vazio.
 
         Usa `total` como salvaguarda: para também ao já ter rendido >= total
         (evita loop infinito se a API repetir páginas). Rende um PartnerCustomer
         (dict) por vez.
+
+        Cada página é buscada com retry+backoff (`max_retries`) em falhas transitórias
+        (502/503/504/429/rede/timeout) — uma página instável é re-tentada em vez de
+        truncar o sync sem aviso. Erros não-transitórios (401/404/outros 4xx) e a
+        falha após esgotar as tentativas propagam normalmente.
         """
         page = 1
         seen = 0
         total: int | None = None
         while True:
-            data = await self.list_customers(page=page, page_size=page_size, search=search)
+            data = await self._list_customers_with_retry(
+                page=page, page_size=page_size, search=search, max_retries=max_retries
+            )
             items = data.get("items") or []
             if total is None:
                 t = data.get("total")

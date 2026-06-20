@@ -20,19 +20,25 @@ Por isso o default executa de verdade; use --dry-run para auditar a distribuicao
 Privacidade (LGPD): sem --dry-run grava PII (nome) só no banco do próprio Escuta;
 o stdout nunca imprime nome/e-mail/whatsapp — só telefone-dígitos e ids opacos.
 
+Cobertura: por PADRÃO cria/atualiza contato para TODO cliente da API — com OU sem
+telefone. Quem tem telefone válido (>= 10 dígitos) vira contato normal (opt_in=True);
+quem NÃO tem (ausente/inválido) vira contato 'nowa-{partner_id}'
+(profile_data.sem_whatsapp=True + email, opt_in=False) — universo só-e-mail do winback.
+Assim os ~240 clientes da API entram, não só os ~104 com telefone. Idempotente nos dois
+caminhos. Use --so-com-telefone para o comportamento antigo (pular quem não tem telefone).
+
 Envs:
   DATABASE_URL          — Supabase do Escuta (postgresql+asyncpg://...), via .env
   BIZZU_PARTNER_API_URL — base da API (default https://api.bizzu.ai)
   BIZZU_PARTNER_API_KEY — segredo X-API-Key (peça ao Felipe; nunca commitar)
 
-  --incluir-sem-telefone -> também cria/atualiza os CHURN sem telefone como
-                contato 'nowa-{partner_id}' (profile_data.sem_whatsapp=True + email),
-                opt_in=False. Universo só-e-mail do winback. Idempotente.
+  --so-com-telefone -> NÃO cria contato para quem está sem telefone (pula os
+                'nowa-{partner_id}'); processa só os clientes com telefone válido.
 
 Uso:
     py scripts/sync_partner_customers.py --dry-run [--search TEXTO]
-    py scripts/sync_partner_customers.py --dry-run --incluir-sem-telefone
-    py scripts/sync_partner_customers.py [--search TEXTO] [--incluir-sem-telefone]
+    py scripts/sync_partner_customers.py --dry-run --so-com-telefone
+    py scripts/sync_partner_customers.py [--search TEXTO] [--so-com-telefone]
 """
 from __future__ import annotations
 
@@ -161,7 +167,7 @@ def _is_churn(customer: dict, classification: dict) -> bool:
     return isinstance(profile, str) and profile.lower().startswith("churn")
 
 
-async def sync(dry_run: bool, search: str, incluir_sem_telefone: bool) -> int:
+async def sync(dry_run: bool, search: str, so_com_telefone: bool) -> int:
     from app.domain.segmentation.profiles import classify_profile
     from app.integrations.bizzu_partner import BizzuPartnerClient, BizzuPartnerError
 
@@ -206,16 +212,20 @@ async def sync(dry_run: bool, search: str, incluir_sem_telefone: bool) -> int:
     print("=== Distribuição por alcance ===")
     print(f"  {'com telefone':<24} {com_tel:>5}")
     print(f"  {'sem telefone':<24} {sem_tel:>5}")
-    print(f"  {'  - churn sem telefone':<24} {churn_sem_tel:>5}  (alvo de --incluir-sem-telefone)")
+    print(f"  {'  - churn sem telefone':<24} {churn_sem_tel:>5}  (subconjunto dos sem telefone)")
 
     if dry_run:
-        if incluir_sem_telefone:
+        if so_com_telefone:
             print(
-                f"=== DRY-RUN (--incluir-sem-telefone): {churn_sem_tel} churn(s) sem telefone "
-                f"seriam criados/atualizados como 'nowa-{{partner_id}}' (nada gravado) ==="
+                f"=== DRY-RUN (--so-com-telefone): {com_tel} com telefone seriam "
+                f"criados/atualizados; {sem_tel} sem telefone seriam PULADOS (nada gravado) ==="
             )
         else:
-            print("=== DRY-RUN (nada gravado, sem tocar o banco) ===")
+            print(
+                f"=== DRY-RUN (default): {com_tel} com telefone + {sem_tel} sem telefone "
+                f"('nowa-{{partner_id}}') seriam criados/atualizados — {total} no total "
+                f"(nada gravado) ==="
+            )
         return 0
 
     # --- 2. Upsert no Escuta (só fora do dry-run) ---
@@ -253,12 +263,20 @@ async def sync(dry_run: bool, search: str, incluir_sem_telefone: bool) -> int:
             name = (customer.get("name") or "").strip() or None
 
             if len(phone) < 10:
-                # Sem telefone: por padrão pula. Com --incluir-sem-telefone, os CHURN
-                # viram contato 'nowa-{partner_id}' (universo só-e-mail do winback).
-                if not (incluir_sem_telefone and _is_churn(customer, classification)):
+                # Sem telefone: por PADRÃO vira contato 'nowa-{partner_id}' (universo
+                # só-e-mail do winback), para TODO cliente — não só churn. Com
+                # --so-com-telefone, pula (comportamento antigo).
+                if so_com_telefone:
                     invalid += 1
                     # Sem PII no log: só id opaco + perfil.
                     print(f"  ~ sem whatsapp válido, pulado: id={partner_id} perfil={partner['profile']}")
+                    continue
+
+                if not partner_id:
+                    # Sem telefone E sem id estável: não há chave de upsert ('nowa-None'
+                    # colidiria todos os sem-id num só contato). Pula com aviso.
+                    invalid += 1
+                    print(f"  ~ sem telefone e sem id, pulado: perfil={partner['profile']}")
                     continue
 
                 nowa_phone = f"nowa-{partner_id}"
@@ -370,7 +388,7 @@ async def sync(dry_run: bool, search: str, incluir_sem_telefone: bool) -> int:
 
     print(
         f"=== Sync executado: {created} criado(s), {created_sem_tel} criado(s) sem-tel (nowa-), "
-        f"{updated} atualizado(s), {unchanged} já em dia, {invalid} sem telefone, "
+        f"{updated} atualizado(s), {unchanged} já em dia, {invalid} sem telefone pulado(s), "
         f"{skipped} ignorado(s); {fb_items} sinal(is) na mega central ==="
     )
     return 0
@@ -391,15 +409,15 @@ def main(argv: list[str] | None = None) -> int:
         help="filtro opcional repassado à API (?search=)",
     )
     parser.add_argument(
-        "--incluir-sem-telefone",
+        "--so-com-telefone",
         action="store_true",
         help=(
-            "também cria/atualiza os CHURN sem telefone como contato 'nowa-{partner_id}' "
-            "(universo só-e-mail do winback); idempotente"
+            "NÃO cria contato para quem está sem telefone (pula os 'nowa-{partner_id}'); "
+            "processa só os clientes com telefone válido (comportamento antigo)"
         ),
     )
     args = parser.parse_args(argv)
-    return asyncio.run(sync(args.dry_run, args.search, args.incluir_sem_telefone))
+    return asyncio.run(sync(args.dry_run, args.search, args.so_com_telefone))
 
 
 if __name__ == "__main__":
