@@ -2786,3 +2786,64 @@ tbody tr:hover td { color: var(--text); }
   .fb-kebab-pop { right: auto; left: 0; }
 }
 
+/* ===== feedbacks: estado "Abordado" de 1ª classe, VISÍVEL no card ===========
+   O dono monitora "Abordados" de perto, então o estado sim/não fica à vista no
+   card (sem abrir o "⋯"): chip VERDE quando já abordado (cabeçalho) e botão
+   discreto "Marcar abordado" quando ainda não (rodapé). Verde claro próprio
+   (success) p/ ler como "feito/concluído" e não se confundir com o indigo do NPS. */
+.fb-card {
+  --abordado-green: #15803d;            /* verde texto/ícone (AA sobre o soft) */
+  --abordado-green-soft: rgba(34, 197, 94, 0.13);
+  --abordado-green-line: rgba(34, 197, 94, 0.40);
+}
+
+/* chip "✓ Abordado" no cabeçalho — clicável p/ desmarcar */
+.fb-abordado-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 9px; min-height: 22px;
+  font-family: inherit; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.2px; line-height: 1;
+  border-radius: 999px; cursor: pointer;
+  color: var(--abordado-green);
+  background: var(--abordado-green-soft);
+  border: 1px solid var(--abordado-green-line);
+  transition-property: background-color, border-color, filter;
+  transition-duration: 150ms; transition-timing-function: var(--ease);
+}
+.fb-abordado-chip:hover { filter: brightness(0.97); border-color: rgba(34, 197, 94, 0.6); }
+.fb-abordado-chip:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+}
+.fb-abordado-chip:disabled { opacity: 0.6; cursor: progress; }
+.fb-abordado-chip svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+/* botão "Marcar abordado" no rodapé — discreto mas visível, ao lado do WhatsApp */
+.fb-marcar-abordado {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 34px; padding: 7px 13px;
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  border-radius: 999px; cursor: pointer;
+  color: var(--text-dim);
+  background: var(--ink);
+  border: 1px solid var(--charcoal-2);
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: 150ms; transition-timing-function: var(--ease);
+}
+.fb-marcar-abordado:hover {
+  background: var(--abordado-green-soft);
+  border-color: var(--abordado-green-line);
+  color: var(--abordado-green);
+}
+.fb-marcar-abordado:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+}
+.fb-marcar-abordado:disabled { opacity: 0.6; cursor: progress; }
+.fb-marcar-abordado svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* o card abordado: troca o acento indigo da borda esquerda por VERDE, casando
+   com o chip — reforça "este já foi abordado" de relance, sem texto. */
+.fb-card.is-abordado {
+  border-color: var(--abordado-green-line);
+  box-shadow: inset 3px 0 0 #22c55e, var(--shadow);
+}
+

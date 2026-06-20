@@ -1058,6 +1058,20 @@ function FeedbackCard({
         {fb.urgencia >= 70 && (
           <span className="badge detractor fb-chip-sm" title={`Urgência ${fb.urgencia}/100`}>urgente</span>
         )}
+        {/* Estado "abordado" de 1ª classe: chip verde VISÍVEL no cabeçalho quando
+           já abordamos o cliente — clicável para desmarcar (mesmo toggle otimista). */}
+        {fb.abordado && (
+          <button
+            type="button"
+            className="fb-abordado-chip"
+            onClick={toggleAbordado}
+            disabled={abordadoSaving}
+            title="Abordado — clique para desmarcar"
+            aria-pressed="true"
+          >
+            <Check size={13} aria-hidden /> Abordado
+          </button>
+        )}
         <span className="fb-when">{fmtDate(fb.occurred_em ?? fb.created_em)}</span>
       </div>
 
@@ -1103,6 +1117,19 @@ function FeedbackCard({
         )}
 
         <div className="fb-card-tools">
+          {/* Quando ainda NÃO abordado: botão discreto mas visível no rodapé para
+             marcar — sem precisar abrir o "⋯" (estado que o dono monitora de perto). */}
+          {!fb.abordado && (
+            <button
+              type="button"
+              className="fb-marcar-abordado"
+              onClick={toggleAbordado}
+              disabled={abordadoSaving}
+              title="Marcar como abordado"
+            >
+              <Check size={14} aria-hidden /> Marcar abordado
+            </button>
+          )}
           <button
             type="button"
             className="btn-wa-sm"
