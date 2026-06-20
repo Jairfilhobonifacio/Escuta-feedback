@@ -20,6 +20,7 @@ import { Reveal } from "@/components/Motion";
 import SeloPopover from "@/components/SeloPopover";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { maskPhone } from "@/lib/format";
 import {
   clientes as clientesApi,
   campanha as campanhaApi,
@@ -922,7 +923,7 @@ export default function ClientesPage() {
                           {c.nome || "sem nome"}
                         </Link>
                         {c.tem_whatsapp ? (
-                          <span className="mono cell-person-sub">{c.whatsapp}</span>
+                          <span className="mono cell-person-sub" title="Telefone mascarado — abra a ficha para o número completo">{maskPhone(c.whatsapp)}</span>
                         ) : (
                           <span className="cell-person-sub faint">—</span>
                         )}

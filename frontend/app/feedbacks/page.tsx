@@ -16,6 +16,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import AbordarModal, { waIcon } from "@/components/AbordarModal";
 import { Stagger, StaggerItem } from "@/components/Motion";
 import { Button } from "@/components/ui/button";
+import { feedbackText, maskPhone } from "@/lib/format";
 import {
   api,
   campanha as campanhaApi,
@@ -772,7 +773,10 @@ function FeedbackCard({
   statusOptions: ConfigItem[];
   typeLabels: Record<string, string>;
 }) {
-  const [note, setNote] = useState(fb.action_note ?? "");
+  // Corrige um typo gravado em dados antigos ("repsposta") só na exibição/edição.
+  const fixNote = (s: string | null | undefined) =>
+    (s ?? "").replace(/repsposta/gi, "resposta");
+  const [note, setNote] = useState(fixNote(fb.action_note));
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -791,7 +795,9 @@ function FeedbackCard({
   // Mantém o input de nota em sincronia quando o card é reconciliado de fora
   // (ex.: edição via modal) sem pisar no que o usuário está digitando.
   useEffect(() => {
-    if (!saving) setNote(fb.action_note ?? "");
+    if (!saving) setNote(fixNote(fb.action_note));
+    // fixNote é estável (definido no corpo); depende só de fb.action_note/saving.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fb.action_note, saving]);
 
   async function patch(body: FeedbackPatch) {
@@ -885,7 +891,7 @@ function FeedbackCard({
         ) : (
           <span className="fb-who">{fb.contato_nome || "sem contato"}</span>
         )}
-        <span className="mono dim fb-phone">{fb.contato_whatsapp}</span>
+        <span className="mono dim fb-phone" title="Telefone mascarado — abra a ficha do contato para o número completo">{maskPhone(fb.contato_whatsapp)}</span>
         {typeBadge(fb.type, typeLabels)}
         <span className="dim" style={{ fontSize: 12 }}>
           via {SOURCE_LABEL[fb.source] ?? fb.source}
@@ -903,7 +909,7 @@ function FeedbackCard({
       </div>
 
       {fb.text ? (
-        <div className="fb-text">“{fb.text}”</div>
+        <div className="fb-text">“{feedbackText(fb.text)}”</div>
       ) : (
         <div className="fb-text empty-text">sem texto — só a nota</div>
       )}
@@ -1669,7 +1675,7 @@ export default function FeedbacksPage() {
               <b>{deleting.contato_nome || "sem nome"}</b> será removido do inbox.
             </>
           }
-          quote={deleting.text}
+          quote={feedbackText(deleting.text)}
           confirmLabel="Sim, excluir"
           confirmingLabel="Excluindo…"
           onCancel={() => setDeleting(null)}

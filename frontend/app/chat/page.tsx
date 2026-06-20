@@ -160,7 +160,7 @@ export default function ChatPage() {
           <div className="page-sub">Conversas do WhatsApp, dentro da central — sem abrir o WhatsApp Web</div>
         </div>
         <Badge variant={conectado ? "positive" : "neutral"} className="px-2.5 py-1 text-[11.5px]">
-          {conectado ? "WAHA conectado" : "WAHA desligado"}
+          {conectado ? "WhatsApp conectado" : "WhatsApp desligado"}
         </Badge>
       </div>
 
@@ -351,7 +351,7 @@ export default function ChatPage() {
 
               {!conectado && (
                 <div className="chat-gate-note">
-                  WAHA desligado — você pode ler as conversas, mas o envio fica bloqueado.
+                  WhatsApp desligado — você pode ler as conversas, mas o envio fica bloqueado.
                   Ligue a sessão do WhatsApp para responder por aqui.
                 </div>
               )}
@@ -378,7 +378,7 @@ export default function ChatPage() {
                   onChange={(e) => setTexto(e.target.value)}
                   onKeyDown={onKeyDown}
                   placeholder={
-                    conectado ? "Escreva uma mensagem… (Enter envia, Shift+Enter quebra linha)" : "WAHA desligado — envio bloqueado"
+                    conectado ? "Escreva uma mensagem… (Enter envia, Shift+Enter quebra linha)" : "WhatsApp desligado — envio bloqueado"
                   }
                   rows={2}
                   disabled={sending}
@@ -390,7 +390,7 @@ export default function ChatPage() {
                   className="h-10"
                   title={
                     !conectado
-                      ? "WAHA desligado — não dá para enviar"
+                      ? "WhatsApp desligado — não dá para enviar"
                       : isGrupo
                         ? "Grupos não recebem 1:1"
                         : !alcancavel

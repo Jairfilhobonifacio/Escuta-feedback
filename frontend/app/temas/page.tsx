@@ -140,6 +140,10 @@ function TemaCard({ tema, rank, maxCount }: { tema: Tema; rank: number; maxCount
   // Mesmo "índice de dor" dos clusters (volume × fração negativa): deixa o card
   // de tema legível como entrada de um mapa de dores, não só uma contagem.
   const pain = painScore(tema);
+  // Sem nenhum feedback negativo classificado, o índice sai 0.0 mesmo com volume —
+  // sinaliza que o sentimento ainda não foi processado, em vez de cravar "0 de dor".
+  const knownSent = tema.sentiment.positivo + tema.sentiment.neutro + tema.sentiment.negativo;
+  const painPending = neg === 0 && knownSent < tema.count;
 
   return (
     <div className={`card tema-card ${isPain ? "is-pain" : ""}`}>
@@ -168,11 +172,22 @@ function TemaCard({ tema, rank, maxCount }: { tema: Tema; rank: number; maxCount
         <span className="tema-volume-fill" style={{ width: `${barPct}%` }} />
       </div>
 
-      {/* Índice de dor (volume × negatividade) — mesma régua do "Mapa de dores" */}
-      <div className="cluster-pain" aria-label={`Índice de dor ${pain.toFixed(1)}`}>
-        <span className="cluster-pain-label">Índice de dor</span>
-        <span className="cluster-pain-value">{pain.toFixed(1)}</span>
-      </div>
+      {/* Índice de dor (volume × negatividade) — mesma régua do "Mapa de dores".
+          Sem sentimento classificado, mostra o volume como medida provisória. */}
+      {painPending ? (
+        <div
+          className="cluster-pain"
+          aria-label={`Sentimento pendente — ${tema.count} menções deste tema`}
+        >
+          <span className="cluster-pain-label">Volume (dor pendente)</span>
+          <span className="cluster-pain-value">{fmtNum.format(tema.count)}</span>
+        </div>
+      ) : (
+        <div className="cluster-pain" aria-label={`Índice de dor ${pain.toFixed(1)}`}>
+          <span className="cluster-pain-label">Índice de dor</span>
+          <span className="cluster-pain-value">{pain.toFixed(1)}</span>
+        </div>
+      )}
 
       <SentimentBar tema={tema} />
 
@@ -199,13 +214,16 @@ function ClusterSentimentBar({ cluster }: { cluster: FeedbackCluster }) {
   const total = cluster.item_count || 1;
   const neg = Math.min(cluster.neg_count, cluster.item_count);
   const rest = Math.max(0, cluster.item_count - neg);
+  // Sem nenhum negativo classificado num cluster com volume, "demais" na verdade é
+  // "ainda sem classificação" — não é o mesmo que ter sido lido como não-negativo.
+  const restLabel = neg === 0 && cluster.item_count > 0 ? "sem classificação" : "demais";
 
   return (
     <div className="tema-sent">
       <div
         className="tema-sent-bar"
         role="img"
-        aria-label={`Sentimento do cluster: ${neg} negativo${neg === 1 ? "" : "s"}, ${rest} demais`}
+        aria-label={`Sentimento do cluster: ${neg} negativo${neg === 1 ? "" : "s"}, ${rest} ${restLabel}`}
       >
         {neg > 0 && (
           <span className="seg neg" style={{ width: `${(neg / total) * 100}%` }} />
@@ -224,7 +242,7 @@ function ClusterSentimentBar({ cluster }: { cluster: FeedbackCluster }) {
         {rest > 0 && (
           <span className="leg none">
             <span className="dot" />
-            {fmtNum.format(rest)} demais
+            {fmtNum.format(rest)} {restLabel}
           </span>
         )}
       </div>
@@ -242,9 +260,19 @@ type PromoteState =
   | { phase: "error"; msg: string };
 
 function ClusterCard({ cluster, rank }: { cluster: FeedbackCluster; rank: number }) {
-  // "Dor crítica" = volume relevante com sentimento predominantemente negativo.
+  // O "índice de dor" (volume × fração negativa) só é confiável quando os itens
+  // têm sentimento POR ITEM classificado. Enquanto a IA não classificou (neg_count=0
+  // num cluster com volume), pain_score sai 0.0 e a barra fica vazia — o que é
+  // enganoso, ainda mais com o cluster rotulado como "negativo" pelo LLM. Nesse caso
+  // tratamos o índice como PENDENTE e usamos o VOLUME como medida de dor.
+  const hasItemSentiment = cluster.neg_count > 0;
+  const painPending = !hasItemSentiment && cluster.item_count > 0;
+  // "Dor crítica" só quando há base por item (negativos de verdade) com volume — não
+  // pode aparecer junto de um índice 0.0. Sem classificação, não cravamos "crítica".
   const isCritical =
-    cluster.item_count >= 3 && cluster.dominant_sentiment === "negativo";
+    hasItemSentiment &&
+    cluster.item_count >= 3 &&
+    cluster.dominant_sentiment === "negativo";
   const title = cluster.label ?? "Cluster sem rótulo";
 
   // Já existe uma melhoria pra essa dor? (FK no cluster). Se sim, o botão vira link.
@@ -283,6 +311,14 @@ function ClusterCard({ cluster, rank }: { cluster: FeedbackCluster; rank: number
             🔥 dor crítica
           </span>
         )}
+        {painPending && (
+          <span
+            className="badge tema-flag"
+            title="Feedbacks ainda sem sentimento classificado pela IA — o índice de dor usa o volume por enquanto"
+          >
+            ⏳ sentimento pendente
+          </span>
+        )}
         <span className="tema-count" title="Feedbacks agrupados neste cluster">
           {fmtNum.format(cluster.item_count)}
           <span className="tema-count-unit">
@@ -297,11 +333,23 @@ function ClusterCard({ cluster, rank }: { cluster: FeedbackCluster; rank: number
         </p>
       )}
 
-      {/* Índice de dor em destaque (volume × negatividade) */}
-      <div className="cluster-pain" aria-label={`Índice de dor ${cluster.pain_score.toFixed(1)}`}>
-        <span className="cluster-pain-label">Índice de dor</span>
-        <span className="cluster-pain-value">{cluster.pain_score.toFixed(1)}</span>
-      </div>
+      {/* Índice de dor em destaque (volume × negatividade). Quando o sentimento
+          por item ainda não foi classificado, o índice não é calculável — então
+          mostramos o VOLUME como medida provisória de dor, deixando claro o motivo. */}
+      {painPending ? (
+        <div
+          className="cluster-pain"
+          aria-label={`Sentimento pendente — ${cluster.item_count} feedbacks neste cluster`}
+        >
+          <span className="cluster-pain-label">Volume (dor pendente)</span>
+          <span className="cluster-pain-value">{fmtNum.format(cluster.item_count)}</span>
+        </div>
+      ) : (
+        <div className="cluster-pain" aria-label={`Índice de dor ${cluster.pain_score.toFixed(1)}`}>
+          <span className="cluster-pain-label">Índice de dor</span>
+          <span className="cluster-pain-value">{cluster.pain_score.toFixed(1)}</span>
+        </div>
+      )}
 
       <ClusterSentimentBar cluster={cluster} />
 

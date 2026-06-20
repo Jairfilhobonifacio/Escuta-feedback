@@ -7,6 +7,7 @@ import { healthCell } from "@/components/HealthCell";
 import Modal from "@/components/Modal";
 import SeloPopover from "@/components/SeloPopover";
 import { Button } from "@/components/ui/button";
+import { feedbackText, maskPhone } from "@/lib/format";
 import {
   boards as boardsApi,
   feedbacks as feedbacksApi,
@@ -741,7 +742,7 @@ function BoardCard({
         <span className="board-card-who">{fb.contato_nome || "sem contato"}</span>
       </div>
       {fb.text ? (
-        <p className="board-card-text board-card-text-1">{snippet(fb.text, 90)}</p>
+        <p className="board-card-text board-card-text-1">{snippet(feedbackText(fb.text), 90)}</p>
       ) : (
         <p className="board-card-text board-card-text-1 empty-text">sem texto {"—"} só a nota</p>
       )}
@@ -756,7 +757,7 @@ function BoardCard({
       </div>
 
       {fb.text ? (
-        <p className="board-card-text">{snippet(fb.text)}</p>
+        <p className="board-card-text">{snippet(feedbackText(fb.text))}</p>
       ) : (
         <p className="board-card-text empty-text">sem texto {"—"} só a nota</p>
       )}
@@ -839,7 +840,7 @@ function ClienteCard({
 
       <div className="board-cli-contact">
         {cli.tem_whatsapp ? (
-          <span className="board-cli-wa mono">{cli.whatsapp}</span>
+          <span className="board-cli-wa mono" title="Telefone mascarado — abra a ficha para o número completo">{maskPhone(cli.whatsapp)}</span>
         ) : (
           <span className="chip board-cli-onlyemail" title="Sem WhatsApp — universo só e-mail">
             só e-mail

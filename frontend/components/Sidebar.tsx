@@ -113,7 +113,7 @@ export default function Sidebar() {
           by <b>Bizzu</b>
           <span className="brand-by-dot">.</span>
         </span>
-        <span className="sidebar-foot-meta">Piloto {"·"} WAHA local {"·"} Supabase</span>
+        <span className="sidebar-foot-meta">Voz do Cliente {"·"} WhatsApp</span>
       </div>
     </aside>
   );

@@ -24,6 +24,7 @@ import SeloPopover from "@/components/SeloPopover";
 import { Reveal } from "@/components/Motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { feedbackText } from "@/lib/format";
 import {
   api,
   campanha as campanhaApi,
@@ -679,7 +680,7 @@ function TimelineRow({
         {t.status === "ingested" && <Badge variant="neutral">do app</Badge>}
         <span className="tl-when">{fmtDate(t.at)}</span>
       </div>
-      {t.text && <div className="tl-text">“{t.text}”</div>}
+      {t.text && <div className="tl-text">“{feedbackText(t.text)}”</div>}
       {editable && t.action_note && (
         <div className="tl-note">
           <span className="tl-note-tag">nota do time</span>
