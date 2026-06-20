@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
+import SeloPopover from "@/components/SeloPopover";
 import { Reveal } from "@/components/Motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -243,16 +244,6 @@ function ContatoSelos({
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
 
   const disponiveis = SELOS_CAMPANHA.filter((s) => !selos.includes(s));
 
@@ -284,7 +275,7 @@ function ContatoSelos({
   }
 
   return (
-    <div className="c360-selos" ref={boxRef}>
+    <div className="c360-selos">
       {selos.map((nome) => (
         <span key={nome} className="selo-chip">
           <span className="selo-dot" style={{ background: "var(--indigo)" }} />
@@ -300,38 +291,41 @@ function ContatoSelos({
           </button>
         </span>
       ))}
-      <button
-        type="button"
-        className="selo-add"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-label="Aplicar selo de campanha"
-        disabled={busy}
+      <SeloPopover
+        open={open}
+        onOpenChange={setOpen}
+        trigger={({ open: isOpen, toggle }) => (
+          <button
+            type="button"
+            className="selo-add"
+            onClick={toggle}
+            aria-expanded={isOpen}
+            aria-label="Aplicar selo de campanha"
+            disabled={busy}
+          >
+            <Plus size={12} strokeWidth={2.2} aria-hidden /> selo
+          </button>
+        )}
       >
-        <Plus size={12} strokeWidth={2.2} aria-hidden /> selo
-      </button>
-      {open && (
-        <div className="selo-pop">
-          {disponiveis.length === 0 ? (
-            <div className="picker-empty">Todos os selos de campanha já aplicados.</div>
-          ) : (
-            <div className="selo-pop-list">
-              {disponiveis.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className="selo-pop-item"
-                  onClick={() => aplicar(s)}
-                  disabled={busy}
-                >
-                  <span className="selo-dot" style={{ background: "var(--indigo)" }} />
-                  {s}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        {disponiveis.length === 0 ? (
+          <div className="picker-empty">Todos os selos de campanha já aplicados.</div>
+        ) : (
+          <div className="selo-pop-list" style={{ marginBottom: 0, paddingBottom: 0, borderBottom: "none" }}>
+            {disponiveis.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className="selo-pop-item"
+                onClick={() => aplicar(s)}
+                disabled={busy}
+              >
+                <span className="selo-dot" style={{ background: "var(--indigo)" }} />
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+      </SeloPopover>
     </div>
   );
 }
@@ -1026,7 +1020,7 @@ export default function Contact360Page() {
       {!err && !data && <Skeleton360 />}
 
       {data && (
-        <>
+        <div className="c360-body">
           {data.partner && <ProfileCard partner={data.partner} />}
 
           {id && <EnviarWhatsapp contactId={id} onSent={load} />}
@@ -1080,7 +1074,7 @@ export default function Contact360Page() {
               </ul>
             )}
           </Reveal>
-        </>
+        </div>
       )}
 
       {editingItem && (

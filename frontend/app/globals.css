@@ -2613,3 +2613,30 @@ tbody tr:hover td { color: var(--text); }
   letter-spacing: 0.04em; color: var(--indigo-light);
 }
 
+/* === Popover de selos em PORTAL (corrige o "+selo" bugado, img-2) ============
+   O painel de selos agora vive num portal no <body> com position:fixed (componente
+   SeloPopover), ancorado ao gatilho. Isso o tira de qualquer overflow/stacking de
+   ancestral (a tabela de Clientes tinha .card{overflow:hidden} + .table-wrap
+   {overflow-x:auto} cortando o popover, e linhas seguintes pintavam por cima — daí
+   o "+selo" fantasma no meio da lista). O .selo-anchor é só o invólucro do gatilho
+   (não muda o fluxo). O .selo-pop-portal sobrepõe o posicionamento absoluto antigo
+   do .selo-pop por position:fixed (top/left vêm inline do componente) e garante um
+   z-index acima de tudo (modais usam 50). Reusa a aparência do .selo-pop. */
+.selo-anchor { display: inline-flex; align-items: center; }
+.selo-pop-portal {
+  position: fixed;
+  left: auto; top: auto;            /* anula o left:0/top:calc(...) do .selo-pop */
+  z-index: 60;                      /* acima de cards, tabelas e do backdrop de modal (50) */
+}
+
+/* === Ficha do contato — respiro entre os cards empilhados ====================
+   Os cards da ficha (Perfil & assinatura, Enviar WhatsApp, Conversa, Linha do
+   tempo) são .card empilhados verticalmente. O .card global não tem margem, então
+   eles ficavam COLADOS (o "quebrado e estranho" da img-3). Aqui damos o mesmo ritmo
+   vertical da Monitorar (--rhythm) sem mexer no .card global. O wrapper .c360-body
+   envolve só os cards de conteúdo da ficha. */
+.c360-body > .card { margin-bottom: var(--rhythm); }
+.c360-body > .card:last-child { margin-bottom: 0; }
+/* o ProfileCard já trazia 18px próprios; uniformiza com o ritmo do tema */
+.c360-body > .c360-profile { margin-bottom: var(--rhythm); }
+

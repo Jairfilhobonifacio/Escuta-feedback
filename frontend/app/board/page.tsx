@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { healthCell } from "@/components/HealthCell";
 import Modal from "@/components/Modal";
+import SeloPopover from "@/components/SeloPopover";
 import { Button } from "@/components/ui/button";
 import {
   boards as boardsApi,
@@ -364,17 +365,6 @@ function FeedbackAcoes({
   const [melhoriasList, setMelhoriasList] = useState<Improvement[] | null>(null);
   const [assignee, setAssignee] = useState(fb.assignee ?? "");
   const [team, setTeam] = useState(fb.team_tag ?? "");
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-
-  // Fecha ao clicar fora.
-  useEffect(() => {
-    if (aberto === null) return;
-    function onDoc(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setAberto(null);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [aberto]);
 
   // Flash some sozinho.
   useEffect(() => {
@@ -459,9 +449,6 @@ function FeedbackAcoes({
   // Impede que clicar nas ações inicie drag ou navegue pelo link do card.
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 
-  // Popover ancorado à DIREITA (o wrapper fica no canto sup. direito do card).
-  const popStyle: React.CSSProperties = { left: "auto", right: 0 };
-
   return (
     <>
       {/* Nudge sutil (board action_status, coluna "planejado", sem melhoria):
@@ -484,156 +471,161 @@ function FeedbackAcoes({
         </button>
       )}
 
+      {/* Kebab + menu de ações: o painel vive num PORTAL (SeloPopover) ancorado ao
+          botão — não é mais cortado/empilhado dentro da coluna. O invólucro fica no
+          canto sup. direito do card e bloqueia drag/click do card. */}
       <div
-        ref={wrapRef}
         style={{ position: "absolute", top: 10, right: 10, zIndex: 6 }}
         draggable={false}
         onDragStart={stop}
         onMouseDown={stop}
         onClick={stop}
       >
-      <button
-        type="button"
-        className="selo-add"
-        style={{ padding: "3px 8px", borderRadius: 7, lineHeight: 1 }}
-        onClick={() => setAberto((v) => (v === null ? "menu" : null))}
-        aria-expanded={aberto !== null}
-        aria-label="Ações do feedback"
-        disabled={busy}
-      >
-        {"\u{22EF}"}
-      </button>
-
-      {aberto === "menu" && (
-        <div className="selo-pop" style={popStyle}>
-          <div className="selo-pop-list">
+        <SeloPopover
+          open={aberto !== null}
+          onOpenChange={(o) => setAberto(o ? "menu" : null)}
+          align="right"
+          minWidth={aberto === "atribuir" ? 240 : 220}
+          trigger={({ open: isOpen, toggle }) => (
             <button
               type="button"
-              className="selo-pop-item"
-              onClick={criarTarefa}
-              disabled={busy || !fb.contato_id}
-              title={fb.contato_id ? "" : "Sem contato vinculado"}
-            >
-              <span aria-hidden>{"\u{2713}"}</span> Criar tarefa
-            </button>
-            <button
-              type="button"
-              className="selo-pop-item"
-              onClick={abrirMelhorias}
+              className="selo-add"
+              style={{ padding: "3px 8px", borderRadius: 7, lineHeight: 1 }}
+              onClick={toggle}
+              aria-expanded={isOpen}
+              aria-label="Ações do feedback"
               disabled={busy}
             >
-              <span aria-hidden>{"\u{1F3AF}"}</span> Vincular melhoria
+              {"\u{22EF}"}
             </button>
-            <button
-              type="button"
-              className="selo-pop-item"
-              onClick={() => {
-                setAssignee(fb.assignee ?? "");
-                setTeam(fb.team_tag ?? "");
-                setAberto("atribuir");
-              }}
-              disabled={busy}
-            >
-              <span aria-hidden>{"\u{1F465}"}</span> Atribuir
-            </button>
-            {fb.contato_id && (
-              <Link
-                href={`/contatos/${fb.contato_id}`}
+          )}
+        >
+          {aberto === "menu" && (
+            <div className="selo-pop-list" style={{ marginBottom: 0, paddingBottom: 0, borderBottom: "none" }}>
+              <button
+                type="button"
                 className="selo-pop-item"
-                draggable={false}
+                onClick={criarTarefa}
+                disabled={busy || !fb.contato_id}
+                title={fb.contato_id ? "" : "Sem contato vinculado"}
               >
-                <span aria-hidden>{"\u{1F4AC}"}</span> Abrir conversa
-              </Link>
-            )}
-          </div>
-        </div>
-      )}
-
-      {aberto === "melhoria" && (
-        <div className="selo-pop" style={popStyle}>
-          {melhoriasList === null ? (
-            <div className="picker-empty">Carregando melhorias…</div>
-          ) : melhoriasList.length === 0 ? (
-            <div className="picker-empty">Nenhuma melhoria no roadmap ainda.</div>
-          ) : (
-            <div className="selo-pop-list">
-              {fb.improvement_id != null && (
-                <button
-                  type="button"
+                <span aria-hidden>{"\u{2713}"}</span> Criar tarefa
+              </button>
+              <button
+                type="button"
+                className="selo-pop-item"
+                onClick={abrirMelhorias}
+                disabled={busy}
+              >
+                <span aria-hidden>{"\u{1F3AF}"}</span> Vincular melhoria
+              </button>
+              <button
+                type="button"
+                className="selo-pop-item"
+                onClick={() => {
+                  setAssignee(fb.assignee ?? "");
+                  setTeam(fb.team_tag ?? "");
+                  setAberto("atribuir");
+                }}
+                disabled={busy}
+              >
+                <span aria-hidden>{"\u{1F465}"}</span> Atribuir
+              </button>
+              {fb.contato_id && (
+                <Link
+                  href={`/contatos/${fb.contato_id}`}
                   className="selo-pop-item"
-                  onClick={() => vincular(null)}
-                  disabled={busy}
+                  draggable={false}
                 >
-                  <span aria-hidden>{"\u{2715}"}</span> Desvincular
-                  {fb.melhoria_titulo ? ` (${curto(fb.melhoria_titulo, 18)})` : ""}
-                </button>
+                  <span aria-hidden>{"\u{1F4AC}"}</span> Abrir conversa
+                </Link>
               )}
-              {melhoriasList.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className="selo-pop-item"
-                  onClick={() => vincular(m.id)}
-                  disabled={busy}
-                  aria-current={fb.improvement_id != null && fb.improvement_id === m.id}
-                >
-                  <span aria-hidden>{"\u{1F3AF}"}</span> {curto(m.title, 30)}
-                </button>
-              ))}
             </div>
           )}
-        </div>
-      )}
 
-      {aberto === "atribuir" && (
-        <div className="selo-pop" style={{ ...popStyle, minWidth: 240 }}>
-          <div className="field" style={{ marginBottom: 10 }}>
-            <label>Responsável</label>
-            <input
-              value={assignee}
-              onChange={(e) => setAssignee(e.target.value)}
-              placeholder="slug ou e-mail"
-              disabled={busy}
-            />
-          </div>
-          <div className="field" style={{ marginBottom: 10 }}>
-            <label>Time</label>
-            <select value={team} onChange={(e) => setTeam(e.target.value)} disabled={busy}>
-              <option value="">sem time</option>
-              {TEAM_TAGS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button type="button" className="btn ghost sm" onClick={fechar} disabled={busy}>
-              Cancelar
-            </button>
-            <button type="button" className="btn sm" onClick={salvarAtribuicao} disabled={busy}>
-              {busy ? "Salvando…" : "Salvar"}
-            </button>
-          </div>
-        </div>
-      )}
+          {aberto === "melhoria" &&
+            (melhoriasList === null ? (
+              <div className="picker-empty">Carregando melhorias…</div>
+            ) : melhoriasList.length === 0 ? (
+              <div className="picker-empty">Nenhuma melhoria no roadmap ainda.</div>
+            ) : (
+              <div className="selo-pop-list" style={{ marginBottom: 0, paddingBottom: 0, borderBottom: "none" }}>
+                {fb.improvement_id != null && (
+                  <button
+                    type="button"
+                    className="selo-pop-item"
+                    onClick={() => vincular(null)}
+                    disabled={busy}
+                  >
+                    <span aria-hidden>{"\u{2715}"}</span> Desvincular
+                    {fb.melhoria_titulo ? ` (${curto(fb.melhoria_titulo, 18)})` : ""}
+                  </button>
+                )}
+                {melhoriasList.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className="selo-pop-item"
+                    onClick={() => vincular(m.id)}
+                    disabled={busy}
+                    aria-current={fb.improvement_id != null && fb.improvement_id === m.id}
+                  >
+                    <span aria-hidden>{"\u{1F3AF}"}</span> {curto(m.title, 30)}
+                  </button>
+                ))}
+              </div>
+            ))}
 
-      {flash && (
-        <div
-          className={`flash ${flash.ok ? "ok" : "err"}`}
-          style={{
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            right: 0,
-            zIndex: 7,
-            minWidth: 200,
-            marginBottom: 0,
-            whiteSpace: "normal",
-          }}
-        >
-          {flash.msg}
-        </div>
-      )}
+          {aberto === "atribuir" && (
+            <>
+              <div className="field" style={{ marginBottom: 10 }}>
+                <label>Responsável</label>
+                <input
+                  value={assignee}
+                  onChange={(e) => setAssignee(e.target.value)}
+                  placeholder="slug ou e-mail"
+                  disabled={busy}
+                />
+              </div>
+              <div className="field" style={{ marginBottom: 10 }}>
+                <label>Time</label>
+                <select value={team} onChange={(e) => setTeam(e.target.value)} disabled={busy}>
+                  <option value="">sem time</option>
+                  {TEAM_TAGS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button type="button" className="btn ghost sm" onClick={fechar} disabled={busy}>
+                  Cancelar
+                </button>
+                <button type="button" className="btn sm" onClick={salvarAtribuicao} disabled={busy}>
+                  {busy ? "Salvando…" : "Salvar"}
+                </button>
+              </div>
+            </>
+          )}
+        </SeloPopover>
+
+        {flash && (
+          <div
+            className={`flash ${flash.ok ? "ok" : "err"}`}
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              right: 0,
+              zIndex: 7,
+              minWidth: 200,
+              marginBottom: 0,
+              whiteSpace: "normal",
+            }}
+          >
+            {flash.msg}
+          </div>
+        )}
       </div>
     </>
   );

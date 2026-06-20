@@ -1,11 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Search, AlertTriangle, Info, Mail, Plus, X, SlidersHorizontal } from "lucide-react";
+import {
+  Search,
+  AlertTriangle,
+  Info,
+  Mail,
+  Plus,
+  X,
+  SlidersHorizontal,
+  MessageCircle,
+  PhoneOff,
+  CheckCircle2,
+} from "lucide-react";
 import Avatar from "@/components/Avatar";
 import { healthCell } from "@/components/HealthCell";
 import { Reveal } from "@/components/Motion";
+import SeloPopover from "@/components/SeloPopover";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -49,6 +61,66 @@ function npsTag(score: number | null) {
       <span className="font-mono font-bold tabular-nums">{score}</span>
       {label}
     </Badge>
+  );
+}
+
+/** Canal de contato do cliente — derivado client-side espelhando o validador
+    canônico do backend (app/domain/contacts/whatsapp.py):
+    - 'whatsapp'   tem celular BR válido (tem_whatsapp === true) → abordável no zap.
+    - 'email'      placeholder 'nowa-…' que o sync grava p/ churn SÓ-E-MAIL.
+    - 'sem'        vazio / fixo / grupo / inválido → não dá para abordar 1:1. */
+type Canal = "whatsapp" | "email" | "sem";
+
+function canalDoCliente(c: Cliente): Canal {
+  if (c.tem_whatsapp) return "whatsapp";
+  if ((c.whatsapp || "").startsWith("nowa-")) return "email";
+  return "sem";
+}
+
+/** Selo que o envio 1:1 aplica ao contato (WhatsappSendResult.selos). É o sinal
+    "já abordamos" — não há filtro server-side, então conta-se client-side. */
+const SELO_CONTATADO = "contatado";
+
+function foiAbordado(c: Cliente): boolean {
+  return c.selos.includes(SELO_CONTATADO);
+}
+
+/** Badge de canal por linha — bate o olho e sabe como falar com a pessoa.
+    WhatsApp em verde (não há token de marca verde; cor inline emerald),
+    e-mail e sem-contato discretos nos tokens do tema. */
+function canalBadge(canal: Canal) {
+  if (canal === "whatsapp") {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-[11px] font-semibold leading-none shadow-[var(--edge)]"
+        style={{
+          color: "#157a4e",
+          borderColor: "rgba(16, 160, 96, 0.30)",
+          background: "rgba(16, 160, 96, 0.10)",
+        }}
+        title="Celular válido — abordável por WhatsApp"
+      >
+        <MessageCircle size={12} strokeWidth={2.2} aria-hidden /> WhatsApp
+      </span>
+    );
+  }
+  if (canal === "email") {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-sm border border-[var(--charcoal-2)] bg-[var(--ink-800)] px-2 py-0.5 text-[11px] font-semibold leading-none text-[var(--text-dim)] shadow-[var(--edge)]"
+        title="Sem WhatsApp — só e-mail (alvo de win-back por e-mail)"
+      >
+        <Mail size={12} strokeWidth={2.2} aria-hidden /> Só e-mail
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-sm border border-dashed border-[var(--charcoal-2)] px-2 py-0.5 text-[11px] font-semibold leading-none text-[var(--text-faint)]"
+      title="Sem contato abordável (vazio, fixo, grupo ou inválido)"
+    >
+      <PhoneOff size={12} strokeWidth={2.2} aria-hidden /> Sem contato
+    </span>
   );
 }
 
@@ -100,6 +172,7 @@ function SkeletonRow({ cols }: { cols: number }) {
           </div>
         </div>
       </td>
+      <td><div className="sk-line" style={{ width: 84, height: 20, borderRadius: 6, margin: 0 }} /></td>
       <td>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <div className="sk-line" style={{ width: 70, margin: 0 }} />
@@ -109,7 +182,7 @@ function SkeletonRow({ cols }: { cols: number }) {
       <td><div className="sk-line w-50" style={{ margin: 0 }} /></td>
       <td><div className="sk-line w-60" style={{ margin: 0 }} /></td>
       <td><div className="sk-line w-70" style={{ margin: 0 }} /></td>
-      {cols > 5 && (
+      {cols > 6 && (
         <>
           <td><div className="sk-line w-60" style={{ margin: 0 }} /></td>
           <td><div className="sk-line w-50" style={{ margin: 0 }} /></td>
@@ -193,17 +266,6 @@ function SelosCell({
   const [novo, setNovo] = useState("");
   const [cor, setCor] = useState("#6c5ce7");
   const [busy, setBusy] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-
-  // Fecha o picker ao clicar fora.
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
 
   // Selos do catálogo ainda não aplicados a este cliente (candidatos a aplicar).
   const disponiveis = catalogo.filter((s) => !cliente.selos.includes(s.nome));
@@ -238,7 +300,7 @@ function SelosCell({
   }
 
   return (
-    <div className="selos-cell" ref={boxRef}>
+    <div className="selos-cell">
       <div className="selos-chips">
         {cliente.selos.map((nome) => {
           const c = corDoSelo(catalogo, nome);
@@ -266,19 +328,21 @@ function SelosCell({
             </span>
           );
         })}
-        <button
-          type="button"
-          className="selo-add"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          aria-label="Aplicar selo"
+        <SeloPopover
+          open={open}
+          onOpenChange={setOpen}
+          trigger={({ open: isOpen, toggle }) => (
+            <button
+              type="button"
+              className="selo-add"
+              onClick={toggle}
+              aria-expanded={isOpen}
+              aria-label="Aplicar selo"
+            >
+              <Plus size={12} strokeWidth={2.2} aria-hidden /> selo
+            </button>
+          )}
         >
-          <Plus size={12} strokeWidth={2.2} aria-hidden /> selo
-        </button>
-      </div>
-
-      {open && (
-        <div className="selo-pop">
           {disponiveis.length > 0 && (
             <div className="selo-pop-list">
               {disponiveis.map((s) => (
@@ -319,8 +383,8 @@ function SelosCell({
               Criar
             </Button>
           </div>
-        </div>
-      )}
+        </SeloPopover>
+      </div>
     </div>
   );
 }
@@ -343,6 +407,14 @@ export default function ClientesPage() {
   // Refinos client-side (não fazem parte do ClienteFiltro do backend).
   const [seloFiltro, setSeloFiltro] = useState("");
   const [soRisco, setSoRisco] = useState(false);
+  // Chip de canal ativo (faixa clicável no topo). '' = sem recorte de canal.
+  // 'whatsapp'/'email'/'sem' = canal derivado; 'abordados' = selo 'contatado'.
+  // Espelha-se no alcance (temWa) p/ o backend trazer o conjunto certo.
+  const [canalChip, setCanalChip] = useState<"" | Canal | "abordados">("");
+  // Base COMPLETA (sem o filtro tem_whatsapp) só para os contadores dos chips —
+  // assim "Só e-mail (N)"/"Sem contato (N)" têm número certo mesmo no recorte
+  // 'Contatáveis'. Carregada em paralelo, respeitando busca + filtros avançados.
+  const [base, setBase] = useState<Cliente[]>([]);
   // UI: filtros avançados recolhidos + colunas de detalhe recolhidas (densidade).
   const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [detalhes, setDetalhes] = useState(false);
@@ -350,19 +422,26 @@ export default function ClientesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const filtro: ClienteFiltro = {
+      // Filtros comuns às duas chamadas (busca + avançados), SEM tem_whatsapp.
+      const comum: ClienteFiltro = {
         search: search.trim() || undefined,
         perfil: perfil || undefined,
         plan_type: planType || undefined,
         estado: estado || undefined,
         nps_bucket: npsBucket || undefined,
         health_band: healthBand || undefined,
-        tem_whatsapp: temWa || undefined,
       };
-      const lista = await clientesApi.list(filtro);
       // Defensivo: a API antiga pode não devolver `selos`; garante array em runtime
       // (vários pontos fazem c.selos.includes/.map sem checar).
-      setClientes(lista.map((c) => ({ ...c, selos: c.selos ?? [] })));
+      const norm = (xs: Cliente[]) => xs.map((c) => ({ ...c, selos: c.selos ?? [] }));
+      // Lista visível (com o alcance atual) + base completa p/ os contadores dos
+      // chips, em paralelo. A base ignora tem_whatsapp de propósito.
+      const [lista, baseLista] = await Promise.all([
+        clientesApi.list({ ...comum, tem_whatsapp: temWa || undefined }),
+        clientesApi.list(comum),
+      ]);
+      setClientes(norm(lista));
+      setBase(norm(baseLista));
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -429,14 +508,46 @@ export default function ClientesPage() {
     () => clientes.filter((c) => c.health_band === "at_risk").length,
     [clientes],
   );
+
+  // Contadores dos chips de canal — calculados sobre a BASE completa (todo o
+  // universo do recorte de busca/avançados), independentes do alcance atual.
+  const canalCounts = useMemo(() => {
+    let wa = 0,
+      email = 0,
+      sem = 0,
+      abordados = 0;
+    for (const c of base) {
+      const canal = canalDoCliente(c);
+      if (canal === "whatsapp") wa++;
+      else if (canal === "email") email++;
+      else sem++;
+      if (foiAbordado(c)) abordados++;
+    }
+    return { whatsapp: wa, email, sem, abordados };
+  }, [base]);
+
+  // Clique num chip de canal: alterna o recorte e ALINHA o alcance (temWa) para o
+  // backend trazer o conjunto certo (WhatsApp→'sim'; e-mail/sem→'nao'; abordados/
+  // limpar→'' = todos). O refino fino acontece client-side em `visiveis`.
+  const aplicarCanal = useCallback((alvo: Canal | "abordados") => {
+    setCanalChip((atual) => {
+      const novo = atual === alvo ? "" : alvo;
+      setTemWa(novo === "whatsapp" ? "sim" : novo === "email" || novo === "sem" ? "nao" : "");
+      return novo;
+    });
+  }, []);
+
   const visiveis = useMemo(() => {
-    let base = clientes;
-    if (seloFiltro) base = base.filter((c) => c.selos.includes(seloFiltro));
-    if (!soRisco) return base;
-    return [...base]
+    let arr = clientes;
+    if (seloFiltro) arr = arr.filter((c) => c.selos.includes(seloFiltro));
+    // Recorte do chip de canal (sobre a lista já trazida pelo alcance).
+    if (canalChip === "abordados") arr = arr.filter(foiAbordado);
+    else if (canalChip) arr = arr.filter((c) => canalDoCliente(c) === canalChip);
+    if (!soRisco) return arr;
+    return [...arr]
       .filter((c) => c.health_band === "at_risk")
       .sort((a, b) => a.health - b.health);
-  }, [clientes, soRisco, seloFiltro]);
+  }, [clientes, soRisco, seloFiltro, canalChip]);
 
   // Quantos do conjunto carregado são "só e-mail" (sem WhatsApp real). Só faz sentido
   // alertar quando o recorte atual mistura não-contatáveis (alcance != 'sim').
@@ -452,7 +563,7 @@ export default function ClientesPage() {
   // Há algum filtro ativo? (controla "limpar filtros" e o texto do vazio). O alcance
   // só conta como filtro quando NÃO está no default 'sim' (contatáveis).
   const algumFiltro =
-    !!search || avancadosAtivos > 0 || temWa !== "sim" || soRisco;
+    !!search || avancadosAtivos > 0 || temWa !== "sim" || soRisco || !!canalChip;
 
   const limparFiltros = useCallback(() => {
     setSearch("");
@@ -464,11 +575,21 @@ export default function ClientesPage() {
     setTemWa("sim");
     setSeloFiltro("");
     setSoRisco(false);
+    setCanalChip("");
+  }, []);
+
+  // Trocar o alcance pelo segmentado limpa o chip de canal (evita estado
+  // contraditório, ex.: chip "Só e-mail" ligado e alcance "Contatáveis").
+  const aplicarAlcance = useCallback((v: TemWhatsappFiltro | "") => {
+    setTemWa(v);
+    setCanalChip("");
   }, []);
 
   const recorteLabel =
     temWa === "sim" ? "contatáveis" : temWa === "nao" ? "winback (só e-mail)" : "no total";
-  const colCount = detalhes ? 10 : 5;
+  // Colunas visíveis: Cliente, Canal, Saúde, Assinatura, Último feedback (5
+  // essenciais) + 5 detalhes quando abertos + a coluna de selos/ações = 6 / 11.
+  const colCount = detalhes ? 11 : 6;
 
   return (
     <div>
@@ -487,7 +608,82 @@ export default function ClientesPage() {
         )}
       </Reveal>
 
-      {temWa === "nao" && semWaCount > 0 && (
+      {/* Faixa de canais — contadores CLICÁVEIS: filtra a lista na hora e deixa
+          claro como falar com cada cliente. Contagem sobre a base completa. */}
+      <Reveal delay={0.05} className="flex flex-wrap items-stretch gap-2.5 mt-1 mb-4">
+        {([
+          {
+            key: "whatsapp" as const,
+            label: "Com WhatsApp",
+            n: canalCounts.whatsapp,
+            icon: <MessageCircle size={16} strokeWidth={2.1} aria-hidden />,
+            accent: "#10a060",
+            hint: "Celular válido — abordável por WhatsApp",
+          },
+          {
+            key: "email" as const,
+            label: "Só e-mail",
+            n: canalCounts.email,
+            icon: <Mail size={16} strokeWidth={2.1} aria-hidden />,
+            accent: "var(--indigo)",
+            hint: "Sem WhatsApp — leads de reativação por e-mail",
+          },
+          {
+            key: "sem" as const,
+            label: "Sem contato",
+            n: canalCounts.sem,
+            icon: <PhoneOff size={16} strokeWidth={2.1} aria-hidden />,
+            accent: "var(--text-faint)",
+            hint: "Vazio, fixo, grupo ou inválido — não dá para abordar 1:1",
+          },
+          {
+            key: "abordados" as const,
+            label: "Abordados",
+            n: canalCounts.abordados,
+            icon: <CheckCircle2 size={16} strokeWidth={2.1} aria-hidden />,
+            accent: "#10a060",
+            hint: "Já abordados (selo 'contatado') — clique para ver",
+          },
+        ]).map((chip) => {
+          const on = canalChip === chip.key;
+          return (
+            <button
+              key={chip.key}
+              type="button"
+              onClick={() => aplicarCanal(chip.key)}
+              aria-pressed={on}
+              title={chip.hint}
+              className={[
+                "group flex min-w-[148px] flex-1 items-center gap-3 rounded-[var(--radius-sm)] border px-3.5 py-3 text-left transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--indigo)]",
+                on
+                  ? "border-[var(--promoter-line)] bg-[var(--promoter-soft)]"
+                  : "border-[var(--charcoal-2)] bg-[var(--ink-800)] hover:border-[var(--text-faint)]",
+              ].join(" ")}
+            >
+              <span
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-[calc(var(--radius-sm)-3px)]"
+                style={{
+                  color: chip.accent,
+                  background: `color-mix(in srgb, ${chip.accent} 12%, transparent)`,
+                }}
+              >
+                {chip.icon}
+              </span>
+              <span className="flex flex-col">
+                <span className="font-mono text-[19px] font-bold leading-none tabular-nums text-[var(--text)]">
+                  {chip.n}
+                </span>
+                <span className="mt-1 text-[12.5px] font-medium leading-none text-[var(--text-dim)]">
+                  {chip.label}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </Reveal>
+
+      {temWa === "nao" && !canalChip && semWaCount > 0 && (
         <Reveal delay={0.04} className="note">
           <span className="note-ico"><Info size={16} aria-hidden /></span>
           <span>
@@ -519,7 +715,7 @@ export default function ClientesPage() {
               <button
                 key={o.label}
                 type="button"
-                onClick={() => setTemWa(o.value)}
+                onClick={() => aplicarAlcance(o.value)}
                 aria-pressed={on}
                 title={o.hint}
                 className={[
@@ -649,6 +845,7 @@ export default function ClientesPage() {
             <thead>
               <tr>
                 <th>Cliente</th>
+                <th>Canal</th>
                 <th>Saúde</th>
                 <th>Assinatura</th>
                 <th>Último feedback</th>
@@ -722,13 +919,12 @@ export default function ClientesPage() {
                         {c.tem_whatsapp ? (
                           <span className="mono cell-person-sub">{c.whatsapp}</span>
                         ) : (
-                          <span className="cell-person-sub cliente-nowa" title="Sem WhatsApp — universo só e-mail">
-                            <Mail size={12} aria-hidden style={{ display: "inline", verticalAlign: "-2px" }} /> só e-mail
-                          </span>
+                          <span className="cell-person-sub faint">—</span>
                         )}
                       </div>
                     </div>
                   </td>
+                  <td>{canalBadge(canalDoCliente(c))}</td>
                   <td>{healthCell(c.health, c.health_band, c.health_factors)}</td>
                   <td>{estadoBadge(c.estado)}</td>
                   <td className="dim">
