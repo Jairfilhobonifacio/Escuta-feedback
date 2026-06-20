@@ -35,6 +35,82 @@ import {
   type TemWhatsappFiltro,
 } from "@/lib/api";
 
+// ===== visual do Kanban (Trello-like) =======================================
+// Só estilo — reusa os tokens de tema (CSS vars) do globals.css via var(--…),
+// sem editar globals. Aplicados inline para vencer as regras .board-* legadas
+// e dar cara de quadro: trilho horizontal com respiro, lanes definidas com faixa
+// de cor por coluna, cabeçalho claro e cards arejados. Não muda lógica/queries,
+// nem o drag-and-drop (classes e handlers seguem intactos).
+
+/** Trilho do quadro: lanes lado a lado, gap generoso e scroll horizontal suave. */
+const BOARD_TRACK_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "nowrap",
+  alignItems: "flex-start",
+  gap: 20,
+  overflowX: "auto",
+  overflowY: "visible",
+  paddingBottom: 14,
+  scrollBehavior: "smooth",
+  scrollSnapType: "x proximity",
+};
+
+/** Uma "lista" do quadro: largura fixa (lane), fundo de coluna sutil, cantos
+    arredondados e topo achatado p/ acomodar a faixa de cor (borderTop por coluna). */
+const BOARD_LANE_STYLE: React.CSSProperties = {
+  flex: "0 0 auto",
+  width: 312,
+  minWidth: 280,
+  maxWidth: 340,
+  background: "var(--ink)",
+  borderRadius: "var(--radius)",
+  borderTopLeftRadius: "var(--radius-xs)",
+  borderTopRightRadius: "var(--radius-xs)",
+  padding: "10px 12px 16px",
+  scrollSnapAlign: "start",
+};
+
+/** Cabeçalho da lista: nome + contador, com respiro e divisor discreto. */
+const BOARD_HEAD_STYLE: React.CSSProperties = {
+  padding: "8px 2px 12px",
+  marginBottom: 12,
+};
+
+/** Pilha de cards: respiro generoso entre cards. */
+const BOARD_BODY_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 12,
+};
+
+/** Card do quadro: superfície branca, cantos arredondados, padding confortável
+    e sombra suave em repouso (o hover discreto já vem do globals via .board-card:hover). */
+const BOARD_CARD_STYLE: React.CSSProperties = {
+  padding: "13px 15px",
+  borderRadius: "var(--radius-sm)",
+  boxShadow: "var(--edge), var(--shadow-sm)",
+};
+
+/** Contador da coluna: chip arredondado tingido pela cor da própria lista. */
+function countChipStyle(cor: string): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 22,
+    height: 22,
+    padding: "0 8px",
+    borderRadius: 999,
+    fontFamily: "var(--mono)",
+    fontSize: 12,
+    fontWeight: 600,
+    lineHeight: 1,
+    color: cor,
+    background: "color-mix(in srgb, " + cor + " 13%, transparent)",
+    border: "1px solid color-mix(in srgb, " + cor + " 28%, transparent)",
+  };
+}
+
 // ===== vocabulário ==========================================================
 
 const ENTIDADE_LABEL: Record<BoardEntidade, string> = {
@@ -709,7 +785,7 @@ function BoardCard({
   return (
     <article
       className={`card board-card ${compact ? "board-card-compact" : ""} ${dragging ? "is-dragging" : ""}`}
-      style={{ position: "relative" }}
+      style={{ ...BOARD_CARD_STYLE, position: "relative" }}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData("text/plain", fb.id);
@@ -791,6 +867,7 @@ function ClienteCard({
       className={`card board-card board-cli-card ${draggable ? "" : "is-readonly"} ${
         dragging ? "is-dragging" : ""
       }`}
+      style={BOARD_CARD_STYLE}
       draggable={draggable}
       onDragStart={
         draggable
@@ -868,6 +945,7 @@ function TarefaCard({
   return (
     <article
       className={`card board-card ${dragging ? "is-dragging" : ""}`}
+      style={BOARD_CARD_STYLE}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData("text/plain", tarefa.id);
@@ -907,6 +985,7 @@ function MelhoriaCard({
   return (
     <article
       className={`card board-card ${dragging ? "is-dragging" : ""}`}
+      style={BOARD_CARD_STYLE}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData("text/plain", melhoria.id);
@@ -1942,21 +2021,17 @@ export default function BoardPage() {
       )}
 
       {loading && !items ? (
-        <div
-          className="board-cols"
-          style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
-          aria-busy="true"
-        >
+        <div className="board-cols board-track" style={BOARD_TRACK_STYLE} aria-busy="true">
           {Array.from({ length: 3 }).map((_, c) => (
-            <section className="board-col" key={c}>
-              <header className="board-col-head">
+            <section className="board-col board-lane" key={c} style={BOARD_LANE_STYLE}>
+              <header className="board-col-head" style={BOARD_HEAD_STYLE}>
                 <span className="board-col-name">
                   <span className="sk-line" style={{ width: 70, margin: 0, display: "inline-block" }} />
                 </span>
               </header>
-              <div className="board-col-body">
+              <div className="board-col-body" style={BOARD_BODY_STYLE}>
                 {Array.from({ length: c === 1 ? 3 : 2 }).map((_, k) => (
-                  <div className="card board-card" key={k} aria-busy="true">
+                  <div className="card board-card" key={k} aria-busy="true" style={BOARD_CARD_STYLE}>
                     <div className="board-card-top cell-person" style={{ alignItems: "center" }}>
                       <div className="sk-circle" style={{ ["--sk-size" as string]: "26px" } as React.CSSProperties} />
                       <div className="sk-line w-60" style={{ margin: 0 }} />
@@ -1970,10 +2045,7 @@ export default function BoardPage() {
           ))}
         </div>
       ) : (
-      <div
-        className="board-cols reveal-stagger"
-        style={{ gridTemplateColumns: `repeat(${Math.max(1, columns.length)}, minmax(0, 1fr))` }}
-      >
+      <div className="board-cols board-track reveal-stagger" style={BOARD_TRACK_STYLE}>
         {columns.map((col, colIdx) => {
           // Highlight/drop pela IDENTIDADE da coluna (`col.id`), não por `col.valor`.
           const isOver = overColumn === col.id;
@@ -1985,11 +2057,18 @@ export default function BoardPage() {
             !isMelhoria &&
             selected?.campo === "action_status" &&
             col.valor === "planejado";
+          // Cor da lista (fallback p/ a marca quando a coluna não traz cor).
+          const cor = col.cor || "var(--indigo)";
           return (
             <section
               key={col.id}
-              className={`board-col reveal ${isOver ? "is-over" : ""}`}
-              style={{ ["--i" as string]: colIdx } as React.CSSProperties}
+              className={`board-col board-lane reveal ${isOver ? "is-over" : ""}`}
+              style={{
+                ...BOARD_LANE_STYLE,
+                ["--i" as string]: colIdx,
+                // Faixa de cor da lista no topo (cue de "lista" do Trello).
+                borderTop: `3px solid ${cor}`,
+              } as React.CSSProperties}
               onDragOver={
                 dropEnabled
                   ? (e) => {
@@ -2011,11 +2090,31 @@ export default function BoardPage() {
               onDrop={dropEnabled ? (e) => onColumnDrop(e, col.id) : undefined}
               aria-label={`Coluna ${col.nome}`}
             >
-              <header className="board-col-head">
-                <span className="board-col-name" style={{ color: col.cor }}>
+              <header className="board-col-head" style={BOARD_HEAD_STYLE}>
+                <span
+                  className="board-col-name"
+                  style={{
+                    color: cor,
+                    fontSize: 12.5,
+                    letterSpacing: "0.4px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 7,
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 9,
+                      height: 9,
+                      borderRadius: 3,
+                      background: cor,
+                      flex: "0 0 auto",
+                    }}
+                  />
                   {col.nome}
                 </span>
-                <span className="badge neutral">{col.count}</span>
+                <span style={countChipStyle(cor)}>{col.count}</span>
               </header>
 
               {/* "+ feedback" da coluna (board Follow-up): cria um feedback já com o
@@ -2031,7 +2130,7 @@ export default function BoardPage() {
                 </button>
               )}
 
-              <div className="board-col-body">
+              <div className="board-col-body" style={BOARD_BODY_STYLE}>
                 {isCliente ? (
                   (col.items as BoardClienteCard[]).map((cli) => (
                     <ClienteCard

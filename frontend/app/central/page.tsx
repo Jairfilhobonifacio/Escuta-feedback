@@ -64,6 +64,66 @@ function pct(n: number, total: number): number {
   return total > 0 ? (n / total) * 100 : 0;
 }
 
+/* --- DESTAQUES: "o que fazer agora" -----------------------------------------
+   Lê só os números que JÁ chegam no overview e devolve até alguns avisos
+   ACIONÁVEIS (a ação primeiro, curto). Severidade dá a cor: "alert" = vermelho
+   (detrator/churn, dói no caixa), "watch" = indigo (atenção, não urgente).
+   Tudo que zera é OMITIDO — faixa vazia some. Sem dados novos, sem endpoints. */
+type Severity = "alert" | "watch";
+interface Destaque {
+  id: string;
+  sev: Severity;
+  text: string;
+}
+
+function buildDestaques(ov: CentralOverview): Destaque[] {
+  const { nps, abordagem, segmentos } = ov;
+  const d: Destaque[] = [];
+
+  if (nps.detratores > 0) {
+    d.push({
+      id: "detratores",
+      sev: "alert",
+      text: `${nps.detratores} ${nps.detratores === 1 ? "detrator" : "detratores"} — priorize abordar`,
+    });
+  }
+
+  const churnPend = segmentos.churn.total - segmentos.churn.abordados;
+  if (churnPend > 0) {
+    d.push({
+      id: "churn-pend",
+      sev: "alert",
+      text: `${churnPend} ${churnPend === 1 ? "cancelado" : "cancelados"} ainda não abordados`,
+    });
+  }
+
+  if (abordagem.nao_responderam > 0) {
+    d.push({
+      id: "sem-resposta-abordados",
+      sev: "watch",
+      text: `${abordagem.nao_responderam} abordados sem resposta`,
+    });
+  }
+
+  if (abordagem.abordados > 0) {
+    d.push({
+      id: "taxa-resposta",
+      sev: "watch",
+      text: `Taxa de resposta: ${Math.round(pct(abordagem.responderam, abordagem.abordados))}%`,
+    });
+  }
+
+  if (nps.sem_resposta > 0) {
+    d.push({
+      id: "sem-nota",
+      sev: "watch",
+      text: `${nps.sem_resposta} ${nps.sem_resposta === 1 ? "cliente ainda sem nota" : "clientes ainda sem nota"}`,
+    });
+  }
+
+  return d;
+}
+
 // --- skeleton da tela enquanto o overview não chegou -------------------------
 function MonitorarSkeleton() {
   return (
@@ -176,6 +236,9 @@ export default function MonitorarPage() {
     },
   ];
 
+  // Faixa "o que fazer agora" — pills acionáveis a partir dos números acima.
+  const destaques = buildDestaques(overview);
+
   return (
     <div>
       <div className="page-head">
@@ -188,6 +251,67 @@ export default function MonitorarPage() {
         </div>
         <span className="refresh-note">atualiza a cada 30s</span>
       </div>
+
+      {/* 0) DESTAQUES — "o que fazer agora", computado client-side dos números
+         que já chegam. Pills pequenas; cor por severidade. Some se vazio. */}
+      {destaques.length > 0 && (
+        <Reveal
+          aria-label="Destaques: o que fazer agora"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 8,
+            margin: "0 0 18px",
+          }}
+        >
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: 1,
+              textTransform: "uppercase",
+              color: "var(--text-faint)",
+              marginRight: 2,
+            }}
+          >
+            O que fazer agora
+          </span>
+          {destaques.map((d) => {
+            const isAlert = d.sev === "alert";
+            return (
+              <span
+                key={d.id}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "5px 11px",
+                  borderRadius: 999,
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  lineHeight: 1.25,
+                  color: isAlert ? "var(--detractor)" : "var(--indigo-light)",
+                  background: isAlert ? "var(--detractor-soft)" : "var(--promoter-soft)",
+                  border: `1px solid ${isAlert ? "var(--detractor-line)" : "var(--promoter-line)"}`,
+                }}
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    flexShrink: 0,
+                    background: isAlert ? "var(--detractor)" : "var(--indigo)",
+                  }}
+                />
+                {d.text}
+              </span>
+            );
+          })}
+        </Reveal>
+      )}
 
       {/* 1) OS 4 NÚMEROS — grandes, honestos, sobre a base total */}
       <Stagger className="mon-hero" stagger={0.06}>

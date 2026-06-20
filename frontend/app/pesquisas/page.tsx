@@ -227,8 +227,8 @@ export default function PesquisasPage() {
 
       <div className="two-col">
         {/* ----- coluna: lista de pesquisas ----- */}
-        <Reveal className="card psq-list-card">
-          <div className="psq-list-head">
+        <Reveal className="card overflow-hidden">
+          <div className="card-head">
             <div>
               <div className="section-title">Suas pesquisas</div>
               <div className="card-head-sub">
@@ -236,7 +236,7 @@ export default function PesquisasPage() {
               </div>
             </div>
             {!loading && surveys.length > 0 && (
-              <Badge variant="outline" className="psq-count">
+              <Badge variant="outline" className="font-mono text-[12px] px-2.5 py-1">
                 {surveys.length}
               </Badge>
             )}
@@ -421,34 +421,37 @@ export default function PesquisasPage() {
         </Reveal>
 
         {/* ----- coluna: nova pesquisa ----- */}
-        <Reveal delay={0.08} className="card psq-form-card">
+        <Reveal delay={0.08} className="card px-5 py-[18px]">
           <h2 className="section-title">Nova pesquisa</h2>
           <p className="section-sub">Fluxo: pergunta de nota (0–10) → follow-up do motivo → agradecimento.</p>
 
           {/* mini-preview do fluxo da conversa — dá hierarquia e preenche o espaço */}
-          <div className="psq-flow" aria-hidden>
-            <span className="psq-flow-step">
-              <span className="psq-flow-dot one" />
+          <div
+            className="flex flex-wrap items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--charcoal)] bg-[var(--ink)] px-3 py-[11px] mt-1 mb-[18px]"
+            aria-hidden
+          >
+            <span className="inline-flex items-center gap-[7px] text-[12px] font-semibold text-[var(--text-dim)]">
+              <span className="h-2 w-2 rounded-full" style={{ background: "var(--gold-fill)" }} />
               Nota 0–10
             </span>
-            <span className="psq-flow-arrow">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <span className="inline-flex text-[var(--text-ghost)]">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 12h14" />
                 <path d="m12 5 7 7-7 7" />
               </svg>
             </span>
-            <span className="psq-flow-step">
-              <span className="psq-flow-dot two" />
+            <span className="inline-flex items-center gap-[7px] text-[12px] font-semibold text-[var(--text-dim)]">
+              <span className="h-2 w-2 rounded-full" style={{ background: "var(--indigo)" }} />
               Motivo
             </span>
-            <span className="psq-flow-arrow">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <span className="inline-flex text-[var(--text-ghost)]">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 12h14" />
                 <path d="m12 5 7 7-7 7" />
               </svg>
             </span>
-            <span className="psq-flow-step">
-              <span className="psq-flow-dot three" />
+            <span className="inline-flex items-center gap-[7px] text-[12px] font-semibold text-[var(--text-dim)]">
+              <span className="h-2 w-2 rounded-full" style={{ background: "var(--indigo-light)" }} />
               Obrigado
             </span>
           </div>
@@ -478,58 +481,6 @@ export default function PesquisasPage() {
           </form>
         </Reveal>
       </div>
-
-      <style jsx>{`
-        .psq-list-card { padding: 0; overflow: hidden; }
-        .psq-list-head {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 12px;
-          padding: 18px 20px 16px;
-          border-bottom: 1px solid var(--charcoal);
-          background: linear-gradient(180deg, rgba(108, 92, 231, 0.035), transparent 92%);
-        }
-        :global(.psq-count) {
-          font-family: var(--mono);
-          font-size: 12px;
-          padding: 2px 9px;
-        }
-        .psq-form-card { padding: 18px 20px; }
-        /* mini-preview do fluxo da conversa */
-        .psq-flow {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-wrap: wrap;
-          padding: 11px 13px;
-          margin: 4px 0 18px;
-          background: var(--ink);
-          border: 1px solid var(--charcoal);
-          border-radius: var(--radius-sm);
-        }
-        .psq-flow-step {
-          display: inline-flex;
-          align-items: center;
-          gap: 7px;
-          font-size: 12px;
-          font-weight: 600;
-          color: var(--text-dim);
-        }
-        .psq-flow-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-        }
-        .psq-flow-dot.one { background: var(--gold-fill); }
-        .psq-flow-dot.two { background: var(--indigo); }
-        .psq-flow-dot.three { background: var(--indigo-light); }
-        .psq-flow-arrow {
-          display: inline-flex;
-          color: var(--text-ghost);
-        }
-        .psq-flow-arrow svg { width: 15px; height: 15px; }
-      `}</style>
     </div>
   );
 }
