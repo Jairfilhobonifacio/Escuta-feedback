@@ -72,7 +72,7 @@ async def test_get_config_retorna_defaults_efetivos(client, org):
     st = data["action_statuses"]
     assert [s["key"] for s in st] == list(ACTION_STATUSES)
     assert all(set(s.keys()) == {"key", "label", "cor"} for s in st)
-    assert st[0] == {"key": "novo", "label": "Novo", "cor": "#6366f1"}
+    assert st[0] == {"key": "a_abordar", "label": "A abordar", "cor": "#6366f1"}
 
     # Tipos e origens: {key,label}, contêm todos os defaults.
     tp = data["feedback_types"]
@@ -125,9 +125,9 @@ async def test_put_config_adiciona_custom_e_persiste_so_custom(client, org, sess
 @pytest.mark.asyncio
 async def test_put_config_rejeita_colisao_com_default(client, org, session):
     """Key custom que colide com um default => 422; nada é salvo."""
-    resp = await client.put("/api/config", json={"action_statuses": [{"key": "novo", "label": "X"}]})
+    resp = await client.put("/api/config", json={"action_statuses": [{"key": "a_abordar", "label": "X"}]})
     assert resp.status_code == 422
-    assert "novo" in resp.json()["detail"]
+    assert "a_abordar" in resp.json()["detail"]
 
     # Settings intocado (nenhum custom salvo).
     await session.refresh(org)

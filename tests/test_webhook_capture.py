@@ -106,7 +106,7 @@ async def test_captura_contato_contatado_cria_feedback_e_aplica_respondeu(client
     assert r.json()["status"] == "no_pending_survey"
 
     # FeedbackItem criado na central: source='whatsapp', type='churn' (universo win-back),
-    # external_id estável, action_status='novo', sentiment=None (LLM off em teste).
+    # external_id estável, action_status='a_abordar' (default de acompanhamento), sentiment=None.
     items = (
         (await session.execute(select(FeedbackItem).where(FeedbackItem.source == "whatsapp")))
         .scalars().all()
@@ -118,7 +118,7 @@ async def test_captura_contato_contatado_cria_feedback_e_aplica_respondeu(client
     assert it.text == "parei porque achei caro demais"
     assert it.contact_id == contato.id
     assert it.external_id == "wa:wamid.AAA"
-    assert it.action_status == "novo"
+    assert it.action_status == "a_abordar"
     assert it.occurred_at is not None
     assert it.sentiment is None  # sem GROQ_API_KEY em teste -> não inventa sentimento
 

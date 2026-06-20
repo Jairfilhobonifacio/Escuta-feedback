@@ -71,9 +71,12 @@ class FeedbackItem(Base):
     extra: Mapped[dict | None] = mapped_column(JSONVariant, nullable=True)   # metadados livres (NÃO usar 'metadata' — reservado)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    # Estado da AÇÃO tomada sobre o sinal (workflow de monitoramento — separado da IA).
-    # 'novo' | 'em_analise' | 'planejado' | 'resolvido' | 'descartado' (validado na API).
-    action_status: Mapped[str] = mapped_column(String, server_default="novo", default="novo")
+    # Estado da AÇÃO tomada sobre o sinal (workflow de ACOMPANHAMENTO — separado da IA).
+    # Vocabulário de relacionamento (ver app/api/admin.py ACTION_STATUSES e
+    # docs/BENCHMARK_ACOMPANHAMENTO_2026-06-20.md): 'a_abordar' | 'aguardando_retorno' |
+    # 'em_acompanhamento' | 'resolvido' | 'sem_retorno' | 'descartado' (validado na API).
+    # Sinal novo nasce 'a_abordar' (a bola está com a gente: precisa abordar o cliente).
+    action_status: Mapped[str] = mapped_column(String, server_default="a_abordar", default="a_abordar")
     action_note: Mapped[str | None] = mapped_column(Text, nullable=True)     # nota interna do operador
 
     # Board de Gestão (Camada 2): roteamento por time + responsável. Sem tabela de

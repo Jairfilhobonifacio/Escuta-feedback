@@ -364,12 +364,16 @@ export interface FeedbackFiltro {
 
 // --- Feedbacks (inbox de monitoramento) -------------------------------------
 
-/** Estados do fluxo de ação sobre um feedback. */
+/** Estados do fluxo de ACOMPANHAMENTO sobre um feedback (vocabulário de relacionamento,
+    não de bug-tracker). Espelha os defaults de ACTION_STATUSES do backend; os valores são
+    dirigidos pelo servidor (string livre), então um status custom/legado também aparece
+    em runtime — daí FeedbackCounts ser indexável por qualquer chave. */
 export type FeedbackStatus =
-  | "novo"
-  | "em_analise"
-  | "planejado"
+  | "a_abordar"
+  | "aguardando_retorno"
+  | "em_acompanhamento"
   | "resolvido"
+  | "sem_retorno"
   | "descartado";
 
 /** Um feedback no feed cronológico — coletado no WhatsApp ou ingerido de fonte externa. */
@@ -460,13 +464,10 @@ export interface FeedbackPatch {
 }
 
 /** Contagens por status para as abas do inbox. */
-export interface FeedbackCounts {
-  novo: number;
-  em_analise: number;
-  planejado: number;
-  resolvido: number;
-  descartado: number;
-}
+/** Contagens por status no feed. Indexável por qualquer chave de status (defaults de
+    acompanhamento + status custom da org + legado), pois o backend devolve
+    `counts_by_status` keado dinamicamente pela lista efetiva de status. */
+export type FeedbackCounts = Record<string, number>;
 
 /** Resposta paginada de /api/feedbacks. */
 export interface FeedbacksResponse {

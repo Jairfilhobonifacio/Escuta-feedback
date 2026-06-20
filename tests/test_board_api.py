@@ -71,7 +71,7 @@ def _dt(y, m, d):
 
 @pytest.mark.asyncio
 async def test_board_agrupa_por_status_e_conta(client, org, session):
-    """O board separa os feedbacks por coluna de ação, com as 5 colunas sempre
+    """O board separa os feedbacks por coluna de ação, com todas as colunas sempre
     presentes (zeros inclusos) e `count` = total real da coluna."""
     ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
     session.add(ana)
@@ -82,16 +82,16 @@ async def test_board_agrupa_por_status_e_conta(client, org, session):
             FeedbackItem(
                 organization_id=org.id, contact_id=ana.id, source="manual", type="nps",
                 external_id="b1", score=3, nps_bucket="detractor", text="ruim",
-                sentiment="negativo", action_status="novo", occurred_at=_dt(2026, 6, 1),
+                sentiment="negativo", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
             ),
             FeedbackItem(
                 organization_id=org.id, contact_id=ana.id, source="manual", type="churn",
                 external_id="b2", text="cancelei", sentiment="negativo",
-                action_status="novo", occurred_at=_dt(2026, 6, 2),
+                action_status="a_abordar", occurred_at=_dt(2026, 6, 2),
             ),
             FeedbackItem(
                 organization_id=org.id, contact_id=None, source="manual", type="sugestao",
-                external_id="b3", text="modo escuro", action_status="em_analise",
+                external_id="b3", text="modo escuro", action_status="em_acompanhamento",
                 occurred_at=_dt(2026, 6, 3),
             ),
             FeedbackItem(
@@ -106,21 +106,21 @@ async def test_board_agrupa_por_status_e_conta(client, org, session):
     data = (await client.get("/api/feedbacks/board")).json()
     assert set(data.keys()) == {"columns"}
     cols = data["columns"]
-    # 5 colunas sempre presentes, na ordem do funil.
+    # Todas as colunas sempre presentes, na ordem do funil de acompanhamento.
     assert list(cols.keys()) == list(ACTION_STATUSES)
 
-    assert cols["novo"]["count"] == 2
-    assert cols["em_analise"]["count"] == 1
-    assert cols["planejado"]["count"] == 0
+    assert cols["a_abordar"]["count"] == 2
+    assert cols["em_acompanhamento"]["count"] == 1
+    assert cols["aguardando_retorno"]["count"] == 0
     assert cols["resolvido"]["count"] == 1
     assert cols["descartado"]["count"] == 0
 
     # itens são objetos no formato do feed.
-    assert cols["em_analise"]["items"][0]["text"] == "modo escuro"
-    assert set(cols["novo"]["items"][0].keys()) == _ITEM_KEYS
+    assert cols["em_acompanhamento"]["items"][0]["text"] == "modo escuro"
+    assert set(cols["a_abordar"]["items"][0].keys()) == _ITEM_KEYS
 
     # coluna vazia traz items=[]
-    assert cols["planejado"]["items"] == []
+    assert cols["aguardando_retorno"]["items"] == []
 
 
 @pytest.mark.asyncio
@@ -140,20 +140,20 @@ async def test_board_ordena_itens_por_urgencia_na_coluna(client, org, session):
             FeedbackItem(
                 organization_id=org.id, contact_id=feliz.id, source="manual", type="nps",
                 external_id="o1", score=10, nps_bucket="promoter", text="tranquilo",
-                sentiment="positivo", abordado=True, action_status="novo", occurred_at=_dt(2026, 6, 1),
+                sentiment="positivo", abordado=True, action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
             ),
             # detrator + churn + negativo + em risco + anual + não abordado → urgência alta
             FeedbackItem(
                 organization_id=org.id, contact_id=risco.id, source="manual", type="churn",
                 external_id="o2", score=2, nps_bucket="detractor", text="cancelei tudo",
-                sentiment="negativo", abordado=False, action_status="novo", occurred_at=_dt(2026, 6, 2),
+                sentiment="negativo", abordado=False, action_status="a_abordar", occurred_at=_dt(2026, 6, 2),
             ),
         ]
     )
     await session.commit()
 
     cols = (await client.get("/api/feedbacks/board")).json()["columns"]
-    novo = cols["novo"]["items"]
+    novo = cols["a_abordar"]["items"]
     assert [i["text"] for i in novo] == ["cancelei tudo", "tranquilo"]
     urg = [i["urgencia"] for i in novo]
     assert urg == sorted(urg, reverse=True)
@@ -170,7 +170,7 @@ async def test_board_limita_12_itens_por_coluna_mas_count_e_total(client, org, s
         [
             FeedbackItem(
                 organization_id=org.id, contact_id=ana.id, source="manual", type="sugestao",
-                external_id=f"m{i}", text=f"ideia {i}", action_status="novo",
+                external_id=f"m{i}", text=f"ideia {i}", action_status="a_abordar",
                 occurred_at=_dt(2026, 6, 1),
             )
             for i in range(15)
@@ -179,8 +179,8 @@ async def test_board_limita_12_itens_por_coluna_mas_count_e_total(client, org, s
     await session.commit()
 
     cols = (await client.get("/api/feedbacks/board")).json()["columns"]
-    assert cols["novo"]["count"] == 15
-    assert len(cols["novo"]["items"]) == 12
+    assert cols["a_abordar"]["count"] == 15
+    assert len(cols["a_abordar"]["items"]) == 12
 
 
 @pytest.mark.asyncio
@@ -193,12 +193,12 @@ async def test_board_filtra_por_team_tag(client, org, session):
         [
             FeedbackItem(
                 organization_id=org.id, contact_id=ana.id, source="manual", type="bug",
-                external_id="t1", text="bug do produto", action_status="novo",
+                external_id="t1", text="bug do produto", action_status="a_abordar",
                 team_tag="produto", occurred_at=_dt(2026, 6, 1),
             ),
             FeedbackItem(
                 organization_id=org.id, contact_id=ana.id, source="manual", type="sugestao",
-                external_id="t2", text="dúvida de cobrança", action_status="novo",
+                external_id="t2", text="dúvida de cobrança", action_status="a_abordar",
                 team_tag="suporte", occurred_at=_dt(2026, 6, 2),
             ),
         ]
@@ -206,9 +206,9 @@ async def test_board_filtra_por_team_tag(client, org, session):
     await session.commit()
 
     cols = (await client.get("/api/feedbacks/board", params={"team_tag": "produto"})).json()["columns"]
-    assert cols["novo"]["count"] == 1
-    assert cols["novo"]["items"][0]["text"] == "bug do produto"
-    assert cols["novo"]["items"][0]["team_tag"] == "produto"
+    assert cols["a_abordar"]["count"] == 1
+    assert cols["a_abordar"]["items"][0]["text"] == "bug do produto"
+    assert cols["a_abordar"]["items"][0]["team_tag"] == "produto"
 
 
 @pytest.mark.asyncio
@@ -220,12 +220,12 @@ async def test_board_filtra_por_assignee(client, org, session):
         [
             FeedbackItem(
                 organization_id=org.id, contact_id=ana.id, source="manual", type="bug",
-                external_id="a1", text="meu", action_status="em_analise",
+                external_id="a1", text="meu", action_status="em_acompanhamento",
                 assignee="felipe", occurred_at=_dt(2026, 6, 1),
             ),
             FeedbackItem(
                 organization_id=org.id, contact_id=ana.id, source="manual", type="bug",
-                external_id="a2", text="da outra", action_status="em_analise",
+                external_id="a2", text="da outra", action_status="em_acompanhamento",
                 assignee="marina", occurred_at=_dt(2026, 6, 2),
             ),
         ]
@@ -233,8 +233,8 @@ async def test_board_filtra_por_assignee(client, org, session):
     await session.commit()
 
     cols = (await client.get("/api/feedbacks/board", params={"assignee": "felipe"})).json()["columns"]
-    assert cols["em_analise"]["count"] == 1
-    assert cols["em_analise"]["items"][0]["assignee"] == "felipe"
+    assert cols["em_acompanhamento"]["count"] == 1
+    assert cols["em_acompanhamento"]["items"][0]["assignee"] == "felipe"
 
 
 @pytest.mark.asyncio
@@ -247,19 +247,19 @@ async def test_board_isola_por_org(client, org, session):
         [
             FeedbackItem(
                 organization_id=org.id, contact_id=None, source="manual", type="nps",
-                external_id="meu", score=5, text="meu", action_status="novo", occurred_at=_dt(2026, 6, 1),
+                external_id="meu", score=5, text="meu", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
             ),
             FeedbackItem(
                 organization_id=other.id, contact_id=None, source="manual", type="nps",
-                external_id="alheio", score=5, text="alheio", action_status="novo", occurred_at=_dt(2026, 6, 1),
+                external_id="alheio", score=5, text="alheio", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
             ),
         ]
     )
     await session.commit()
 
     cols = (await client.get("/api/feedbacks/board")).json()["columns"]
-    assert cols["novo"]["count"] == 1
-    assert cols["novo"]["items"][0]["text"] == "meu"
+    assert cols["a_abordar"]["count"] == 1
+    assert cols["a_abordar"]["items"][0]["text"] == "meu"
 
 
 # --- POST /api/feedbacks/{id}/move -------------------------------------------
@@ -273,30 +273,30 @@ async def test_move_muda_status(client, org, session):
     await session.flush()
     fb = FeedbackItem(
         organization_id=org.id, contact_id=ana.id, source="manual", type="nps",
-        external_id="mv1", score=3, nps_bucket="detractor", text="ruim", action_status="novo",
+        external_id="mv1", score=3, nps_bucket="detractor", text="ruim", action_status="a_abordar",
         occurred_at=_dt(2026, 6, 1),
     )
     session.add(fb)
     await session.commit()
 
-    r = await client.post(f"/api/feedbacks/{fb.id}/move", json={"status": "em_analise"})
+    r = await client.post(f"/api/feedbacks/{fb.id}/move", json={"status": "em_acompanhamento"})
     assert r.status_code == 200, r.text
     out = r.json()
-    assert out["action_status"] == "em_analise"
+    assert out["action_status"] == "em_acompanhamento"
     assert set(out.keys()) == _ITEM_KEYS
     assert out["contato_nome"] == "Ana"
 
     # reflete no board
     cols = (await client.get("/api/feedbacks/board")).json()["columns"]
-    assert cols["em_analise"]["count"] == 1
-    assert cols["novo"]["count"] == 0
+    assert cols["em_acompanhamento"]["count"] == 1
+    assert cols["a_abordar"]["count"] == 0
 
 
 @pytest.mark.asyncio
 async def test_move_status_invalido_422(client, org, session):
     fb = FeedbackItem(
         organization_id=org.id, contact_id=None, source="manual", type="nps",
-        external_id="mv2", score=3, text="x", action_status="novo", occurred_at=_dt(2026, 6, 1),
+        external_id="mv2", score=3, text="x", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
     )
     session.add(fb)
     await session.commit()
@@ -305,7 +305,7 @@ async def test_move_status_invalido_422(client, org, session):
     assert r.status_code == 422
     # nada mudou
     cols = (await client.get("/api/feedbacks/board")).json()["columns"]
-    assert cols["novo"]["count"] == 1
+    assert cols["a_abordar"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -317,18 +317,18 @@ async def test_move_para_planejado_vincula_melhoria(client, org, session):
     imp = Improvement(organization_id=org.id, title="Modo escuro", status="ideia")
     fb = FeedbackItem(
         organization_id=org.id, contact_id=ana.id, source="manual", type="sugestao",
-        external_id="mv3", text="queria modo escuro", action_status="novo", occurred_at=_dt(2026, 6, 1),
+        external_id="mv3", text="queria modo escuro", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
     )
     session.add_all([imp, fb])
     await session.commit()
 
     r = await client.post(
         f"/api/feedbacks/{fb.id}/move",
-        json={"status": "planejado", "improvement_id": str(imp.id), "assignee": "felipe"},
+        json={"status": "em_acompanhamento", "improvement_id": str(imp.id), "assignee": "felipe"},
     )
     assert r.status_code == 200, r.text
     out = r.json()
-    assert out["action_status"] == "planejado"
+    assert out["action_status"] == "em_acompanhamento"
     assert out["assignee"] == "felipe"
 
     # o vínculo aparece na contagem da melhoria
@@ -346,20 +346,20 @@ async def test_move_planejado_improvement_de_outra_org_404(client, org, session)
     imp_alheia = Improvement(organization_id=other.id, title="Alheia", status="ideia")
     fb = FeedbackItem(
         organization_id=org.id, contact_id=None, source="manual", type="sugestao",
-        external_id="mv4", text="x", action_status="novo", occurred_at=_dt(2026, 6, 1),
+        external_id="mv4", text="x", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
     )
     session.add_all([imp_alheia, fb])
     await session.commit()
 
     r = await client.post(
         f"/api/feedbacks/{fb.id}/move",
-        json={"status": "planejado", "improvement_id": str(imp_alheia.id)},
+        json={"status": "em_acompanhamento", "improvement_id": str(imp_alheia.id)},
     )
     assert r.status_code == 404
     # status NÃO mudou (rollback do request) — segue 'novo' no board
     cols = (await client.get("/api/feedbacks/board")).json()["columns"]
-    assert cols["novo"]["count"] == 1
-    assert cols["planejado"]["count"] == 0
+    assert cols["a_abordar"]["count"] == 1
+    assert cols["em_acompanhamento"]["count"] == 0
 
 
 @pytest.mark.asyncio
@@ -385,7 +385,7 @@ async def test_patch_aplica_assignee_e_team_tag(client, org, session):
     await session.flush()
     fb = FeedbackItem(
         organization_id=org.id, contact_id=ana.id, source="manual", type="bug",
-        external_id="pt1", text="bug", action_status="novo", occurred_at=_dt(2026, 6, 1),
+        external_id="pt1", text="bug", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
     )
     session.add(fb)
     await session.commit()
@@ -438,7 +438,7 @@ async def test_patch_vincula_improvement_id_sem_mexer_no_status(client, org, ses
     imp = Improvement(organization_id=org.id, title="Modo escuro", status="ideia")
     fb = FeedbackItem(
         organization_id=org.id, contact_id=None, source="manual", type="sugestao",
-        external_id="lk1", text="queria modo escuro", action_status="novo",
+        external_id="lk1", text="queria modo escuro", action_status="a_abordar",
         occurred_at=_dt(2026, 6, 1),
     )
     session.add_all([imp, fb])
@@ -451,7 +451,7 @@ async def test_patch_vincula_improvement_id_sem_mexer_no_status(client, org, ses
     out = r.json()
     assert out["improvement_id"] == str(imp.id)
     # vincular NÃO mexe no action_status
-    assert out["action_status"] == "novo"
+    assert out["action_status"] == "a_abordar"
     assert set(out.keys()) == _ITEM_KEYS
 
     # o vínculo é persistido (some no GET) e conta na melhoria
@@ -470,7 +470,7 @@ async def test_patch_improvement_id_null_desvincula(client, org, session):
     await session.flush()
     fb = FeedbackItem(
         organization_id=org.id, contact_id=None, source="manual", type="sugestao",
-        external_id="lk2", text="x", action_status="planejado",
+        external_id="lk2", text="x", action_status="em_acompanhamento",
         improvement_id=imp.id, occurred_at=_dt(2026, 6, 1),
     )
     session.add(fb)
@@ -481,7 +481,7 @@ async def test_patch_improvement_id_null_desvincula(client, org, session):
     out = r.json()
     assert out["improvement_id"] is None
     # action_status preservado
-    assert out["action_status"] == "planejado"
+    assert out["action_status"] == "em_acompanhamento"
 
     imps = (await client.get("/api/improvements")).json()
     linked = next(i for i in imps if i["id"] == str(imp.id))
@@ -493,7 +493,7 @@ async def test_patch_improvement_id_inexistente_404(client, org, session):
     """improvement_id que não existe na org -> 404 e nada é alterado."""
     fb = FeedbackItem(
         organization_id=org.id, contact_id=None, source="manual", type="sugestao",
-        external_id="lk3", text="x", action_status="novo", occurred_at=_dt(2026, 6, 1),
+        external_id="lk3", text="x", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
     )
     session.add(fb)
     await session.commit()
@@ -516,7 +516,7 @@ async def test_patch_improvement_de_outra_org_404(client, org, session):
     imp_alheia = Improvement(organization_id=other.id, title="Alheia", status="ideia")
     fb = FeedbackItem(
         organization_id=org.id, contact_id=None, source="manual", type="sugestao",
-        external_id="lk4", text="x", action_status="novo", occurred_at=_dt(2026, 6, 1),
+        external_id="lk4", text="x", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
     )
     session.add_all([imp_alheia, fb])
     await session.commit()
@@ -534,7 +534,7 @@ async def test_patch_improvement_id_invalido_422(client, org, session):
     """improvement_id que não é UUID -> 422 (validação do _get_improvement)."""
     fb = FeedbackItem(
         organization_id=org.id, contact_id=None, source="manual", type="sugestao",
-        external_id="lk5", text="x", action_status="novo", occurred_at=_dt(2026, 6, 1),
+        external_id="lk5", text="x", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
     )
     session.add(fb)
     await session.commit()

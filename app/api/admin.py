@@ -655,13 +655,19 @@ async def contact_360(contact_id: str, session: AsyncSession = Depends(get_sessi
 
 # --- Central de Monitoramento (clientes + feed de feedbacks) ------------------
 
-# Estados válidos da AÇÃO sobre um feedback (workflow do operador). A ordem é a
-# do funil — usada também para o cabeçalho de contagem do feed.
-ACTION_STATUSES: tuple[str, ...] = ("novo", "em_analise", "planejado", "resolvido", "descartado")
+# Estados válidos da AÇÃO sobre um feedback (workflow de ACOMPANHAMENTO do operador).
+# A ordem é a do funil — usada também para o cabeçalho de contagem do feed.
+# Vocabulário de RELACIONAMENTO (não de bug-tracker): a abordar -> aguardando retorno
+# -> em acompanhamento -> resolvido, com duas saídas terminais (sem retorno/descartado).
+# Ver docs/BENCHMARK_ACOMPANHAMENTO_2026-06-20.md. As cores acompanham cada status
+# (trafegam no /api/config; ver _status_default_items).
+ACTION_STATUSES: tuple[str, ...] = (
+    "a_abordar", "aguardando_retorno", "em_acompanhamento", "resolvido", "sem_retorno", "descartado"
+)
 # Esteira (Fase D): estados TERMINAIS de action_status — a esteira não os reabre nem
-# os re-resolve (idempotência). 'resolvido' (fechado com tratativa) e 'descartado'
-# (fechado sem ação) são fins de linha do funil.
-_FEEDBACK_TERMINAL_STATUSES: frozenset[str] = frozenset({"resolvido", "descartado"})
+# os re-resolve (idempotência). 'resolvido' (fechado com desfecho positivo), 'sem_retorno'
+# (cliente não respondeu) e 'descartado' (sem ação) são fins de linha do funil.
+_FEEDBACK_TERMINAL_STATUSES: frozenset[str] = frozenset({"resolvido", "sem_retorno", "descartado"})
 
 # Tipos de feedback aceitos no registro manual (Felipe registra o que o cliente
 # deixou por qualquer canal). Mesmo espírito do ACTION_STATUSES: validado na API,
@@ -698,6 +704,19 @@ DEFAULT_ORIGINS: tuple[str, ...] = (
 
 _COR_STATUS_DEFAULT = "#6366f1"  # token --indigo do painel (mesmo de boards._COR_DEFAULT).
 
+# Label + cor de cada status default de ACOMPANHAMENTO (key -> {label, cor}). A cor
+# trafega no /api/config e tinge a pílula/badge no front. Cores escolhidas no benchmark:
+# indigo=a abordar (novo/neutro), âmbar=aguardando (espera), azul=em acompanhamento (ativo),
+# verde=resolvido (sucesso), cinza=sem retorno (esfriou), ardósia=descartado (arquivado).
+_STATUS_DEFAULT_META: dict[str, dict[str, str]] = {
+    "a_abordar": {"label": "A abordar", "cor": "#6366f1"},
+    "aguardando_retorno": {"label": "Aguardando retorno", "cor": "#f59e0b"},
+    "em_acompanhamento": {"label": "Em acompanhamento", "cor": "#3b82f6"},
+    "resolvido": {"label": "Resolvido", "cor": "#10b981"},
+    "sem_retorno": {"label": "Sem retorno", "cor": "#94a3b8"},
+    "descartado": {"label": "Descartado", "cor": "#64748b"},
+}
+
 # Chaves dos settings onde vivem os customizados (só os ADICIONAIS, nunca os defaults).
 _SETTINGS_KEY_STATUSES = "action_statuses"
 _SETTINGS_KEY_TYPES = "feedback_types"
@@ -710,11 +729,22 @@ def _label_humano(key: str) -> str:
 
 
 def _status_default_items() -> list[dict[str, str]]:
-    """Os ACTION_STATUSES como itens {key,label,cor} — base imutável dos status."""
-    return [
-        {"key": s, "label": _label_humano(s), "cor": _COR_STATUS_DEFAULT}
-        for s in ACTION_STATUSES
-    ]
+    """Os ACTION_STATUSES como itens {key,label,cor} — base imutável dos status.
+
+    Label e cor vêm de _STATUS_DEFAULT_META (vocabulário de acompanhamento); um status
+    sem entrada no mapa cai no label humano derivado da key + cor indigo padrão.
+    """
+    out: list[dict[str, str]] = []
+    for s in ACTION_STATUSES:
+        meta = _STATUS_DEFAULT_META.get(s, {})
+        out.append(
+            {
+                "key": s,
+                "label": meta.get("label") or _label_humano(s),
+                "cor": meta.get("cor") or _COR_STATUS_DEFAULT,
+            }
+        )
+    return out
 
 
 def _type_default_items() -> list[dict[str, str]]:

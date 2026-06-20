@@ -548,11 +548,11 @@ async def test_gerar_de_feedbacks_action_status_e_limite(client, org, session):
     novos = [
         FeedbackItem(
             organization_id=org.id, contact_id=ana.id, source="bizzu_billing", type="churn",
-            sentiment="negativo", action_status="novo", text=f"motivo {i}",
+            sentiment="negativo", action_status="a_abordar", text=f"motivo {i}",
         )
         for i in range(3)
     ]
-    # mesmo casando tipo+sentimento, action_status != novo fica de fora
+    # mesmo casando tipo+sentimento, action_status != a_abordar fica de fora
     resolvido = FeedbackItem(
         organization_id=org.id, contact_id=ana.id, source="bizzu_billing", type="churn",
         sentiment="negativo", action_status="resolvido", text="já tratado",
@@ -560,14 +560,14 @@ async def test_gerar_de_feedbacks_action_status_e_limite(client, org, session):
     session.add_all(novos + [resolvido])
     await session.commit()
 
-    r = await client.post("/api/tarefas/gerar-de-feedbacks", json={"action_status": "novo", "limite": 2})
+    r = await client.post("/api/tarefas/gerar-de-feedbacks", json={"action_status": "a_abordar", "limite": 2})
     assert r.status_code == 201, r.text
     out = r.json()
     assert out["criadas"] == 2  # limite corta em 2
     assert (await client.get("/api/tarefas")).json()["total"] == 2
 
-    # próxima rodada pega o 3º "novo" (o "resolvido" continua de fora)
-    r2 = await client.post("/api/tarefas/gerar-de-feedbacks", json={"action_status": "novo", "limite": 2})
+    # próxima rodada pega o 3º "a_abordar" (o "resolvido" continua de fora)
+    r2 = await client.post("/api/tarefas/gerar-de-feedbacks", json={"action_status": "a_abordar", "limite": 2})
     out2 = r2.json()
     assert out2["criadas"] == 1
     assert out2["ja_existiam"] == 2
@@ -695,7 +695,7 @@ def _set_esteira(monkeypatch, enabled: bool) -> None:
     )
 
 
-async def _mk_tarefa_com_feedback(session, org, *, action_status="novo"):
+async def _mk_tarefa_com_feedback(session, org, *, action_status="a_abordar"):
     """Contato + FeedbackItem (com action_status dado) + CsTask vinculada e aberta."""
     ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
     session.add(ana)
@@ -720,7 +720,7 @@ async def test_esteira_concluir_tarefa_resolve_feedback(client, org, session, mo
     """Flag ON + tarefa->concluida + feedback não-terminal: feedback vira 'resolvido'
     e o retorno traz feedback_resolvido=True."""
     _set_esteira(monkeypatch, True)
-    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="novo")
+    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="a_abordar")
 
     r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
     assert r.status_code == 200, r.text
@@ -765,28 +765,28 @@ async def test_esteira_descartado_tambem_e_noop(client, org, session, monkeypatc
 async def test_esteira_flag_off_nao_mexe(client, org, session, monkeypatch):
     """Flag OFF: concluir a tarefa NÃO toca o feedback e feedback_resolvido=False."""
     _set_esteira(monkeypatch, False)
-    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="novo")
+    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="a_abordar")
 
     r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
     assert r.status_code == 200, r.text
     assert r.json()["feedback_resolvido"] is False
 
     row = (await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb.id))).scalar_one()
-    assert row.action_status == "novo"  # intacto
+    assert row.action_status == "a_abordar"  # intacto
 
 
 @pytest.mark.asyncio
 async def test_esteira_status_diferente_de_concluida_nao_mexe(client, org, session, monkeypatch):
     """PATCH que NÃO conclui (ex.: status=em_andamento) não dispara a esteira."""
     _set_esteira(monkeypatch, True)
-    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="novo")
+    t, fb = await _mk_tarefa_com_feedback(session, org, action_status="a_abordar")
 
     r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "em_andamento"})
     assert r.status_code == 200, r.text
     assert r.json()["feedback_resolvido"] is False
 
     row = (await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb.id))).scalar_one()
-    assert row.action_status == "novo"
+    assert row.action_status == "a_abordar"
 
 
 @pytest.mark.asyncio

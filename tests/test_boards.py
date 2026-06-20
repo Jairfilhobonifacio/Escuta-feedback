@@ -107,7 +107,10 @@ async def test_boards_default_quando_vazio(client, org):
     assert triagem["entidade"] == "feedback"
     assert triagem["campo"] == "action_status"
     valores = [c["valor"] for c in triagem["colunas"]]
-    assert valores == ["novo", "em_analise", "planejado", "resolvido", "descartado"]
+    assert valores == [
+        "a_abordar", "aguardando_retorno", "em_acompanhamento",
+        "resolvido", "sem_retorno", "descartado",
+    ]
 
     winback = by_id["default-winback"]
     assert winback["entidade"] == "feedback"
@@ -483,19 +486,19 @@ async def test_board_move_action_status(client, org, session):
     ana = await _contact(session, org, "5531900000001", "Ana")
     fb = FeedbackItem(
         organization_id=org.id, contact_id=ana.id, source="bizzu_app", type="bug",
-        external_id="m1", text="quebrou", action_status="novo", occurred_at=_dt(2026, 6, 1),
+        external_id="m1", text="quebrou", action_status="a_abordar", occurred_at=_dt(2026, 6, 1),
     )
     session.add(fb)
     await session.commit()
 
     r = await client.post(
-        f"/api/feedbacks/{fb.id}/board-move", json={"campo": "action_status", "valor": "em_analise"}
+        f"/api/feedbacks/{fb.id}/board-move", json={"campo": "action_status", "valor": "em_acompanhamento"}
     )
     assert r.status_code == 200, r.text
-    assert r.json()["action_status"] == "em_analise"
+    assert r.json()["action_status"] == "em_acompanhamento"
 
     f = (await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb.id))).scalar_one()
-    assert f.action_status == "em_analise"
+    assert f.action_status == "em_acompanhamento"
 
 
 @pytest.mark.asyncio

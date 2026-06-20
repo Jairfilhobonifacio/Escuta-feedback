@@ -30,10 +30,11 @@ import { config as configApi, type ConfigItem, type ConfigResponse } from "@/lib
     editável/removível. Manter em sincronia com os defaults do backend. */
 const DEFAULT_KEYS: Record<SectionId, Set<string>> = {
   action_statuses: new Set([
-    "novo",
-    "em_analise",
-    "planejado",
+    "a_abordar",
+    "aguardando_retorno",
+    "em_acompanhamento",
     "resolvido",
+    "sem_retorno",
     "descartado",
   ]),
   feedback_types: new Set([

@@ -84,7 +84,7 @@ async def _feedback(session, org, contact, **kw):
         type=kw.pop("type", "nps"),
         external_id=kw.pop("external_id", uuid.uuid4().hex),
         text=kw.pop("text", "texto"),
-        action_status=kw.pop("action_status", "novo"),
+        action_status=kw.pop("action_status", "a_abordar"),
         **kw,
     )
     session.add(f)
@@ -134,15 +134,15 @@ async def test_board_items_nao_vazam_feedbacks_de_outra_org(client, orgs, sessio
     a, b = orgs
     ca = await _contact(session, a, "5531900000001", "Ana-A")
     cb = await _contact(session, b, "5531900000002", "Bea-B")
-    await _feedback(session, a, ca, action_status="novo", text="feedback de A")
-    await _feedback(session, b, cb, action_status="novo", text="feedback de B")
+    await _feedback(session, a, ca, action_status="a_abordar", text="feedback de A")
+    await _feedback(session, b, cb, action_status="a_abordar", text="feedback de B")
     await session.commit()
 
     # Board default de triagem (action_status). Quem chama é A (default).
     r = await client.get("/api/boards/default-triagem/items")
     assert r.status_code == 200, r.text
     data = r.json()
-    col_novo = next(c for c in data["colunas"] if c["valor"] == "novo")
+    col_novo = next(c for c in data["colunas"] if c["valor"] == "a_abordar")
     # Só o feedback de A aparece; o de B não conta nem vaza.
     assert col_novo["count"] == 1
     textos = {it["text"] for it in col_novo["items"]}
@@ -159,7 +159,7 @@ async def test_move_feedback_de_outra_org_da_404(client, orgs, session):
     feedback de B fica INTACTO (status não muda)."""
     _a, b = orgs
     cb = await _contact(session, b, "5531900000002", "Bea-B")
-    fb = await _feedback(session, b, cb, action_status="novo")
+    fb = await _feedback(session, b, cb, action_status="a_abordar")
     await session.commit()
     fb_id = fb.id
 
@@ -170,7 +170,7 @@ async def test_move_feedback_de_outra_org_da_404(client, orgs, session):
     again = (
         await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb_id))
     ).scalar_one()
-    assert again.action_status == "novo"
+    assert again.action_status == "a_abordar"
 
 
 @pytest.mark.asyncio
@@ -178,7 +178,7 @@ async def test_patch_feedback_de_outra_org_da_404(client, orgs, session):
     """PATCH /feedbacks/{id} de B (logado como A) => 404 e nada muda em B."""
     _a, b = orgs
     cb = await _contact(session, b, "5531900000002")
-    fb = await _feedback(session, b, cb, action_status="novo", action_note=None)
+    fb = await _feedback(session, b, cb, action_status="a_abordar", action_note=None)
     await session.commit()
     fb_id = fb.id
 
@@ -190,7 +190,7 @@ async def test_patch_feedback_de_outra_org_da_404(client, orgs, session):
     again = (
         await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb_id))
     ).scalar_one()
-    assert again.action_status == "novo"
+    assert again.action_status == "a_abordar"
     assert again.action_note is None
 
 
@@ -217,7 +217,7 @@ async def test_board_move_feedback_de_outra_org_da_404(client, orgs, session):
     """POST /feedbacks/{id}/board-move (drag-drop genérico) de B => 404; B intacto."""
     _a, b = orgs
     cb = await _contact(session, b, "5531900000002")
-    fb = await _feedback(session, b, cb, action_status="novo")
+    fb = await _feedback(session, b, cb, action_status="a_abordar")
     await session.commit()
     fb_id = fb.id
 
@@ -229,7 +229,7 @@ async def test_board_move_feedback_de_outra_org_da_404(client, orgs, session):
     again = (
         await session.execute(select(FeedbackItem).where(FeedbackItem.id == fb_id))
     ).scalar_one()
-    assert again.action_status == "novo"
+    assert again.action_status == "a_abordar"
 
 
 # --- TASKS: patch/criação por id NÃO cruzam org -----------------------------

@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # app/domain/cs/engine.py). Replicados aqui para não importar de app/api/ (fora da
 # fronteira e criaria ciclo). Mantidos em sincronia conscientemente.
 ACTION_STATUSES: frozenset[str] = frozenset(
-    {"novo", "em_analise", "planejado", "resolvido", "descartado"}
+    {"a_abordar", "aguardando_retorno", "em_acompanhamento", "resolvido", "sem_retorno", "descartado"}
 )
 PRIORITIES: frozenset[str] = frozenset({"baixa", "normal", "alta", "urgente"})
 
@@ -393,8 +393,11 @@ _ATUALIZAR_FEEDBACK_SCHEMA = {
         "feedback_id": {"type": "string", "description": "ID (UUID) do FeedbackItem."},
         "action_status": {
             "type": "string",
-            "enum": ["novo", "em_analise", "planejado", "resolvido", "descartado"],
-            "description": "Estágio do tratamento interno.",
+            "enum": [
+                "a_abordar", "aguardando_retorno", "em_acompanhamento",
+                "resolvido", "sem_retorno", "descartado",
+            ],
+            "description": "Estágio do acompanhamento do cliente.",
         },
         "assignee": {"type": "string", "description": "Responsável (vazio limpa)."},
         "team_tag": {"type": "string", "description": "Time (produto/suporte/comercial/cs; vazio limpa)."},

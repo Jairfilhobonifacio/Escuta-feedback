@@ -491,8 +491,8 @@ export default function DashboardPage() {
             {voz.feedbacks && (() => {
               const c = voz.feedbacks.counts_by_status;
               const linhas: { label: string; n: number; cor: string }[] = [
-                { label: "Novos (a triar)", n: c.novo, cor: "var(--detractor)" },
-                { label: "Em análise", n: c.em_analise, cor: "var(--gold)" },
+                { label: "A abordar", n: c.a_abordar, cor: "var(--detractor)" },
+                { label: "Em acompanhamento", n: c.em_acompanhamento, cor: "var(--gold)" },
                 { label: "Resolvidos", n: c.resolvido, cor: "var(--indigo-light)" },
               ];
               return (

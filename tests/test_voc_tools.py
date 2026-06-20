@@ -276,7 +276,7 @@ async def test_atualizar_feedback(session):
             name="atualizar_feedback",
             arguments={
                 "feedback_id": str(f.id),
-                "action_status": "em_analise",
+                "action_status": "em_acompanhamento",
                 "assignee": "carla",
                 "action_note": "investigando",
             },
@@ -284,7 +284,7 @@ async def test_atualizar_feedback(session):
     )
     assert '"ok": true' in out
     await session.refresh(f)
-    assert f.action_status == "em_analise"
+    assert f.action_status == "em_acompanhamento"
     assert f.assignee == "carla"
     assert f.action_note == "investigando"
 
@@ -304,7 +304,7 @@ async def test_atualizar_feedback_status_invalido_falha(session):
     )
     assert '"ok": false' in out
     await session.refresh(f)
-    assert f.action_status == "novo"  # inalterado
+    assert f.action_status == "a_abordar"  # inalterado (default de acompanhamento)
 
 
 # --- (6) enviar WhatsApp: flag OFF = NO-OP ----------------------------------------

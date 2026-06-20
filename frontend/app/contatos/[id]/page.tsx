@@ -160,14 +160,16 @@ const SENT_META: Record<string, { cls: string; label: string }> = {
   negativo: { cls: "s-neg", label: "negativo" },
 };
 
-/** FALLBACK dos status (usado se GET /api/config falhar). O conjunto efetivo —
-    defaults + custom da org — vem de config.get() e é passado por props. */
+/** FALLBACK dos status (usado se GET /api/config falhar). Espelha os defaults de
+    ACOMPANHAMENTO do backend (key/label/cor); o conjunto efetivo — defaults + custom
+    da org — vem de config.get() e é passado por props. */
 const STATUS_OPTIONS_FALLBACK: ConfigItem[] = [
-  { key: "novo", label: "Novo" },
-  { key: "em_analise", label: "Em análise" },
-  { key: "planejado", label: "Planejado" },
-  { key: "resolvido", label: "Resolvido" },
-  { key: "descartado", label: "Descartado" },
+  { key: "a_abordar", label: "A abordar", cor: "#6366f1" },
+  { key: "aguardando_retorno", label: "Aguardando retorno", cor: "#f59e0b" },
+  { key: "em_acompanhamento", label: "Em acompanhamento", cor: "#3b82f6" },
+  { key: "resolvido", label: "Resolvido", cor: "#10b981" },
+  { key: "sem_retorno", label: "Sem retorno", cor: "#94a3b8" },
+  { key: "descartado", label: "Descartado", cor: "#64748b" },
 ];
 
 /** Garante que o status ATUAL (ex.: um custom fora do vocabulário carregado)
@@ -185,6 +187,36 @@ function sentimentBadge(s?: string | null) {
   const m = SENT_META[s];
   if (!m) return null;
   return <span className={`badge sent ${m.cls}`}>{m.label}</span>;
+}
+
+/** Cor default da pílula de status quando o config não traz `cor` (ou status legado). */
+const STATUS_DOT_FALLBACK = "#94a3b8";
+
+/** Badge de STATUS de acompanhamento tingido pela COR do status (vinda do /api/config),
+    para a etapa do cliente saltar aos olhos na timeline. Status legado/fora do
+    vocabulário ainda renderiza: label cru da key + cor neutra de fallback. */
+function statusBadge(status: string | null | undefined, statusOptions: ConfigItem[]) {
+  if (!status) return null;
+  const it = statusOptions.find((s) => s.key === status);
+  const cor = it?.cor || STATUS_DOT_FALLBACK;
+  const label = it?.label ?? status;
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-[7px] border px-2.5 py-1 text-[12px] font-semibold leading-none"
+      style={{
+        color: cor,
+        background: `color-mix(in srgb, ${cor} 12%, transparent)`,
+        borderColor: `color-mix(in srgb, ${cor} 32%, transparent)`,
+      }}
+      title={`Status: ${label}`}
+    >
+      <span
+        aria-hidden
+        style={{ width: 8, height: 8, borderRadius: "50%", background: cor, flexShrink: 0 }}
+      />
+      {label}
+    </span>
+  );
 }
 
 function themeChips(themes?: string[] | null) {
@@ -809,6 +841,7 @@ function TimelineRow({
           <span className={`score-pill ${t.bucket ?? "none"}`}>{t.score}</span>
         )}
         {sentimentBadge(t.sentiment)}
+        {editable && statusBadge(t.action_status, statusOptions)}
         {t.abordado && (
           <Badge variant="positive">
             <Check size={11} strokeWidth={2.6} aria-hidden /> abordado

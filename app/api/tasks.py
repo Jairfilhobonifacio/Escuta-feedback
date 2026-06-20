@@ -39,8 +39,9 @@ router = APIRouter(tags=["tarefas"])
 # Estados da tarefa. Ordem = funil; usada no cabeçalho de contagem.
 TASK_STATUSES: tuple[str, ...] = ("aberta", "em_andamento", "concluida", "adiada")
 # Esteira (Fase D): estados TERMINAIS de um FeedbackItem.action_status — já fechados,
-# a esteira não os reabre/re-resolve (idempotência). Espelha o vocabulário de admin.py.
-_FEEDBACK_TERMINAL_STATUSES: frozenset[str] = frozenset({"resolvido", "descartado"})
+# a esteira não os reabre/re-resolve (idempotência). Espelha o vocabulário de admin.py
+# (acompanhamento): resolvido/sem_retorno/descartado são fins de linha.
+_FEEDBACK_TERMINAL_STATUSES: frozenset[str] = frozenset({"resolvido", "sem_retorno", "descartado"})
 # Prioridade -> rank p/ ordenação (urgente primeiro). Reusa o vocabulário do motor.
 _PRIORITY_RANK = {"urgente": 0, "alta": 1, "normal": 2, "baixa": 3}
 # Tamanho máximo do preview do feedback vinculado exposto no GET (texto truncado).

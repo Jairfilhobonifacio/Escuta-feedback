@@ -67,18 +67,21 @@ const PERFIL_OPTIONS: { value: string; label: string }[] = [
 /** Selos de campanha win-back sugeridos no controle "+ selo" do card. */
 const SELOS_CAMPANHA = ["contatado", "respondeu", "cortesia", "reativou"];
 
-/** FALLBACK dos status (usado se GET /api/config falhar). O conjunto efetivo —
-    defaults + custom da org — vem de config.get() e é passado por props. */
+/** FALLBACK dos status (usado se GET /api/config falhar). Espelha os defaults de
+    ACOMPANHAMENTO do backend (key/label/cor); o conjunto efetivo — defaults + custom
+    da org — vem de config.get() e é passado por props. */
 const STATUS_TABS_FALLBACK: ConfigItem[] = [
-  { key: "novo", label: "Novo" },
-  { key: "em_analise", label: "Em análise" },
-  { key: "planejado", label: "Planejado" },
-  { key: "resolvido", label: "Resolvido" },
-  { key: "descartado", label: "Descartado" },
+  { key: "a_abordar", label: "A abordar", cor: "#6366f1" },
+  { key: "aguardando_retorno", label: "Aguardando retorno", cor: "#f59e0b" },
+  { key: "em_acompanhamento", label: "Em acompanhamento", cor: "#3b82f6" },
+  { key: "resolvido", label: "Resolvido", cor: "#10b981" },
+  { key: "sem_retorno", label: "Sem retorno", cor: "#94a3b8" },
+  { key: "descartado", label: "Descartado", cor: "#64748b" },
 ];
 
 const EMPTY_COUNTS: FeedbackCounts = {
-  novo: 0, em_analise: 0, planejado: 0, resolvido: 0, descartado: 0,
+  a_abordar: 0, aguardando_retorno: 0, em_acompanhamento: 0,
+  resolvido: 0, sem_retorno: 0, descartado: 0,
 };
 
 /** Labels fixos de fallback p/ tipos legados/sem custom (badge e textos). */
@@ -151,6 +154,39 @@ function sentimentBadge(s: string | null) {
   const m = SENT_META[s];
   if (!m) return null;
   return <span className={`badge sent ${m.cls}`}>{m.label}</span>;
+}
+
+/** Cor default da pílula de status quando o config não traz `cor` (ou status legado). */
+const STATUS_DOT_FALLBACK = "#94a3b8";
+
+/** Badge de STATUS de acompanhamento tingido pela COR do status (vinda do /api/config).
+    Mostra a etapa "de relance" no card. Status legado/fora do vocabulário ainda
+    renderiza: cai no label cru da key e numa cor neutra de fallback. */
+function statusBadge(status: string, statusOptions: ConfigItem[]) {
+  if (!status) return null;
+  const it = statusOptions.find((s) => s.key === status);
+  const cor = it?.cor || STATUS_DOT_FALLBACK;
+  const label = it?.label ?? status;
+  return (
+    <span
+      className="badge"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        color: cor,
+        background: `color-mix(in srgb, ${cor} 12%, transparent)`,
+        borderColor: `color-mix(in srgb, ${cor} 32%, transparent)`,
+      }}
+      title={`Status: ${label}`}
+    >
+      <span
+        aria-hidden
+        style={{ width: 8, height: 8, borderRadius: "50%", background: cor, flexShrink: 0 }}
+      />
+      {label}
+    </span>
+  );
 }
 
 function themeChips(themes: string[] | null) {
@@ -900,6 +936,7 @@ function FeedbackCard({
           <span className={`score-pill ${fb.nps_bucket ?? bucketFor(fb.score)}`}>{fb.score}</span>
         )}
         {sentimentBadge(fb.sentiment)}
+        {statusBadge(fb.action_status, statusOptions)}
         {fb.abordado && (
           <span className="badge abordado" title={fb.abordado_em ? `Abordado em ${fmtDate(fb.abordado_em)}` : "Abordado"}>
             ✅ abordado

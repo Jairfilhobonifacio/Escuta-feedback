@@ -598,11 +598,11 @@ async def test_esteira_entregue_resolve_feedbacks_vinculados(client, org, sessio
     session.add_all([imp, outra])
     await session.flush()
 
-    f_novo = await _mk_fb_acionavel(session, org, imp, "novo")
-    f_analise = await _mk_fb_acionavel(session, org, imp, "em_analise")
+    f_novo = await _mk_fb_acionavel(session, org, imp, "a_abordar")
+    f_analise = await _mk_fb_acionavel(session, org, imp, "em_acompanhamento")
     f_resolvido = await _mk_fb_acionavel(session, org, imp, "resolvido")
     f_descartado = await _mk_fb_acionavel(session, org, imp, "descartado")
-    f_outra = await _mk_fb_acionavel(session, org, outra, "novo")
+    f_outra = await _mk_fb_acionavel(session, org, outra, "a_abordar")
     await session.commit()
 
     r = await client.patch(f"/api/improvements/{imp.id}", json={"status": "entregue"})
@@ -617,7 +617,7 @@ async def test_esteira_entregue_resolve_feedbacks_vinculados(client, org, sessio
     await session.refresh(f_descartado)
     assert f_descartado.action_status == "descartado"  # terminal preservado
     await session.refresh(f_outra)
-    assert f_outra.action_status == "novo"  # de outra melhoria, intacto
+    assert f_outra.action_status == "a_abordar"  # de outra melhoria, intacto
 
 
 @pytest.mark.asyncio
@@ -627,7 +627,7 @@ async def test_esteira_entregue_flag_off_nao_mexe(client, org, session, monkeypa
     imp = Improvement(organization_id=org.id, title="Loop", status="em_andamento")
     session.add(imp)
     await session.flush()
-    f = await _mk_fb_acionavel(session, org, imp, "novo")
+    f = await _mk_fb_acionavel(session, org, imp, "a_abordar")
     await session.commit()
 
     r = await client.patch(f"/api/improvements/{imp.id}", json={"status": "entregue"})
@@ -635,7 +635,7 @@ async def test_esteira_entregue_flag_off_nao_mexe(client, org, session, monkeypa
     assert r.json()["status"] == "entregue"
 
     await session.refresh(f)
-    assert f.action_status == "novo"  # intacto
+    assert f.action_status == "a_abordar"  # intacto
 
 
 @pytest.mark.asyncio
@@ -646,7 +646,7 @@ async def test_esteira_entregue_idempotente_reentrega_noop(client, org, session,
     imp = Improvement(organization_id=org.id, title="Loop", status="em_andamento")
     session.add(imp)
     await session.flush()
-    f = await _mk_fb_acionavel(session, org, imp, "novo")
+    f = await _mk_fb_acionavel(session, org, imp, "a_abordar")
     await session.commit()
 
     r1 = await client.patch(f"/api/improvements/{imp.id}", json={"status": "entregue"})
@@ -655,11 +655,11 @@ async def test_esteira_entregue_idempotente_reentrega_noop(client, org, session,
     assert f.action_status == "resolvido"
 
     # operador reabre o feedback manualmente
-    f.action_status = "em_analise"
+    f.action_status = "em_acompanhamento"
     await session.commit()
 
     # re-entregar (já estava entregue) NÃO re-resolve
     r2 = await client.patch(f"/api/improvements/{imp.id}", json={"status": "entregue"})
     assert r2.status_code == 200
     await session.refresh(f)
-    assert f.action_status == "em_analise"
+    assert f.action_status == "em_acompanhamento"

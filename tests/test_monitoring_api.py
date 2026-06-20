@@ -398,7 +398,8 @@ async def test_feedbacks_feed_e_filtro(client, org, session):
     assert set(data.keys()) == {"items", "total", "counts_by_status"}
     assert data["total"] == 3
     assert data["counts_by_status"] == {
-        "novo": 3, "em_analise": 0, "planejado": 0, "resolvido": 0, "descartado": 0
+        "a_abordar": 3, "aguardando_retorno": 0, "em_acompanhamento": 0,
+        "resolvido": 0, "sem_retorno": 0, "descartado": 0,
     }
     assert [i["external_id"] if False else i["type"] for i in data["items"]] == ["churn", "nps", "nps"]
     # ordem desc por occurred: f2 (06-10) > f3 (06-05) > f1 (06-01)
@@ -523,11 +524,11 @@ async def test_patch_feedback_status_e_nota(client, org, session):
 
     r = await client.patch(
         f"/api/feedbacks/{fb.id}",
-        json={"action_status": "em_analise", "action_note": "Felipe vai ligar"},
+        json={"action_status": "em_acompanhamento", "action_note": "Felipe vai ligar"},
     )
     assert r.status_code == 200, r.text
     out = r.json()
-    assert out["action_status"] == "em_analise"
+    assert out["action_status"] == "em_acompanhamento"
     assert out["action_note"] == "Felipe vai ligar"
     # mesmo formato do feed
     assert set(out.keys()) == _ITEM_KEYS
@@ -535,8 +536,8 @@ async def test_patch_feedback_status_e_nota(client, org, session):
 
     # reflete no feed + counts
     feed = (await client.get("/api/feedbacks")).json()
-    assert feed["counts_by_status"]["em_analise"] == 1
-    assert feed["counts_by_status"]["novo"] == 0
+    assert feed["counts_by_status"]["em_acompanhamento"] == 1
+    assert feed["counts_by_status"]["a_abordar"] == 0
 
 
 @pytest.mark.asyncio
@@ -553,9 +554,9 @@ async def test_patch_status_invalido_422(client, org, session):
 
     r = await client.patch(f"/api/feedbacks/{fb.id}", json={"action_status": "resolvendo"})
     assert r.status_code == 422
-    # nada mudou
+    # nada mudou (segue no default de acompanhamento)
     feed = (await client.get("/api/feedbacks")).json()
-    assert feed["items"][0]["action_status"] == "novo"
+    assert feed["items"][0]["action_status"] == "a_abordar"
 
 
 @pytest.mark.asyncio
@@ -606,7 +607,7 @@ async def test_post_feedback_contato_existente(client, org, session):
     assert out["sentiment"] == "positivo"
     assert out["themes"] == ["atendimento"]
     assert out["text"] == "atendimento excelente"
-    assert out["action_status"] == "novo"
+    assert out["action_status"] == "a_abordar"
     assert out["abordado"] is False
     assert out["abordado_em"] is None
     assert out["occurred_em"] is not None  # occurred_at = agora
@@ -736,7 +737,7 @@ async def test_patch_abordado_em_nao_muda_se_ja_abordado(client, org, session):
     r1 = await client.patch(f"/api/feedbacks/{fb.id}", json={"abordado": True})
     first_em = r1.json()["abordado_em"]
     # re-marcar True não reescreve abordado_em
-    r2 = await client.patch(f"/api/feedbacks/{fb.id}", json={"abordado": True, "action_status": "em_analise"})
+    r2 = await client.patch(f"/api/feedbacks/{fb.id}", json={"abordado": True, "action_status": "em_acompanhamento"})
     assert r2.json()["abordado_em"] == first_em
 
 
