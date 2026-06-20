@@ -1,6 +1,11 @@
-/** Cliente da API do Escuta (FastAPI local). */
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+/** Cliente da API do Escuta (FastAPI).
+ *
+ * Base RELATIVA por padrão: string vazia → as chamadas viram `/api/...`
+ * same-origin e caem no proxy BFF (`app/api/[...path]/route.ts`), que injeta a
+ * chave server-side (X-Panel-Key) e fala com o FastAPI — o browser nunca vê a
+ * chave nem cruza CORS. Para apontar direto ao backend (debug), defina
+ * NEXT_PUBLIC_API_URL (ex.: http://localhost:8000); em prod deixe vazio. */
+const API = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 class ApiError extends Error {
   status: number;
