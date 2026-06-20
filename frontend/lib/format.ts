@@ -59,6 +59,80 @@ export function feedbackText(raw: string | null): string {
   return t;
 }
 
+/** Motivos de churn/cancelamento (snapshot partner.subscription.cancellationReason
+    da API de Clientes da Bizzu) → rótulo humano em PT. Chaves em CAIXA_ALTA, como
+    chegam no campo `cancellationReason`. Reusa o vocabulário de FEEDBACK_CODE_LABELS
+    e acrescenta os motivos próprios de cancelamento. */
+const CHURN_REASON_LABELS: Record<string, string> = {
+  GUARANTEE_REFUND: "Reembolso na garantia",
+  USER_CANCEL: "Cancelou",
+  PAYMENT_FAILED: "Falha no pagamento",
+  USER_REQUEST: "A pedido do cliente",
+  SUBSCRIPTION_CANCELLED: "Assinatura cancelada",
+  SUBSCRIPTION_CANCELED: "Assinatura cancelada",
+  PAYMENT_REFUSED: "Pagamento recusado",
+  PAYMENT_REFUND: "Reembolso",
+  CARD_DECLINED: "Cartão recusado",
+  CHARGEBACK: "Chargeback",
+  TRIAL_EXPIRED: "Teste expirado",
+  TRIAL_ENDED: "Teste encerrado",
+  INVOLUNTARY: "Involuntário",
+  PRICE: "Preço",
+  MISSING_FEATURES: "Faltou recurso",
+  NO_LONGER_NEEDED: "Não precisa mais",
+};
+
+/**
+ * Motivo de churn pronto para exibir (card "Perfil & assinatura" e timeline):
+ *  - null / "" / só espaços → "" (quem chama decide o placeholder).
+ *  - código conhecido (GUARANTEE_REFUND…) → rótulo PT do mapa.
+ *  - código desconhecido em CAIXA_ALTA → Title Case sem underscore (fallback).
+ *  - qualquer outro texto (já legível) → intacto (apenas trim das bordas).
+ */
+export function churnReasonLabel(raw: string | null | undefined): string {
+  if (raw == null) return "";
+  const t = raw.trim();
+  if (!t) return "";
+  const mapped = CHURN_REASON_LABELS[t.toUpperCase()];
+  if (mapped) return mapped;
+  if (isMachineCode(t)) return humanizeCode(t);
+  return t;
+}
+
+/** Perfis de cliente derivados pela Bizzu (campo `profile` do snapshot partner)
+    → rótulo humano em PT. Os valores reais vêm de /api/clientes:
+    ativo_*, churn_*, cortesia, vai_expirar, indefinido. */
+const PERFIL_LABELS: Record<string, string> = {
+  ativo_promotor: "Ativo promotor",
+  ativo_em_risco: "Ativo em risco",
+  ativo_passivo: "Ativo passivo",
+  ativo_recente: "Ativo recente",
+  ativo_silencioso: "Ativo silencioso",
+  churn_rapido: "Churn rápido",
+  churn_pos_uso: "Churn pós-uso",
+  churn_involuntario: "Churn involuntário",
+  churn_outro: "Outro churn",
+  vai_expirar: "Vai expirar",
+  cortesia: "Cortesia",
+  indefinido: "Indefinido",
+};
+
+/**
+ * Perfil do cliente pronto para exibir:
+ *  - null / "" → "" (quem chama decide o placeholder).
+ *  - perfil conhecido (churn_rapido…) → rótulo PT do mapa.
+ *  - qualquer outro snake_case → Title Case (1ª palavra capitalizada, sem '_').
+ */
+export function perfilLabel(raw: string | null | undefined): string {
+  if (raw == null) return "";
+  const t = raw.trim();
+  if (!t) return "";
+  const mapped = PERFIL_LABELS[t.toLowerCase()];
+  if (mapped) return mapped;
+  const spaced = t.replace(/_/g, " ").trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 /**
  * Mascara um telefone para LISTAS em massa (não vaza o número inteiro em prints).
  * Preserva o que ajuda a reconhecer/segmentar (DDI + DDD) e os 4 últimos dígitos.

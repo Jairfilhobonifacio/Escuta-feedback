@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Check,
+  ChevronDown,
   Mail,
   MessageCircle,
   Phone,
@@ -24,7 +25,7 @@ import SeloPopover from "@/components/SeloPopover";
 import { Reveal } from "@/components/Motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { feedbackText } from "@/lib/format";
+import { feedbackText, churnReasonLabel, perfilLabel } from "@/lib/format";
 import {
   api,
   campanha as campanhaApi,
@@ -294,13 +295,13 @@ function ProfileCard({ partner }: { partner: Record<string, unknown> }) {
         <div className="card-head-sub">snapshot da API de Clientes</div>
       </div>
       <div className="c360-grid">
-        {field("Perfil", partner.profile)}
+        {field("Perfil", perfilLabel(partner.profile as string | null) || null)}
         {subStatusBadge(sub)}
         {field("Ciclo", cicloLabel(sub.planType))}
         {sub.currentPeriodEnd != null && field(renovaLabel, fmtDay(sub.currentPeriodEnd))}
         {field("Dias de casa", sub.daysAsSubscriber)}
         {field("NPS (nota)", nps.score)}
-        {field("Motivo de churn", sub.cancellationReason)}
+        {field("Motivo de churn", churnReasonLabel(sub.cancellationReason) || null)}
       </div>
     </Reveal>
   );
@@ -684,7 +685,8 @@ function TimelineRow({
       {editable && t.action_note && (
         <div className="tl-note">
           <span className="tl-note-tag">nota do time</span>
-          {t.action_note}
+          {/* Corrige um typo gravado em dados antigos ("repsposta") só na exibição. */}
+          {t.action_note.replace(/repsposta/gi, "resposta")}
         </div>
       )}
       {themeChips(t.themes)}
@@ -860,11 +862,11 @@ function EnviarWhatsapp({
   const podeEnviar = !!preview && preview.waha_conectado && preview.alcancavel;
 
   return (
-    <Reveal delay={0.08} className="card">
-      <div className="card-head">
+    <section>
+      <div className="card-head" style={{ borderBottom: "none", paddingBottom: 0 }}>
         <div>
-          <div className="section-title inline-flex items-center gap-2">
-            <MessageCircle size={17} aria-hidden /> Enviar WhatsApp
+          <div className="section-title inline-flex items-center gap-2" style={{ fontSize: 14.5 }}>
+            <MessageCircle size={16} aria-hidden /> Enviar WhatsApp
           </div>
           <div className="card-head-sub">
             mensagem 1:1 — o envio real depende do WAHA conectado
@@ -872,6 +874,7 @@ function EnviarWhatsapp({
         </div>
       </div>
 
+      <div className="px-[var(--pad-card-x)] pb-[var(--s-5)] pt-[var(--s-4)]">
       <div className="field">
         <label htmlFor={`${fieldId}-texto`}>Mensagem</label>
         <textarea
@@ -978,7 +981,8 @@ function EnviarWhatsapp({
 
       {okMsg && <div className="flash ok" style={{ marginTop: 14, marginBottom: 0 }}>{okMsg}</div>}
       {error && <div className="flash err" style={{ marginTop: 14, marginBottom: 0 }}>{error}</div>}
-    </Reveal>
+      </div>
+    </section>
   );
 }
 
@@ -1019,11 +1023,11 @@ function ConversaWhatsapp({ contactId }: { contactId: string }) {
   const mensagens = thread?.mensagens ?? [];
 
   return (
-    <Reveal delay={0.12} className="card">
-      <div className="card-head">
+    <section className="border-t border-[var(--charcoal)]">
+      <div className="card-head" style={{ borderBottom: "none" }}>
         <div>
-          <div className="section-title inline-flex items-center gap-2">
-            <Phone size={17} aria-hidden /> Conversa no WhatsApp
+          <div className="section-title inline-flex items-center gap-2" style={{ fontSize: 14.5 }}>
+            <Phone size={16} aria-hidden /> Conversa no WhatsApp
           </div>
           <div className="card-head-sub">histórico real das mensagens trocadas com este cliente</div>
         </div>
@@ -1079,6 +1083,65 @@ function ConversaWhatsapp({ contactId }: { contactId: string }) {
               <div className="chat-bubble-time">{fmtDate(m.at)}</div>
             </div>
           ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ===== Seção de WhatsApp recolhível (envio + conversa) =======================
+// Enquanto o WAHA está FORA, envio e conversa não funcionam — então esta seção
+// vem RECOLHIDA por padrão, num bloco discreto que não rouba espaço da linha do
+// tempo (o foco do registro manual). O operador expande quando quiser; e quando o
+// WAHA voltar é só abrir e usar normalmente. NÃO removemos nada — só re-priorizamos.
+
+function WhatsappSection({
+  contactId,
+  onSent,
+}: {
+  contactId: string;
+  onSent: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  return (
+    <Reveal delay={0.08} className="card">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={panelId}
+        className="flex w-full items-center gap-3 px-[var(--pad-card-x)] py-[var(--s-4)] text-left transition-colors hover:bg-[var(--ink-800)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--indigo)]"
+      >
+        <span
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-[calc(var(--radius-sm)-3px)] text-[var(--text-faint)]"
+          style={{ background: "color-mix(in srgb, var(--text-faint) 12%, transparent)" }}
+          aria-hidden
+        >
+          <MessageCircle size={17} aria-hidden />
+        </span>
+        <span className="flex flex-col gap-0.5">
+          <span className="section-title" style={{ margin: 0 }}>Enviar WhatsApp &amp; conversa</span>
+          <span className="inline-flex items-center text-[12.5px] font-medium text-[var(--text-faint)]">
+            <WifiOff size={12} aria-hidden style={{ verticalAlign: "-1px", marginRight: 5 }} />
+            indisponível — WhatsApp desconectado
+          </span>
+        </span>
+        <span className="ml-auto inline-flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.04em] text-[var(--indigo-light)]">
+          {open ? "ocultar" : "mostrar"}
+          <ChevronDown
+            size={17}
+            aria-hidden
+            className="transition-transform duration-150"
+            style={{ transform: open ? "rotate(180deg)" : "none" }}
+          />
+        </span>
+      </button>
+
+      {open && (
+        <div id={panelId} className="border-t border-[var(--charcoal)]">
+          <EnviarWhatsapp contactId={contactId} onSent={onSent} />
+          <ConversaWhatsapp contactId={contactId} />
         </div>
       )}
     </Reveal>
@@ -1248,23 +1311,26 @@ export default function Contact360Page() {
         <div className="c360-body">
           {data.partner && <ProfileCard partner={data.partner} />}
 
-          {id && <EnviarWhatsapp contactId={id} onSent={load} />}
-
-          {id && <ConversaWhatsapp contactId={id} />}
-
-          <Reveal delay={0.16} className="card">
+          {/* LINHA DO TEMPO — o coração da ficha (onde se registra e acompanha o
+             feedback). Vem logo após o perfil e com destaque visual próprio:
+             filete indigo à esquerda + título maior. */}
+          <Reveal
+            delay={0.1}
+            className="card overflow-hidden"
+            style={{ borderLeft: "3px solid var(--indigo)" }}
+          >
             <div className="card-head">
               <div>
-                <div className="section-title">Linha do tempo do cliente</div>
-                <div className="card-head-sub">todas as fontes de feedback, unificadas e editáveis</div>
+                <div className="section-title" style={{ fontSize: 18 }}>Linha do tempo do cliente</div>
+                <div className="card-head-sub">todas as fontes de feedback, unificadas e editáveis — registre aqui cada nota e abordagem</div>
               </div>
               <div className="tl-head-actions">
                 <span className="exit-counter">
                   {data.summary.feedback_items} sinais · {data.summary.survey_responses} pesquisas
                 </span>
                 {id && (
-                  <Button type="button" size="sm" onClick={() => setAddingEvent(true)}>
-                    <Plus size={14} strokeWidth={2.2} aria-hidden /> adicionar à linha do tempo
+                  <Button type="button" onClick={() => setAddingEvent(true)}>
+                    <Plus size={15} strokeWidth={2.4} aria-hidden /> adicionar à linha do tempo
                   </Button>
                 )}
               </div>
@@ -1325,6 +1391,10 @@ export default function Contact360Page() {
               </ul>
             )}
           </Reveal>
+
+          {/* WhatsApp recolhido no rodapé — envio + conversa, ambos dependem do
+             WAHA (fora agora). Re-priorizado para não competir com a timeline. */}
+          {id && <WhatsappSection contactId={id} onSent={load} />}
         </div>
       )}
 
