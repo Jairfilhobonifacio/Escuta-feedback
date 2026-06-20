@@ -157,9 +157,38 @@ export interface DispatchResult {
 
 // --- Visão 360 (Mega Central de Dados) --------------------------------------
 
+/** Selo VIVO (derivado do estado do cliente) — READ-ONLY, não editável.
+    O backend deriva de VIP/Detrator/Em risco/Novo/Renovação próxima e devolve
+    rótulo + cor (hex) + motivo (texto p/ tooltip) + ícone (emoji ⭐⚠️🔻🌱🔁).
+    Distingue-se dos selos MANUAIS de campanha (`selos: string[]`, editáveis). */
+export interface SeloVivo {
+  nome: string;
+  /** Cor hex do selo (ex.: "#10b981"). */
+  cor: string;
+  /** Por que o selo está vivo (ex.: "NPS 10", "renova em 6 dias") — vai no tooltip. */
+  motivo: string;
+  /** Emoji do selo (⭐ ⚠️ 🔻 🌱 🔁). */
+  icone: string;
+}
+
+/** Origem de um evento de selo na timeline (kind='selo'). Mapeada para PT na UI:
+    manual="manual" · whatsapp_enviado="envio 1:1" · abordagem="abordagem registrada"
+    · form="formulário" · inbound="resposta no WhatsApp" · regra="regra automática"
+    · ia="sugestão da IA". Tipado aberto (string) para tolerar origens novas. */
+export type SeloOrigem =
+  | "manual"
+  | "whatsapp_enviado"
+  | "abordagem"
+  | "form"
+  | "inbound"
+  | "regra"
+  | "ia"
+  | (string & {});
+
 export interface Timeline360Item {
-  /** 'feedback_item' = sinal ingerido de fonte externa; 'survey' = coletado no WhatsApp. */
-  kind: "feedback_item" | "survey";
+  /** 'feedback_item' = sinal de fonte externa; 'survey' = coletado no WhatsApp;
+      'selo' = evento de histórico de selo (aplicado/removido), READ-ONLY. */
+  kind: "feedback_item" | "survey" | "selo";
   /** Id do FeedbackItem — presente só em kind='feedback_item' (alvo do PATCH na 360 editável). */
   id?: string;
   source: string;
@@ -177,6 +206,15 @@ export interface Timeline360Item {
   action_note?: string | null;
   /** Já abordamos o cliente sobre este feedback? (só kind='feedback_item'). */
   abordado?: boolean;
+  // --- Campos só de kind='selo' (histórico de selos) -------------------------
+  /** Nome do selo aplicado/removido (só kind='selo'). */
+  selo?: string;
+  /** O que aconteceu com o selo (só kind='selo'). */
+  acao?: "aplicado" | "removido";
+  /** Quem fez (operador/sistema) ou null (só kind='selo'). */
+  por?: string | null;
+  /** De onde veio a ação do selo (só kind='selo'). */
+  origem?: SeloOrigem;
   at: string | null;
 }
 
@@ -188,6 +226,9 @@ export interface Contact360 {
     opt_in: boolean;
     /** Selos de campanha aplicados ao contato (chips editáveis no cabeçalho). */
     selos?: string[];
+    /** Selos VIVOS derivados do estado (READ-ONLY) — chips automáticos no cabeçalho,
+        distintos dos `selos` manuais. Ausente/vazio na API antiga (fallback gracioso). */
+    selos_vivos?: SeloVivo[];
     /** Sem WhatsApp real? (phone vazio ou 'nowa-') — chip "só e-mail" no cabeçalho. */
     sem_whatsapp?: boolean;
   };
@@ -286,6 +327,9 @@ export interface Cliente {
   total_feedbacks: number;
   /** Selos da campanha win-back aplicados ao cliente (lista de nomes). [] quando não há. */
   selos: string[];
+  /** Selos VIVOS derivados do estado (READ-ONLY): VIP/Detrator/Em risco/Novo/Renovação
+      próxima. Distintos dos `selos` manuais. Ausente/vazio na API antiga (fallback gracioso). */
+  selos_vivos?: SeloVivo[];
   /** Health Score (0-100) + banda + fatores que pesaram — Fase 1 CS. */
   health: number;
   health_band: "healthy" | "watch" | "at_risk";

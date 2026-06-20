@@ -26,6 +26,7 @@ import {
   campanha as campanhaApi,
   type Cliente,
   type Selo,
+  type SeloVivo,
   type ClienteFiltro,
   type EstadoAssinatura,
   type NpsBucket,
@@ -249,6 +250,34 @@ function corDoSelo(catalogo: Selo[], nome: string): string {
   return catalogo.find((s) => s.nome === nome)?.cor || "var(--indigo)";
 }
 
+/** Chip de selo VIVO (derivado do estado, READ-ONLY) — distinto do selo manual:
+    borda TRACEJADA + leve opacidade + emoji do selo, SEM botão "x" (é automático).
+    `title` = motivo (tooltip). Reusa `.selo-chip` mas sobrescreve a borda para
+    tracejada e injeta a cor do próprio selo. */
+function SeloVivoChip({ selo }: { selo: SeloVivo }) {
+  const c = selo.cor || "var(--indigo)";
+  return (
+    <span
+      className="selo-chip"
+      title={selo.motivo ? `${selo.nome} · ${selo.motivo} (automático)` : `${selo.nome} (automático)`}
+      style={{
+        borderColor: c,
+        borderStyle: "dashed",
+        color: c,
+        background: `color-mix(in srgb, ${c} 10%, transparent)`,
+        opacity: 0.92,
+      }}
+    >
+      {selo.icone ? (
+        <span aria-hidden style={{ fontSize: 11, lineHeight: 1 }}>{selo.icone}</span>
+      ) : (
+        <span className="selo-dot" style={{ background: c }} />
+      )}
+      {selo.nome}
+    </span>
+  );
+}
+
 /** Célula de selos: chips coloridos + controle "+ selo" (aplicar do catálogo ou
     criar novo). Aplica via POST /api/contacts/{id}/selos e avisa o pai para
     atualizar a linha localmente (sem recarregar a lista inteira). */
@@ -300,9 +329,15 @@ function SelosCell({
     }
   }
 
+  // Selos vivos (automáticos, read-only) vêm PRIMEIRO; os manuais (editáveis) depois.
+  const vivos = cliente.selos_vivos ?? [];
+
   return (
     <div className="selos-cell">
       <div className="selos-chips">
+        {vivos.map((sv) => (
+          <SeloVivoChip key={`vivo-${sv.nome}`} selo={sv} />
+        ))}
         {cliente.selos.map((nome) => {
           const c = corDoSelo(catalogo, nome);
           return (

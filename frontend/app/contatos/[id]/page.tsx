@@ -21,6 +21,7 @@ import {
   Plus,
   RefreshCw,
   StickyNote,
+  Tag,
   ThumbsUp,
   Trash2,
   UserX,
@@ -49,6 +50,8 @@ import {
   type FeedbackInput,
   type FeedbackPatch,
   type FeedbackStatus,
+  type SeloVivo,
+  type SeloOrigem,
   type Timeline360Item,
   type WhatsappSendPreview,
   type WhatsappThread,
@@ -181,6 +184,49 @@ function withCurrentStatus(items: ConfigItem[], current: string | null | undefin
 
 /** Selos de campanha win-back sugeridos no controle do cabeçalho. */
 const SELOS_CAMPANHA = ["contatado", "respondeu", "cortesia", "reativou"];
+
+/** Origem de um evento de selo → texto em PT (para a frase humana na timeline). */
+const SELO_ORIGEM_LABEL: Record<string, string> = {
+  inbound: "resposta no WhatsApp",
+  whatsapp_enviado: "envio 1:1",
+  abordagem: "abordagem registrada",
+  form: "formulário",
+  manual: "manual",
+  regra: "regra automática",
+  ia: "sugestão da IA",
+};
+
+function seloOrigemLabel(origem?: SeloOrigem): string | null {
+  if (!origem) return null;
+  return SELO_ORIGEM_LABEL[origem] ?? origem;
+}
+
+/** Chip de selo VIVO (derivado do estado, READ-ONLY) — distinto do selo manual
+    (`.selo-chip` com "x"): borda TRACEJADA + leve opacidade + emoji, SEM "x".
+    `title` = motivo (tooltip). Espelha o chip da tela Clientes. */
+function SeloVivoChip({ selo }: { selo: SeloVivo }) {
+  const c = selo.cor || "var(--indigo)";
+  return (
+    <span
+      className="selo-chip"
+      title={selo.motivo ? `${selo.nome} · ${selo.motivo} (automático)` : `${selo.nome} (automático)`}
+      style={{
+        borderColor: c,
+        borderStyle: "dashed",
+        color: c,
+        background: `color-mix(in srgb, ${c} 10%, transparent)`,
+        opacity: 0.92,
+      }}
+    >
+      {selo.icone ? (
+        <span aria-hidden style={{ fontSize: 11, lineHeight: 1 }}>{selo.icone}</span>
+      ) : (
+        <span className="selo-dot" style={{ background: c }} />
+      )}
+      {selo.nome}
+    </span>
+  );
+}
 
 function sentimentBadge(s?: string | null) {
   if (!s) return null;
@@ -407,10 +453,13 @@ function ProfileCard({ partner }: { partner: Record<string, unknown> }) {
 function ContatoSelos({
   contactId,
   selos,
+  selosVivos,
   onChanged,
 }: {
   contactId: string;
   selos: string[];
+  /** Selos vivos derivados do estado (READ-ONLY) — renderizados antes dos manuais. */
+  selosVivos: SeloVivo[];
   onChanged: (selos: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -447,6 +496,22 @@ function ContatoSelos({
 
   return (
     <div className="c360-selos">
+      {/* Selos VIVOS (automáticos, read-only) primeiro; depois um separador sutil
+          e os selos MANUAIS (editáveis, com "x" + "+selo"). */}
+      {selosVivos.map((sv) => (
+        <SeloVivoChip key={`vivo-${sv.nome}`} selo={sv} />
+      ))}
+      {selosVivos.length > 0 && selos.length > 0 && (
+        <span
+          aria-hidden
+          style={{
+            width: 1,
+            alignSelf: "stretch",
+            margin: "1px 2px",
+            background: "var(--charcoal-2)",
+          }}
+        />
+      )}
       {selos.map((nome) => (
         <span key={nome} className="selo-chip">
           <span className="selo-dot" style={{ background: "var(--indigo)" }} />
@@ -996,6 +1061,44 @@ function SubscriptionRow({ marker, index }: { marker: SubMarker; index: number }
   );
 }
 
+// ===== Evento de SELO na timeline (histórico aplicado/removido) ===============
+// kind='selo' do /360. READ-ONLY (não editável). Visual discreto: ponto neutro +
+// chip com ícone Tag + frase humana a partir de acao+selo+origem+at. Ex.:
+// Selo "respondeu" aplicado · resposta no WhatsApp · 20/06.
+
+function SeloEventRow({ t, index }: { t: Timeline360Item; index: number }) {
+  // Aplicado = tom de marca (indigo); removido = neutro/apagado.
+  const removido = t.acao === "removido";
+  const accent = removido ? "var(--text-faint)" : "var(--indigo-light)";
+  const soft = removido ? "rgba(86, 84, 107, 0.08)" : "var(--promoter-soft)";
+  const line = removido ? "var(--charcoal-2)" : "var(--promoter-line)";
+  const origem = seloOrigemLabel(t.origem);
+  const acaoTxt = removido ? "removido" : "aplicado";
+  return (
+    <li
+      className="tl-item reveal"
+      style={{ paddingTop: 22, paddingBottom: 22, ["--i" as string]: Math.min(index, 12) } as React.CSSProperties}
+    >
+      <span className="tl-dot" style={{ background: accent, boxShadow: `0 0 0 2px ${line}` }} aria-hidden />
+      <div className="tl-top" style={{ rowGap: 8 }}>
+        <span
+          className="inline-flex items-center gap-1.5 rounded-[7px] border px-2.5 py-1 text-[12px] font-semibold leading-none"
+          style={{ color: accent, background: soft, borderColor: line }}
+        >
+          <Tag size={13} strokeWidth={2.2} aria-hidden />
+          selo
+        </span>
+        <span className="tl-when" style={{ fontWeight: 500 }}>{fmtDate(t.at)}</span>
+      </div>
+      <div className="tl-text" style={{ fontStyle: "normal", marginTop: 12, paddingLeft: 11, borderLeft: `2px solid ${line}` }}>
+        Selo <b>“{t.selo ?? "—"}”</b> {acaoTxt}
+        {origem ? <span className="faint"> · {origem}</span> : null}
+        {t.por ? <span className="faint"> · por {t.por}</span> : null}
+      </div>
+    </li>
+  );
+}
+
 // ===== Enviar WhatsApp 1:1 (gated por confirmação; preview por padrão) =======
 
 function EnviarWhatsapp({
@@ -1453,6 +1556,7 @@ export default function Contact360Page() {
   }, []);
 
   const selos = data?.contact.selos ?? [];
+  const selosVivos = data?.contact.selos_vivos ?? [];
   const semWhatsapp = data?.contact.sem_whatsapp ?? false;
   // Marco de assinatura (renovação / fim de ciclo) derivado do snapshot partner —
   // entra na timeline na posição cronológica certa (timeline vem desc do backend).
@@ -1489,7 +1593,12 @@ export default function Contact360Page() {
               )}
               {data && id && (
                 <div className="c360-selos-row">
-                  <ContatoSelos contactId={id} selos={selos} onChanged={onSelosChanged} />
+                  <ContatoSelos
+                    contactId={id}
+                    selos={selos}
+                    selosVivos={selosVivos}
+                    onChanged={onSelosChanged}
+                  />
                 </div>
               )}
             </div>
@@ -1573,10 +1682,13 @@ export default function Contact360Page() {
                 {(() => {
                   type Entry =
                     | { kind: "fb"; key: string; ts: number; item: Timeline360Item }
+                    | { kind: "selo"; key: string; ts: number; item: Timeline360Item }
                     | { kind: "sub"; key: string; ts: number; marker: SubMarker };
+                  // Eventos de selo (kind='selo') viram entradas próprias (read-only);
+                  // os demais (feedback_item/survey) seguem como 'fb' editável.
                   const entries: Entry[] = data.timeline.map((t, i) => ({
-                    kind: "fb",
-                    key: t.id ?? `fb-${i}`,
+                    kind: t.kind === "selo" ? "selo" : "fb",
+                    key: t.kind === "selo" ? `selo-${i}` : t.id ?? `fb-${i}`,
                     ts: t.at ? new Date(t.at).getTime() : 0,
                     item: t,
                   }));
@@ -1592,6 +1704,8 @@ export default function Contact360Page() {
                   return entries.map((e, i) =>
                     e.kind === "sub" ? (
                       <SubscriptionRow key={e.key} marker={e.marker} index={i} />
+                    ) : e.kind === "selo" ? (
+                      <SeloEventRow key={e.key} t={e.item} index={i} />
                     ) : (
                       <TimelineRow
                         key={e.key}
