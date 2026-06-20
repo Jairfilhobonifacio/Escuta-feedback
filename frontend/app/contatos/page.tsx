@@ -160,7 +160,7 @@ export default function ContatosPage() {
             <CardHeader>
               <CardTitle>Adicionar contato</CardTitle>
               <CardDescription>
-                Telefone com DDI, só dígitos (ex.: 5524998365809). O opt-in fica registrado.
+                Telefone com DDI, só dígitos (ex.: 5511999999999). O opt-in fica registrado.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -170,7 +170,7 @@ export default function ContatosPage() {
                   <Input
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    placeholder="5524998365809"
+                    placeholder="5511999999999"
                     required
                   />
                 </div>

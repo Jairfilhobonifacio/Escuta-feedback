@@ -620,7 +620,7 @@ async def test_board_items_cliente_por_selo(client, org, session):
     # Cida sem WhatsApp (placeholder 'nowa-') também com 'contatado'.
     await _contact(session, org, "nowa-9", "Cida", profile_data={"selos": ["contatado"]})
     # Edu com telefone FIXO (DDD+8) também com 'contatado' => sem WhatsApp.
-    await _contact(session, org, "553192973323", "Edu", profile_data={"selos": ["contatado"]})
+    await _contact(session, org, "553130000010", "Edu", profile_data={"selos": ["contatado"]})
     await session.commit()
 
     data = (await client.get("/api/boards/default-clientes-winback/items")).json()
@@ -1150,7 +1150,7 @@ async def test_board_feedback_filtrado_estado_whatsapp_team_tag(client, org, ses
     bob = await _contact(session, org, "5531900000002", "Bob",
                          profile_data=_partner(state="active_paying"))
     # Cida: cancelada mas FIXO (sem WhatsApp) -> cai fora pelo filtro tem_whatsapp.
-    cida = await _contact(session, org, "553192973323", "Cida",
+    cida = await _contact(session, org, "553130000010", "Cida",
                           profile_data=_partner(state="cancelled"))
     await session.flush()
 

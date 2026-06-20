@@ -29,7 +29,9 @@ except Exception:
     pass
 
 FAKE_PHONES = ["5531999990001", "5531999990002"]
-REAL_PILOT = {"phone": "5524998365809", "name": "Jair Filho"}
+# Alvo "real" do piloto vem de env — sem PII versionada. Se vazio, o passo de
+# renomear o contato-piloto simplesmente não tem alvo (no-op, e tudo bem).
+REAL_PILOT = {"phone": os.getenv("PILOT_PHONE", ""), "name": os.getenv("PILOT_NAME", "")}
 
 
 async def main() -> int:
@@ -84,15 +86,17 @@ async def main() -> int:
                 (await session.execute(delete(SurveyRun).where(SurveyRun.id.in_(orphan_runs)).returning(SurveyRun.id))).all()
             )
 
-        # 4. corrige o nome do contato-piloto real
-        renamed = (
-            await session.execute(
-                update(Contact)
-                .where(Contact.phone == REAL_PILOT["phone"], Contact.name != REAL_PILOT["name"])
-                .values(name=REAL_PILOT["name"])
-                .returning(Contact.id)
-            )
-        ).all()
+        # 4. corrige o nome do contato-piloto real (só se PILOT_PHONE/PILOT_NAME vierem do env)
+        renamed = []
+        if REAL_PILOT["phone"] and REAL_PILOT["name"]:
+            renamed = (
+                await session.execute(
+                    update(Contact)
+                    .where(Contact.phone == REAL_PILOT["phone"], Contact.name != REAL_PILOT["name"])
+                    .values(name=REAL_PILOT["name"])
+                    .returning(Contact.id)
+                )
+            ).all()
 
         await session.commit()
 

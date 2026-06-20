@@ -95,7 +95,7 @@ async def test_dashboard_separa_nps_de_exit(client, org, session):
 
     ana = Contact(organization_id=org.id, phone="5531900000001", name="Ana", opt_in=True, profile_data={})
     bia = Contact(organization_id=org.id, phone="5531900000002", name="Bia", opt_in=True, profile_data={})
-    jair = Contact(organization_id=org.id, phone="5524998365809", name="Jair Filho", opt_in=True, profile_data={})
+    jair = Contact(organization_id=org.id, phone="5531900000010", name="Davi Souza", opt_in=True, profile_data={})
     caio = Contact(organization_id=org.id, phone="5531900000004", name="Caio", opt_in=True, profile_data={})
     session.add_all([ana, bia, jair, caio])
     await session.flush()
@@ -152,16 +152,16 @@ async def test_dashboard_separa_nps_de_exit(client, org, session):
     assert e["answered"] == 1
     assert len(e["recent"]) == 1
     motivo = e["recent"][0]
-    assert motivo["contact_name"] == "Jair Filho"
+    assert motivo["contact_name"] == "Davi Souza"
     assert motivo["text"] == "Cancelei porque ficou caro"
     assert motivo["closed_at"] is not None
 
     # Recentes (lista geral) ganham survey_type/survey_name.
     assert len(data["recent"]) == 4
     by_contact = {r["contact_name"]: r for r in data["recent"]}
-    assert by_contact["Jair Filho"]["survey_type"] == "exit"
-    assert by_contact["Jair Filho"]["survey_name"] == "Exit Bizzu"
-    assert by_contact["Jair Filho"]["score"] is None
+    assert by_contact["Davi Souza"]["survey_type"] == "exit"
+    assert by_contact["Davi Souza"]["survey_name"] == "Exit Bizzu"
+    assert by_contact["Davi Souza"]["score"] is None
     assert by_contact["Ana"]["survey_type"] == "nps"
     assert by_contact["Ana"]["survey_name"] == "NPS Bizzu"
     assert by_contact["Caio"]["status"] == STATUS_AWAITING_REASON
@@ -192,14 +192,14 @@ async def test_crud_survey_e_contato(client, org):
     assert r.status_code == 409
 
     # cria contato (normaliza máscara)
-    r = await client.post("/api/contacts", json={"phone": "+55 (24) 99836-5809", "name": "Jair"})
+    r = await client.post("/api/contacts", json={"phone": "+55 (31) 99000-0010", "name": "Davi"})
     assert r.status_code == 201, r.text
     contact = r.json()
-    assert contact["phone"] == "5524998365809"
+    assert contact["phone"] == "5531990000010"
     assert contact["opt_in"] is True
 
     # duplicado -> 409
-    r = await client.post("/api/contacts", json={"phone": "5524998365809"})
+    r = await client.post("/api/contacts", json={"phone": "5531990000010"})
     assert r.status_code == 409
 
     # listas

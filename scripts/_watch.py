@@ -21,7 +21,9 @@ from app.db import SessionLocal
 from app.models.core import Contact
 from app.models.survey import Message, SurveyResponse
 
-PHONE = sys.argv[1] if len(sys.argv) > 1 else "5524998365809"
+PHONE = sys.argv[1] if len(sys.argv) > 1 else os.getenv("PHONE", "")
+if not PHONE:
+    sys.exit("uso: python scripts/_watch.py <phone> [duracao_seg]  (ou defina PHONE no ambiente)")
 DUR = int(sys.argv[2]) if len(sys.argv) > 2 else 120
 
 

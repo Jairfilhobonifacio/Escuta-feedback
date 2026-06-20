@@ -19,7 +19,7 @@ from app.services.audio import transcribe_audio  # noqa: E402
 
 def test_extract_inbound_detecta_audio_ptt():
     payload = {"event": "message", "payload": {
-        "from": "5524998365809@c.us", "type": "ptt", "id": "AAA",
+        "from": "5531900000010@c.us", "type": "ptt", "id": "AAA",
         "media": {"url": "http://localhost:3000/api/files/x.ogg", "mimetype": "audio/ogg; codecs=opus"},
     }}
     out = _extract_inbound(payload)
