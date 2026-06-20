@@ -573,11 +573,18 @@ function EditItemModal({
   );
 }
 
+/** Cor da bolinha do status (vinda do /api/config) p/ tingir o select e o swatch.
+    Status sem `cor` (ou fora do vocabulário) cai no neutro de fallback. */
+function statusColor(key: string, statusOptions: ConfigItem[]): string {
+  return statusOptions.find((s) => s.key === key)?.cor || STATUS_DOT_FALLBACK;
+}
+
 // ===== Modal de REGISTRAR feedback do cliente (FeedbackItem manual) ==========
 // O cliente é FIXO (a própria ficha): não pedimos cliente. Cobre tipo + sentimento
 // + texto + data + status inicial + "já abordei". Cria via POST /api/feedbacks com
-// o contato fixo; se o operador escolher um status inicial != 'novo' (o default do
-// backend, que não aceita action_status na criação), aplicamos via PATCH logo após.
+// o contato fixo. O backend cria o item já em 'a_abordar' (default do modelo) e NÃO
+// aceita action_status no POST; se o operador escolher OUTRO status inicial, aplicamos
+// via PATCH logo após (best-effort).
 
 function RegistrarFeedbackModal({
   contactId,
@@ -600,8 +607,11 @@ function RegistrarFeedbackModal({
   const [text, setText] = useState("");
   // datetime-local começa em "agora" (fuso local); o operador pode recuar a data.
   const [quando, setQuando] = useState(() => toLocalInputValue(new Date()));
-  // Status inicial: "" = deixa o default do backend ('novo'); senão, PATCH pós-criação.
-  const [status, setStatus] = useState("");
+  // Status inicial: começa em 'a_abordar' (= o que o backend cria por default). Se o
+  // operador trocar, aplicamos via PATCH após o POST (ver `save`).
+  const [status, setStatus] = useState<string>(
+    () => statusOptions[0]?.key ?? "a_abordar",
+  );
   const [abordado, setAbordado] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -625,7 +635,7 @@ function RegistrarFeedbackModal({
     };
     try {
       const created = await feedbacksApi.create(body);
-      // O POST não aceita action_status (nasce 'novo'); se o operador pediu outro
+      // O POST não aceita action_status (nasce 'a_abordar'); se o operador pediu outro
       // status inicial, aplicamos num PATCH imediato — best-effort, não desfaz o
       // feedback já criado se falhar.
       if (status && status !== created.action_status) {
@@ -692,17 +702,31 @@ function RegistrarFeedbackModal({
               />
             </div>
             <div className="field">
-              <label htmlFor={`${titleId}-status`}>Status inicial (opcional)</label>
-              <select
-                id={`${titleId}-status`}
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-              >
-                <option value="">— padrão (Novo) —</option>
-                {statusOptions.map((s) => (
-                  <option key={s.key} value={s.key}>{s.label}</option>
-                ))}
-              </select>
+              <label htmlFor={`${titleId}-status`}>Status inicial</label>
+              <div className="inline-flex items-center gap-2">
+                {/* Swatch tingido pela COR do status escolhido (do /api/config) —
+                    deixa a etapa "saltar aos olhos" já na criação. */}
+                <span
+                  aria-hidden
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    flexShrink: 0,
+                    background: statusColor(status, statusOptions),
+                  }}
+                />
+                <select
+                  id={`${titleId}-status`}
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                  style={{ flex: 1 }}
+                >
+                  {withCurrentStatus(statusOptions, status).map((s) => (
+                    <option key={s.key} value={s.key}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 
@@ -1522,7 +1546,7 @@ export default function Contact360Page() {
                 </span>
                 {id && (
                   <Button type="button" onClick={() => setAddingEvent(true)}>
-                    <Plus size={15} strokeWidth={2.4} aria-hidden /> Adicionar evento
+                    <Plus size={15} strokeWidth={2.4} aria-hidden /> Registrar feedback
                   </Button>
                 )}
               </div>
@@ -1538,7 +1562,7 @@ export default function Contact360Page() {
                 {id && (
                   <div className="empty-cta">
                     <Button type="button" size="sm" onClick={() => setAddingEvent(true)}>
-                      <Plus size={14} strokeWidth={2.2} aria-hidden /> Adicionar evento
+                      <Plus size={14} strokeWidth={2.2} aria-hidden /> Registrar feedback
                     </Button>
                   </div>
                 )}

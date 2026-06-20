@@ -74,7 +74,11 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
       if (!HOP_BY_HOP.has(key.toLowerCase())) outHeaders.set(key, value);
     });
 
-    const buf = await res.arrayBuffer();
+    // Status "sem corpo" (204/205/304) NÃO podem carregar body — nem um
+    // ArrayBuffer vazio (o construtor de Response lança e cairíamos no catch,
+    // virando um 502 falso embora o DELETE/PATCH no backend tenha funcionado).
+    const noBody = res.status === 204 || res.status === 205 || res.status === 304;
+    const buf = noBody ? null : await res.arrayBuffer();
     return new Response(buf, {
       status: res.status,
       statusText: res.statusText,
