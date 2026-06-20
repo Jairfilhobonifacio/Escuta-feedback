@@ -27,3 +27,18 @@ Bizzu estão clonados em `../bizzu-repos/` **para leitura** (gerar patches, não
 `BIZZU_ESCUTA_MASTER.md` (mestre) · `CONTEXTO_BIZZU.md` (ecossistema) · `INTEGRACAO_BIZZU.md`
 (integração) · `analise-bizzu/*.md` (por repo) · `corpus_bizzu/*.md` (RAG) · `SESSAO_HANDOFF_*.md`
 (estado mais recente) · `PRD_FASE0.md` (gênese do tracer bullet).
+
+## 🔭 Backlog ativo + perguntas em aberto (2026-06-20)
+**Leia `docs/FEEDBACK_DONO_2026-06-20.md`** — backlog completo do feedback do dono (com as 4 imagens e
+minhas ideias por item). Estado: reforma "terminar e simplificar" feita (3 commits na `master`); base
+limpa (grupos + conversa-lixo removidos); stack no ar. **Repo ainda SEM remote** → subir para repositório
+novo (decidir host/nome; `gh` não está instalado nesta máquina).
+
+**Perguntas/decisões em aberto (o dono quer retomar por aqui):**
+1. **Por onde começar as melhorias?** Ordem sugerida: P0 bugs (selos bugado + ficha do contato quebrada)
+   → P1 design (Clientes WhatsApp/e-mail/abordados · Board "Trello de verdade" · Pesquisas redesign) →
+   P1 dados (timeline com assinatura + **status customizáveis**) → P2 (tipos/origem · "Temas"→"Mapeamento"
+   · apagar dados pela UI · monitoramento inteligente) → pesquisa de benchmark de CS.
+2. **Deploy:** subir API FastAPI no **Modal** + front no **Vercel**; o gargalo é o **WAHA** (stateful,
+   não serverless → precisa VPS/Docker host) + secrets + HOOK_URL público. Detalhe no FEEDBACK_DONO.
+3. **Repositório novo:** criar (privado, por conter dados de cliente) e dar `git push` dos 3 commits.
