@@ -297,6 +297,44 @@ function snippet(text: string | null, max = 160): string {
   return t.length > max ? `${t.slice(0, max).trimEnd()}…` : t;
 }
 
+/** Dedupe VISUAL por contato no board Follow-up: o quadro de selo lista 1 card por
+    FEEDBACK, então o mesmo cliente aparece N vezes na mesma coluna (ruído). Aqui
+    colapsamos para 1 card por `contato_id` — mantendo o PRIMEIRO da lista (que já
+    vem ordenada por relevância/recência do backend, "top N por urgência") — e
+    devolvemos `extraCount` (quantos feedbacks adicionais do mesmo contato existem
+    naquela coluna) para o selo "+N feedbacks".
+
+    SÓ agrupa quando `enabled` (board Follow-up). No board "Feedbacks" (action_status)
+    cada card é um feedback DE PROPÓSITO, então `enabled=false` devolve 1:1 sem mexer.
+    Cards SEM contato (`contato_id == null`) NÃO são agrupados entre si — cada um é um
+    contato desconhecido distinto, então segue como card individual (extraCount 0). */
+function dedupeFeedbackCards(
+  fbs: Feedback[],
+  enabled: boolean,
+): { fb: Feedback; extraCount: number }[] {
+  if (!enabled) return fbs.map((fb) => ({ fb, extraCount: 0 }));
+  const out: { fb: Feedback; extraCount: number }[] = [];
+  // contato_id -> índice em `out` do card representante (1º visto desse contato).
+  const repByContato = new Map<string, number>();
+  for (const fb of fbs) {
+    const cid = fb.contato_id;
+    if (cid == null) {
+      // Sem contato: nunca agrupa — cada feedback vira seu próprio card.
+      out.push({ fb, extraCount: 0 });
+      continue;
+    }
+    const repIdx = repByContato.get(cid);
+    if (repIdx === undefined) {
+      repByContato.set(cid, out.length);
+      out.push({ fb, extraCount: 0 });
+    } else {
+      // Já há um card desse contato: só incrementa o contador do representante.
+      out[repIdx].extraCount += 1;
+    }
+  }
+  return out;
+}
+
 // ===== conexões do card (Fase A: chips) + ações (Fase B: menu) ===============
 
 /** Rótulo curto de status de tarefa pro chip de conexão. */
@@ -718,6 +756,7 @@ function BoardCard({
   onChanged,
   colunaPlanejado = false,
   compact = false,
+  extraCount = 0,
 }: {
   fb: Feedback;
   dragging: boolean;
@@ -732,6 +771,10 @@ function BoardCard({
       texto + 1 chip (o tipo). Sem barra de urgência, sem a pilha de chips de conexão
       e sem o menu de ações. Tira o ruído da visão padrão. */
   compact?: boolean;
+  /** Board Follow-up: nº de feedbacks ADICIONAIS do mesmo contato agrupados neste
+      card (dedupe visual por contato_id). 0 = contato com 1 só feedback. Mostra um
+      selo discreto "+N feedbacks" para não perder a informação de volume. */
+  extraCount?: number;
 }) {
   // Nudge da esteira do roadmap: feedback PLANEJADO ainda sem melhoria vinculada.
   const destacarVincular = !compact && colunaPlanejado && fb.improvement_id == null;
@@ -746,7 +789,17 @@ function BoardCard({
       ) : (
         <p className="board-card-text board-card-text-1 empty-text">sem texto {"—"} só a nota</p>
       )}
-      <div className="board-card-meta">{typeBadge(fb.type)}</div>
+      <div className="board-card-meta">
+        {typeBadge(fb.type)}
+        {extraCount > 0 && (
+          <span
+            className="chip"
+            title={`Este contato tem mais ${extraCount} feedback${extraCount === 1 ? "" : "s"} nesta coluna`}
+          >
+            +{extraCount} feedback{extraCount === 1 ? "" : "s"}
+          </span>
+        )}
+      </div>
     </>
   ) : (
     <>
@@ -2173,8 +2226,8 @@ export default function BoardPage() {
                     />
                   ))
                 ) : (
-                  (col.items as Feedback[])
-                    .filter((fb) => {
+                  dedupeFeedbackCards(
+                    (col.items as Feedback[]).filter((fb) => {
                       // Busca client-side só no board Follow-up (barra recolhida).
                       if (!isFollowup || !busca.trim()) return true;
                       const q = busca.trim().toLowerCase();
@@ -2182,24 +2235,26 @@ export default function BoardPage() {
                         (fb.contato_nome || "").toLowerCase().includes(q) ||
                         (fb.text || "").toLowerCase().includes(q)
                       );
-                    })
-                    .map((fb) => (
-                      <BoardCard
-                        key={fb.id}
-                        fb={fb}
-                        dragging={draggingId === fb.id}
-                        onDragStart={(f) => setDraggingId(f.id)}
-                        onDragEnd={() => {
-                          setDraggingId(null);
-                          setOverColumn(null);
-                        }}
-                        onChanged={() => {
-                          if (selected) void loadItems(selected.id);
-                        }}
-                        colunaPlanejado={colunaPlanejado}
-                        compact={isFollowup}
-                      />
-                    ))
+                    }),
+                    isFollowup,
+                  ).map(({ fb, extraCount }) => (
+                    <BoardCard
+                      key={fb.id}
+                      fb={fb}
+                      dragging={draggingId === fb.id}
+                      onDragStart={(f) => setDraggingId(f.id)}
+                      onDragEnd={() => {
+                        setDraggingId(null);
+                        setOverColumn(null);
+                      }}
+                      onChanged={() => {
+                        if (selected) void loadItems(selected.id);
+                      }}
+                      colunaPlanejado={colunaPlanejado}
+                      compact={isFollowup}
+                      extraCount={extraCount}
+                    />
+                  ))
                 )}
 
                 {col.count === 0 && !loading && (

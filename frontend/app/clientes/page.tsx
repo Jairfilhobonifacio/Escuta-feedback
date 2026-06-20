@@ -851,8 +851,12 @@ export default function ClientesPage() {
       )}
 
       <Reveal delay={0.1} className="card">
-        <div className="table-wrap">
-          <table>
+        {/* overflow-x explícito + min-width na tabela: em telas ~1440px as colunas
+            eram espremidas (table width:100%) e a última (selos / "+ mais colunas")
+            cortava na borda direita. Com um min-width que cresce com o nº de colunas,
+            as células mantêm o respiro e o wrap rola horizontalmente sem cortar. */}
+        <div className="table-wrap" style={{ overflowX: "auto" }}>
+          <table style={{ minWidth: detalhes ? 1180 : 860 }}>
             <thead>
               <tr>
                 <th>Cliente</th>
@@ -869,7 +873,7 @@ export default function ClientesPage() {
                     <th>Feedbacks</th>
                   </>
                 )}
-                <th>
+                <th style={{ minWidth: 168, whiteSpace: "nowrap" }}>
                   <button
                     type="button"
                     onClick={() => setDetalhes((v) => !v)}
