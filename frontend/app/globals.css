@@ -2640,3 +2640,149 @@ tbody tr:hover td { color: var(--text); }
 /* o ProfileCard já trazia 18px próprios; uniformiza com o ritmo do tema */
 .c360-body > .c360-profile { margin-bottom: var(--rhythm); }
 
+/* ============================================================================
+   REDESIGN do inbox de Feedbacks (2026-06-20) — card LIMPO e escaneável.
+
+   Princípios (espelham a Monitorar): "bato o olho e entendo". O TEXTO do
+   feedback é o herói; o cabeçalho traz só quem + sentimento (cor) + nota + data;
+   a metainformação (telefone/tipo/origem/churn/temas/selos) vira uma faixa
+   discreta; as ações reduzem a STATUS + WhatsApp visíveis, com o resto num
+   menu "⋯". Abas com count 0 ficam apagadas.
+
+   Tudo ADITIVO: só refinamos via seletores próprios/compostos no fim do arquivo,
+   sem remover nada acima. Reusa tokens (cores/raio/sombra/espaçamento). ======== */
+
+/* --- lista: largura confortável + mais respiro entre cards ------------------ */
+.fb-feed { max-width: 820px; }
+.feed.fb-feed { gap: var(--s-4); }
+.load-more { max-width: 820px; }
+
+/* --- card: mais padding interno, respiro vertical --------------------------- */
+.card.fb-card { padding: var(--pad-card-y) var(--pad-card-x); }
+
+/* --- cabeçalho enxuto: alinhado, sem o amontoado de badges ------------------ */
+.fb-card .fb-top { gap: 10px; margin-bottom: 0; }
+
+/* ponto de sentimento — o realce de cor nº 1 do card */
+.fb-sent-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  flex-shrink: 0; display: inline-block;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 0%, transparent);
+}
+
+/* nome um pouco maior/mais firme — é a âncora de identidade do card */
+.fb-card .fb-who { font-size: 15px; }
+
+/* score-pill compacta no cabeçalho (variante menor da pílula existente) */
+.score-pill.sm {
+  width: 26px; height: 22px; border-radius: 7px;
+  font-size: 12px;
+}
+
+/* chip pequeno e discreto no cabeçalho/meta (urgente, churn) */
+.fb-chip-sm {
+  font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+  text-transform: lowercase; letter-spacing: 0.2px;
+}
+
+/* o TEXTO vira herói: maior, com respiro generoso acima e abaixo */
+.fb-card .fb-text {
+  font-size: 16px; line-height: 1.62;
+  margin: 13px 0 12px;
+  color: var(--text); text-wrap: pretty;
+}
+.fb-card .fb-text.empty-text { font-size: 14px; }
+
+/* --- faixa de metainformação: secundária, silenciosa ------------------------ */
+.fb-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  font-size: 12px; color: var(--text-faint);
+}
+.fb-meta .fb-phone { font-size: 12px; color: var(--text-faint); }
+.fb-meta-src { color: var(--text-faint); }
+.fb-meta-sep { color: var(--text-ghost); }
+/* temas e selos herdam o tom discreto da faixa; sem margem extra aqui */
+.fb-meta .theme-chips { margin-top: 0; gap: 6px; }
+.fb-meta .fb-selos { margin-top: 0; }
+
+/* --- rodapé de ação: só STATUS + WhatsApp + "⋯" ----------------------------- */
+.fb-card .fb-actions {
+  gap: 10px; margin-top: 14px; padding-top: 14px;
+}
+/* o seletor de status ganha um respiro maior (é a ação primária de triagem) */
+.fb-status-select { min-width: 168px; font-weight: 600; }
+
+/* nota da ação: 2ª linha discreta, largura cheia, sem brigar com o rodapé */
+.fb-card > .fb-note-input {
+  display: block; width: 100%; margin-top: 10px;
+  background: transparent; border-color: var(--charcoal);
+  color: var(--text-dim); font-size: 12.5px; min-height: 32px;
+}
+.fb-card > .fb-note-input:hover { border-color: var(--charcoal-2); }
+.fb-card > .fb-note-input:focus {
+  background: var(--ink); border-color: var(--indigo);
+  box-shadow: var(--ring-indigo); color: var(--text);
+}
+
+/* --- menu "⋯" (kebab) das ações secundárias --------------------------------- */
+.fb-kebab { position: relative; display: inline-flex; }
+.fb-kebab-btn {
+  display: inline-grid; place-items: center;
+  width: 34px; height: 34px; border-radius: var(--radius-xs);
+  background: transparent; color: var(--text-faint);
+  border: 1px solid transparent; cursor: pointer;
+  transition-property: background-color, border-color, color;
+  transition-duration: 150ms; transition-timing-function: var(--ease);
+}
+.fb-kebab-btn:hover { background: var(--ink-700); border-color: var(--charcoal-2); color: var(--text); }
+.fb-kebab-btn:focus-visible { outline: none; box-shadow: var(--ring-indigo); }
+.fb-kebab-pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
+  min-width: 200px; padding: 6px;
+  background: var(--ink-800);
+  border: 1px solid var(--charcoal-2); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+  display: flex; flex-direction: column; gap: 2px;
+  animation: panel-in 140ms var(--ease);
+}
+@media (prefers-reduced-motion: reduce) { .fb-kebab-pop { animation: none; } }
+.fb-kebab-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  padding: 9px 10px; min-height: 38px;
+  background: transparent; border: none; border-radius: var(--radius-xs);
+  font-family: inherit; font-size: 13.5px; font-weight: 500; color: var(--text);
+  cursor: pointer;
+  transition: background-color 120ms var(--ease);
+}
+.fb-kebab-item:hover { background: var(--ink-700); }
+.fb-kebab-item:focus-visible { outline: none; background: var(--ink-700); box-shadow: var(--ring-indigo); }
+.fb-kebab-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.fb-kebab-ico {
+  display: inline-grid; place-items: center;
+  width: 18px; height: 18px; flex-shrink: 0; color: var(--text-faint);
+}
+.fb-kebab-item:hover .fb-kebab-ico { color: var(--text-dim); }
+/* item "abordado" já ativo: marca indigo */
+.fb-kebab-item.active { color: var(--indigo-light); }
+.fb-kebab-item.active .fb-kebab-ico { color: var(--indigo); }
+/* item destrutivo (excluir): vermelho no hover */
+.fb-kebab-item.danger { color: var(--detractor); }
+.fb-kebab-item.danger .fb-kebab-ico { color: var(--detractor); }
+.fb-kebab-item.danger:hover { background: var(--detractor-soft); }
+
+/* --- abas de status: ativa destacada, abas com count 0 apagadas ------------- */
+.status-tab.is-empty { opacity: 0.5; }
+.status-tab.is-empty:hover { opacity: 1; }
+.status-tab.is-empty .tab-count { opacity: 0.8; }
+/* a ativa ganha um anel sutil de marca para "saltar" entre as demais */
+.status-tab.active { box-shadow: var(--btn-indigo-shadow); }
+
+/* --- responsivo: empilha o rodapé e larga o select no estreito -------------- */
+@media (max-width: 600px) {
+  .fb-card .fb-actions { align-items: stretch; }
+  .fb-status-select { flex: 1 1 auto; min-width: 0; }
+  .fb-card-tools { margin-left: 0; width: 100%; justify-content: space-between; }
+  .fb-kebab-pop { right: auto; left: 0; }
+}
+

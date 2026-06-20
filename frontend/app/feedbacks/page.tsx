@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
-import { ListChecks } from "lucide-react";
+import { ListChecks, MoreHorizontal, Pencil, Trash2, Check } from "lucide-react";
 import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -137,10 +137,10 @@ const SOURCE_OPTIONS: { value: string; label: string }[] = [
   { value: "bizzu_support", label: "Suporte" },
 ];
 
-const SENT_META: Record<string, { cls: string; label: string }> = {
-  positivo: { cls: "s-pos", label: "positivo" },
-  neutro: { cls: "s-neu", label: "neutro" },
-  negativo: { cls: "s-neg", label: "negativo" },
+const SENT_META: Record<string, { cls: string; label: string; color: string }> = {
+  positivo: { cls: "s-pos", label: "positivo", color: "var(--promoter)" },
+  neutro: { cls: "s-neu", label: "neutro", color: "var(--passive)" },
+  negativo: { cls: "s-neg", label: "negativo", color: "var(--detractor)" },
 };
 
 function typeBadge(type: string, typeLabels?: Record<string, string>) {
@@ -154,6 +154,21 @@ function sentimentBadge(s: string | null) {
   const m = SENT_META[s];
   if (!m) return null;
   return <span className={`badge sent ${m.cls}`}>{m.label}</span>;
+}
+
+/** Ponto de sentimento (cor) que abre o cabeçalho do card — o realce visual nº 1
+   "de relance". Sem sentimento ainda, fica um ponto neutro discreto. */
+function SentimentDot({ s }: { s: string | null }) {
+  const color = (s && SENT_META[s]?.color) || "var(--charcoal-2)";
+  const label = (s && SENT_META[s]?.label) || "sem sentimento";
+  return (
+    <span
+      className="fb-sent-dot"
+      style={{ background: color }}
+      title={`Sentimento: ${label}`}
+      aria-label={`Sentimento: ${label}`}
+    />
+  );
 }
 
 /** Cor default da pílula de status quando o config não traz `cor` (ou status legado). */
@@ -788,6 +803,79 @@ function SeloControl({
   );
 }
 
+// ===== Menu "⋯" do card (ações secundárias agrupadas) =======================
+
+interface KebabItem {
+  key: string;
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  /** Marca visual de estado ligado (ex.: "abordado" já ativo). */
+  active?: boolean;
+}
+
+/** Menu discreto que recolhe as ações secundárias (tarefa, abordado, editar,
+   excluir) atrás de um único botão "⋯" — tira 4 botões empilhados do card.
+   Fecha no clique fora e no Esc; foco volta ao gatilho. */
+function KebabMenu({ items, label }: { items: KebabItem[]; label: string }) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="fb-kebab" ref={boxRef}>
+      <button
+        type="button"
+        className="fb-kebab-btn"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={label}
+        title={label}
+      >
+        <MoreHorizontal size={18} aria-hidden />
+      </button>
+      {open && (
+        <div className="fb-kebab-pop" role="menu">
+          {items.map((it) => (
+            <button
+              key={it.key}
+              type="button"
+              role="menuitem"
+              className={`fb-kebab-item${it.danger ? " danger" : ""}${it.active ? " active" : ""}`}
+              onClick={() => {
+                it.onClick();
+                setOpen(false);
+              }}
+              disabled={it.disabled}
+            >
+              <span className="fb-kebab-ico" aria-hidden>{it.icon}</span>
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== Card de um feedback ==================================================
 
 function FeedbackCard({
@@ -913,13 +1001,48 @@ function FeedbackCard({
     patch({ action_note: trimmed });
   }
 
+  const isChurn = fb.type === "churn" || fb.type === "exit";
+
+  // Ações secundárias recolhidas no menu "⋯": tirar tarefa, alternar abordado,
+  // editar e excluir — saem da frente para o card respirar.
+  const kebabItems: KebabItem[] = [
+    {
+      key: "tarefa",
+      label: tarefaSaving ? "Criando tarefa…" : "Criar tarefa",
+      icon: <ListChecks size={15} aria-hidden />,
+      onClick: criarTarefa,
+      disabled: tarefaSaving || !fb.contato_id,
+    },
+    {
+      key: "abordado",
+      label: fb.abordado ? "Desmarcar abordado" : "Marcar como abordado",
+      icon: <Check size={15} aria-hidden />,
+      onClick: toggleAbordado,
+      disabled: abordadoSaving,
+      active: fb.abordado,
+    },
+    {
+      key: "editar",
+      label: "Editar feedback",
+      icon: <Pencil size={15} aria-hidden />,
+      onClick: () => onEdit(fb),
+    },
+    {
+      key: "excluir",
+      label: "Excluir feedback",
+      icon: <Trash2 size={15} aria-hidden />,
+      onClick: () => onDelete(fb),
+      danger: true,
+    },
+  ];
+
   return (
     <div className={`card fb-card ${fb.abordado ? "is-abordado" : ""}`}>
+      {/* Cabeçalho enxuto: quem + sentimento (cor) + nota, com a data à direita.
+         O resto da metainformação desce para a faixa de chips, mais discreta. */}
       <div className="fb-top">
-        <Avatar name={fb.contato_nome} seed={fb.contato_id ?? fb.contato_whatsapp} size={30} />
-        {fb.urgencia >= 70 && (
-          <span className="badge detractor" title={`Urgência ${fb.urgencia}/100`}>🔥 urgente</span>
-        )}
+        <SentimentDot s={fb.sentiment} />
+        <Avatar name={fb.contato_nome} seed={fb.contato_id ?? fb.contato_whatsapp} size={28} />
         {fb.contato_id ? (
           <Link href={`/contatos/${fb.contato_id}`} className="fb-who">
             {fb.contato_nome || "sem nome"}
@@ -927,102 +1050,46 @@ function FeedbackCard({
         ) : (
           <span className="fb-who">{fb.contato_nome || "sem contato"}</span>
         )}
-        <span className="mono dim fb-phone" title="Telefone mascarado — abra a ficha do contato para o número completo">{maskPhone(fb.contato_whatsapp)}</span>
-        {typeBadge(fb.type, typeLabels)}
-        <span className="dim" style={{ fontSize: 12 }}>
-          via {SOURCE_LABEL[fb.source] ?? fb.source}
-        </span>
         {fb.score !== null && fb.score !== undefined && (
-          <span className={`score-pill ${fb.nps_bucket ?? bucketFor(fb.score)}`}>{fb.score}</span>
-        )}
-        {sentimentBadge(fb.sentiment)}
-        {statusBadge(fb.action_status, statusOptions)}
-        {fb.abordado && (
-          <span className="badge abordado" title={fb.abordado_em ? `Abordado em ${fmtDate(fb.abordado_em)}` : "Abordado"}>
-            ✅ abordado
+          <span className={`score-pill sm ${fb.nps_bucket ?? bucketFor(fb.score)}`} title={`Nota ${fb.score}`}>
+            {fb.score}
           </span>
+        )}
+        {fb.urgencia >= 70 && (
+          <span className="badge detractor fb-chip-sm" title={`Urgência ${fb.urgencia}/100`}>urgente</span>
         )}
         <span className="fb-when">{fmtDate(fb.occurred_em ?? fb.created_em)}</span>
       </div>
 
+      {/* O TEXTO é o herói: maior, com respiro. */}
       {fb.text ? (
         <div className="fb-text">“{feedbackText(fb.text)}”</div>
       ) : (
         <div className="fb-text empty-text">sem texto — só a nota</div>
       )}
-      {themeChips(fb.themes)}
 
-      <SeloControl fb={fb} onSelosChanged={(selos) => onSelosChanged(fb.id, selos)} />
+      {/* Faixa de metainformação discreta: telefone, tipo/origem, churn, temas,
+         selos. Tudo secundário — não compete com o texto. */}
+      <div className="fb-meta">
+        <span className="mono fb-phone" title="Telefone mascarado — abra a ficha do contato para o número completo">
+          {maskPhone(fb.contato_whatsapp)}
+        </span>
+        <span className="fb-meta-sep" aria-hidden>·</span>
+        <span className="fb-meta-src">{(typeLabels[fb.type] ?? TYPE_LABEL[fb.type] ?? fb.type)} · via {SOURCE_LABEL[fb.source] ?? fb.source}</span>
+        {isChurn && <span className="badge detractor fb-chip-sm">Churn</span>}
+        {themeChips(fb.themes)}
+        <SeloControl fb={fb} onSelosChanged={(selos) => onSelosChanged(fb.id, selos)} />
+      </div>
 
+      {/* Rodapé de ação enxuto: STATUS (colorido) + WhatsApp (ação primária) +
+         menu "⋯" com o resto. A nota fica numa 2ª linha sutil. */}
       <div className="fb-actions">
         <span className="act-label">Status</span>
-        <select value={fb.action_status} onChange={onStatusChange} disabled={saving}>
+        <select className="fb-status-select" value={fb.action_status} onChange={onStatusChange} disabled={saving}>
           {withCurrent(statusOptions, fb.action_status).map((s) => (
             <option key={s.key} value={s.key}>{s.label}</option>
           ))}
         </select>
-        <input
-          className="fb-note-input"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          onBlur={commitNote}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-          }}
-          placeholder="Nota da ação (opcional)…"
-          disabled={saving}
-          aria-label="Nota da ação"
-        />
-
-        <div className="fb-card-tools">
-          <button
-            type="button"
-            className="btn-wa-sm"
-            onClick={() => onAbordar(fb)}
-            disabled={!fb.contato_whatsapp}
-            title="Abordar no WhatsApp"
-          >
-            {waIcon} WhatsApp
-          </button>
-          <button
-            type="button"
-            className="toggle-abordado"
-            onClick={criarTarefa}
-            disabled={tarefaSaving || !fb.contato_id}
-            title={fb.contato_id ? "Criar tarefa a partir deste feedback" : "Sem contato vinculado"}
-          >
-            <ListChecks size={14} aria-hidden style={{ verticalAlign: "-2px" }} />{" "}
-            {tarefaSaving ? "…" : "tarefa"}
-          </button>
-          <button
-            type="button"
-            className={`toggle-abordado ${fb.abordado ? "on" : ""}`}
-            onClick={toggleAbordado}
-            disabled={abordadoSaving}
-            aria-pressed={fb.abordado}
-            title={fb.abordado ? "Marcar como não abordado" : "Marcar como abordado"}
-          >
-            {abordadoSaving ? "…" : fb.abordado ? "✅ Abordado" : "Marcar abordado"}
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() => onEdit(fb)}
-            title="Editar feedback"
-            aria-label="Editar feedback"
-          >
-            ✏️
-          </button>
-          <button
-            type="button"
-            className="icon-btn danger"
-            onClick={() => onDelete(fb)}
-            title="Excluir feedback"
-            aria-label="Excluir feedback"
-          >
-            🗑️
-          </button>
-        </div>
 
         {saving && <span className="dim" style={{ fontSize: 12 }}>salvando…</span>}
         {justSaved && !saving && <span className="act-saved">✓ salvo</span>}
@@ -1034,7 +1101,34 @@ function FeedbackCard({
             <span className="badge detractor" title={tarefaFlash.msg}>{tarefaFlash.msg}</span>
           )
         )}
+
+        <div className="fb-card-tools">
+          <button
+            type="button"
+            className="btn-wa-sm"
+            onClick={() => onAbordar(fb)}
+            disabled={!fb.contato_whatsapp}
+            title="Abordar no WhatsApp"
+          >
+            {waIcon} WhatsApp
+          </button>
+          <KebabMenu items={kebabItems} label="Mais ações" />
+        </div>
       </div>
+
+      {/* Nota da ação — discreta, na própria linha; só ganha foco se a pessoa quiser. */}
+      <input
+        className="fb-note-input"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        onBlur={commitNote}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        placeholder="Nota da ação (opcional)…"
+        disabled={saving}
+        aria-label="Nota da ação"
+      />
     </div>
   );
 }
@@ -1047,15 +1141,16 @@ function FeedbackCardSkeleton() {
   return (
     <div className="card fb-card" aria-busy="true">
       <div className="fb-top" style={{ alignItems: "center" }}>
-        <div className="sk-circle" style={{ ["--sk-size" as string]: "30px" } as React.CSSProperties} />
-        <div className="sk-line w-30" style={{ margin: 0 }} />
-        <div className="sk-line w-30" style={{ margin: 0, maxWidth: 90 }} />
+        <div className="sk-circle" style={{ ["--sk-size" as string]: "10px" } as React.CSSProperties} />
+        <div className="sk-circle" style={{ ["--sk-size" as string]: "28px" } as React.CSSProperties} />
+        <div className="sk-line w-30" style={{ margin: 0, maxWidth: 150 }} />
+        <div className="sk-line w-30" style={{ margin: 0, maxWidth: 70, marginLeft: "auto" }} />
       </div>
-      <div className="sk-line w-90" style={{ marginTop: 14 }} />
-      <div className="sk-line w-60" />
-      <div className="fb-actions" style={{ marginTop: 14 }}>
-        <div className="sk-line w-30" style={{ margin: 0, maxWidth: 120 }} />
-        <div className="sk-line w-40" style={{ margin: 0 }} />
+      <div className="sk-line sk-lg w-90" style={{ marginTop: 16 }} />
+      <div className="sk-line sk-lg w-60" />
+      <div className="fb-actions" style={{ marginTop: 16, borderTop: "none", paddingTop: 0 }}>
+        <div className="sk-line" style={{ margin: 0, width: 150, height: 34 }} />
+        <div className="sk-line" style={{ margin: 0, width: 110, height: 34, marginLeft: "auto" }} />
       </div>
     </div>
   );
@@ -1517,7 +1612,8 @@ export default function FeedbacksPage() {
         </div>
       </div>
 
-      {/* Abas por status, com contagens de counts_by_status */}
+      {/* Abas por status, com contagens de counts_by_status. As abas com count 0
+         ficam apagadas (não competem); a ativa é bem destacada. Todas clicáveis. */}
       <div className="status-tabs">
         <button
           className={`status-tab ${status === "" ? "active" : ""}`}
@@ -1525,18 +1621,20 @@ export default function FeedbacksPage() {
         >
           Todos
         </button>
-        {statusOptions.map((s) => (
-          <button
-            key={s.key}
-            className={`status-tab ${status === s.key ? "active" : ""}`}
-            onClick={() => setStatus(s.key)}
-          >
-            {s.label}
-            <span className="tab-count">
-              {(counts as unknown as Record<string, number>)[s.key] ?? 0}
-            </span>
-          </button>
-        ))}
+        {statusOptions.map((s) => {
+          const n = (counts as unknown as Record<string, number>)[s.key] ?? 0;
+          const isActive = status === s.key;
+          return (
+            <button
+              key={s.key}
+              className={`status-tab ${isActive ? "active" : ""} ${n === 0 && !isActive ? "is-empty" : ""}`}
+              onClick={() => setStatus(s.key)}
+            >
+              {s.label}
+              <span className="tab-count">{n}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Barra enxuta: só BUSCA + botão "Filtros" (os avançados ficam no painel).
@@ -1606,13 +1704,13 @@ export default function FeedbacksPage() {
       )}
 
       {!err && loading && visible.length === 0 ? (
-        <div className="feed" aria-busy="true">
+        <div className="feed fb-feed" aria-busy="true">
           {Array.from({ length: 4 }).map((_, i) => (
             <FeedbackCardSkeleton key={i} />
           ))}
         </div>
       ) : !err && visible.length === 0 ? (
-        <div className="card">
+        <div className="card fb-feed">
           <div className="empty">
             <div className="empty-illu">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1644,7 +1742,7 @@ export default function FeedbacksPage() {
           </div>
         </div>
       ) : (
-        <Stagger className="feed">
+        <Stagger className="feed fb-feed">
           {visible.map((fb) => (
             <StaggerItem key={fb.id}>
               <FeedbackCard
