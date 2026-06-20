@@ -590,7 +590,52 @@ async def contact_360(contact_id: str, session: AsyncSession = Depends(get_sessi
     # Fixo/grupo/inválido/placeholder/vazio contam como sem WhatsApp.
     sem_wa = sem_whatsapp(contact.phone)
 
+    # Health Score (mesmos sinais do /clientes) p/ derivar os selos vivos: NPS do
+    # snapshot, perfil, recência + sentimento acumulado dos FeedbackItems já carregados,
+    # estado da assinatura. Read-only — só alimenta os selos vivos da ficha.
+    from app.domain.cs.health import compute_health
+    from app.domain.selos_vivos import selos_vivos
+
+    now360 = datetime.now(timezone.utc)
+    pf360 = _partner_fields(contact, now360)
+    last_fb_at = max(
+        (f.occurred_at or f.created_at for f in fitems if (f.occurred_at or f.created_at) is not None),
+        default=None,
+    )
+    neg_count = sum(1 for f in fitems if f.sentiment == "negativo")
+    pos_count = sum(1 for f in fitems if f.sentiment == "positivo")
+    sub_state_360 = ((partner or {}).get("subscription") or {}).get("state") if isinstance(partner, dict) else None
+    health360 = compute_health(
+        nps_score=pf360["nps_score"],
+        perfil=pf360["perfil"],
+        last_feedback_at=last_fb_at,
+        neg_count=neg_count,
+        pos_count=pos_count,
+        subscription_state=sub_state_360,
+        now=now360,
+    )
+    selos_vivos_list = selos_vivos(
+        contact, partner if isinstance(partner, dict) else None, health360, now=now360
+    )
+
+    # Histórico de selos (manuais) — o catálogo/aplicação grava em profile_data["selos_log"]
+    # cada {"selo","acao","at","por","origem"}. Viram itens kind="selo" na timeline, junto
+    # dos demais eventos (ordenados por data desc). Inline p/ não criar ciclo com campanha.py.
+    raw_selos_log = (contact.profile_data or {}).get("selos_log")
+    selos_log = [e for e in raw_selos_log if isinstance(e, dict)] if isinstance(raw_selos_log, list) else []
+
     timeline: list[dict[str, Any]] = []
+    for ev in selos_log:
+        timeline.append(
+            {
+                "kind": "selo",
+                "selo": ev.get("selo"),
+                "acao": ev.get("acao"),
+                "at": ev.get("at"),
+                "por": ev.get("por"),
+                "origem": ev.get("origem"),
+            }
+        )
     for f in fitems:
         when = f.occurred_at or f.created_at
         timeline.append(
@@ -640,6 +685,9 @@ async def contact_360(contact_id: str, session: AsyncSession = Depends(get_sessi
             "opt_in": contact.opt_in,
             # Selos de campanha aplicados ao contato (chips editáveis na ficha 360).
             "selos": selos,
+            # Selos VIVOS: derivados do estado atual (NPS/health/assinatura), read-only.
+            # Lista de {nome,cor,motivo,icone}; [] quando nenhum se aplica.
+            "selos_vivos": selos_vivos_list,
             # Sem WhatsApp real? (validador: só celular BR válido é alcançável) — chip na ficha.
             "sem_whatsapp": sem_wa,
         },
@@ -1068,6 +1116,7 @@ async def list_clientes(
         _selos_do_contato,
     )
     from app.domain.cs.health import compute_health
+    from app.domain.selos_vivos import selos_vivos
 
     org = await _get_org(session)
 
@@ -1215,6 +1264,11 @@ async def list_clientes(
                 # Selos de campanha aplicados ao contato (camada win-back; persistidos
                 # em profile_data["selos"]). Lista de nomes, [] quando não há.
                 "selos": ((c.profile_data or {}).get("selos", []) or []),
+                # Selos VIVOS: derivados do estado atual (NPS/health/assinatura), nunca
+                # gravados. Lista de {nome,cor,motivo,icone}; [] quando nenhum se aplica.
+                "selos_vivos": selos_vivos(
+                    c, (c.profile_data or {}).get("partner"), health, now=now
+                ),
                 **pf,
                 "ultimo_feedback_em": last.isoformat() if last else None,
                 "ultimo_feedback_tipo": last_type.get(c.id),

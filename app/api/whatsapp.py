@@ -38,8 +38,7 @@ from app.api.campanha import (
     _get_contact,
     _selos_do_contato,
     _set_abordagens_do_contato,
-    _set_selos_do_contato,
-    _upsert_catalogo,
+    aplicar_selo,
 )
 from app.config import settings
 from app.db import get_session
@@ -256,11 +255,9 @@ async def whatsapp_send(
     }
     _set_abordagens_do_contato(contact, [*_abordagens_do_contato(contact), abordagem])
 
-    # Aplica o selo 'contatado' (idempotente) + garante no catálogo.
-    selos = _selos_do_contato(contact)
-    if SELO_CONTATADO not in selos:
-        _set_selos_do_contato(contact, [*selos, SELO_CONTATADO])
-        _upsert_catalogo(org, SELO_CONTATADO, None)
+    # Aplica o selo 'contatado' (idempotente) + garante no catálogo — camada com LOG,
+    # origem="whatsapp_enviado" (registra `por` quando informado no envio).
+    aplicar_selo(contact, SELO_CONTATADO, origem="whatsapp_enviado", por=abordagem.get("por"), org=org)
 
     # Grava a mensagem outbound no transcript.
     session.add(

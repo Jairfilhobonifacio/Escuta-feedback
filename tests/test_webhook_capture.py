@@ -8,8 +8,12 @@ NENHUM disparo real de WhatsApp: no ramo sem-pesquisa o handler não chama o WAH
 
 Cenários:
 (a) contato com selo 'contatado'  -> FeedbackItem source='whatsapp' type='churn' + selo 'respondeu'
-(b) contato fora da campanha       -> FeedbackItem type='outro', NÃO aplica 'respondeu'
+(b) contato fora da campanha       -> FeedbackItem type='outro'; inbound real ⇒ selo 'respondeu'
 (c) idempotência: reenviar o mesmo message_id NÃO duplica o feedback
+
+NOTA: desde a camada de selos com log, QUALQUER inbound genuíno de cliente aplica o selo
+'respondeu' (origem='inbound') no webhook — não só quem já tinha 'contatado'. Os casos
+(b)/(d) passaram a afirmar a presença de 'respondeu' (antes afirmavam a ausência).
 """
 from __future__ import annotations
 
@@ -141,11 +145,11 @@ async def test_captura_contato_contatado_cria_feedback_e_aplica_respondeu(client
     assert any(m.direction == "inbound" and m.body == "parei porque achei caro demais" for m in msgs)
 
 
-# --- (b) contato fora da campanha -> type 'outro', NÃO aplica 'respondeu' ------
+# --- (b) contato fora da campanha -> type 'outro', mas inbound real -> 'respondeu' --
 
 
 @pytest.mark.asyncio
-async def test_captura_contato_fora_campanha_type_outro_sem_respondeu(client, org, session):
+async def test_captura_contato_fora_campanha_type_outro_ganha_respondeu(client, org, session):
     phone = "5531999990002"
     contato = await _contact(session, org, phone, "Lead Qualquer")  # sem selos, sem partner
     await session.commit()
@@ -168,9 +172,12 @@ async def test_captura_contato_fora_campanha_type_outro_sem_respondeu(client, or
     assert it.external_id == "wa:wamid.BBB"
     assert it.contact_id == contato.id
 
-    # NÃO aplica 'respondeu' (contato não foi abordado na campanha).
+    # Inbound REAL de cliente -> selo 'respondeu' (o furo tapado: agora QUALQUER inbound
+    # genuíno marca 'respondeu', não só quem já tinha 'contatado') + log origem='inbound'.
     c = (await session.execute(select(Contact).where(Contact.id == contato.id))).scalar_one()
-    assert "respondeu" not in (c.profile_data.get("selos") or [])
+    assert "respondeu" in (c.profile_data.get("selos") or [])
+    log = c.profile_data.get("selos_log") or []
+    assert any(e["selo"] == "respondeu" and e["origem"] == "inbound" for e in log)
 
 
 # --- (c) idempotência: mesmo message_id NÃO duplica --------------------------
@@ -246,11 +253,11 @@ async def test_retry_mesmo_message_id_status_duplicate_sem_duplicar_transcript(c
     assert len(items) == 1
 
 
-# --- (d) churn por subscription.state (sem selo) -> type 'churn', sem 'respondeu' --
+# --- (d) churn por subscription.state (sem selo) -> type 'churn'; inbound -> 'respondeu' --
 
 
 @pytest.mark.asyncio
-async def test_captura_churn_por_subscription_state_sem_respondeu(client, org, session):
+async def test_captura_churn_por_subscription_state_ganha_respondeu(client, org, session):
     phone = "5531999990004"
     contato = await _contact(
         session, org, phone, "Cancelado",
@@ -272,6 +279,8 @@ async def test_captura_churn_por_subscription_state_sem_respondeu(client, org, s
     )
     assert it.type == "churn"  # churn pelo state, mesmo sem selo 'contatado'
 
-    # Não foi abordado (sem selo 'contatado') -> não ganha 'respondeu'.
+    # Inbound REAL -> ganha 'respondeu' com log origem='inbound' (independe de 'contatado').
     c = (await session.execute(select(Contact).where(Contact.id == contato.id))).scalar_one()
-    assert "respondeu" not in (c.profile_data.get("selos") or [])
+    assert "respondeu" in (c.profile_data.get("selos") or [])
+    log = c.profile_data.get("selos_log") or []
+    assert any(e["selo"] == "respondeu" and e["origem"] == "inbound" for e in log)

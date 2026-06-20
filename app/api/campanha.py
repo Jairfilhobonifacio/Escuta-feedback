@@ -90,6 +90,99 @@ def _set_selos_do_contato(contact: Contact, selos: list[str]) -> None:
     contact.profile_data = p
 
 
+# Origens válidas de um evento de selo (campo `origem` no log). Vocabulário fechado
+# por contrato (≠ ACTION_STATUSES, que é aberto) — quem grava no log DEVE usar uma
+# destas. Não há CHECK no banco; a constante é a fonte da verdade do contrato.
+SELO_ORIGENS = (
+    "manual",          # operador no painel (POST/DELETE /selos)
+    "whatsapp_enviado",  # envio 1:1 saiu (whatsapp.py)
+    "abordagem",       # registrar abordagem (add_outreach)
+    "form",            # import de formulário (forms_import)
+    "inbound",         # cliente respondeu no WhatsApp (webhook.py)
+    "regra",           # automação/playbook
+    "ia",              # decisão do agente/LLM
+)
+
+
+def _selos_log_do_contato(contact: Contact) -> list[dict[str, Any]]:
+    """Log de eventos de selo do contato (append-only), tolerante a None/sujeira."""
+    raw = (contact.profile_data or {}).get("selos_log")
+    if isinstance(raw, list):
+        return [e for e in raw if isinstance(e, dict)]
+    return []
+
+
+def _append_selo_log(
+    contact: Contact, *, selo: str, acao: str, origem: str, por: str | None
+) -> None:
+    """Faz append de UM evento no log `profile_data["selos_log"]`.
+
+    Formato EXATO do evento (contrato com central.py/admin.py/frontend):
+    `{"selo": str, "acao": "aplicado"|"removido", "at": <ISO8601 UTC>, "por": str|None,
+    "origem": str}`. Copia-edita-reatribui o profile_data inteiro p/ marcar o JSONB sujo.
+    """
+    evento = {
+        "selo": selo,
+        "acao": acao,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "por": por,
+        "origem": origem,
+    }
+    p = dict(contact.profile_data or {})
+    p["selos_log"] = [*_selos_log_do_contato(contact), evento]
+    contact.profile_data = p
+
+
+def aplicar_selo(
+    contact: Contact,
+    nome: str,
+    *,
+    origem: str,
+    por: str | None = None,
+    org: Organization | None = None,
+) -> bool:
+    """Aplica um selo a um contato, idempotente, registrando no log COM origem.
+
+    - Idempotente: se o selo JÁ estava aplicado, NÃO faz nada e NÃO registra evento
+      (não duplica no log). Retorna False nesse caso, True quando de fato aplicou.
+    - Quando `org` é passado, garante o selo no catálogo (`_upsert_catalogo`) — assim
+      o board e os stats concordam. Sem `org`, só mexe no contato (caller já cuidou
+      do catálogo, ou não há org à mão — ex.: inbound em sessão multi-tenant).
+    - Marca o JSONB sujo via copia-edita-reatribui (em `_set_selos_do_contato` e no
+      append do log). NÃO faz commit — o caller é dono da transação.
+    """
+    if org is not None:
+        _upsert_catalogo(org, nome, None)
+    selos = _selos_do_contato(contact)
+    if nome in selos:
+        return False  # já estava no estado-alvo: idempotente, sem evento no log.
+    _set_selos_do_contato(contact, [*selos, nome])
+    _append_selo_log(contact, selo=nome, acao="aplicado", origem=origem, por=por)
+    return True
+
+
+def remover_selo(
+    contact: Contact,
+    nome: str,
+    *,
+    origem: str,
+    por: str | None = None,
+) -> bool:
+    """Remove um selo de um contato, idempotente, registrando no log COM origem.
+
+    - Idempotente: se o selo NÃO estava aplicado, NÃO faz nada e NÃO registra evento.
+      Retorna False nesse caso, True quando de fato removeu.
+    - NÃO mexe no catálogo (remover de um contato ≠ tirar do catálogo da org).
+    - Marca o JSONB sujo via copia-edita-reatribui. NÃO faz commit.
+    """
+    selos = _selos_do_contato(contact)
+    if nome not in selos:
+        return False  # já estava no estado-alvo: idempotente, sem evento no log.
+    _set_selos_do_contato(contact, [s for s in selos if s != nome])
+    _append_selo_log(contact, selo=nome, acao="removido", origem=origem, por=por)
+    return True
+
+
 def _abordagens_do_contato(contact: Contact) -> list[dict[str, Any]]:
     """Histórico de abordagens do contato, tolerante a None/sujeira."""
     raw = (contact.profile_data or {}).get("abordagens")
@@ -223,13 +316,12 @@ async def apply_selo(
         raise HTTPException(status_code=422, detail="nome do selo não pode ser vazio")
     cor = (body.cor or "").strip() or None
 
-    # Garante o selo no catálogo (cria/atualiza cor).
+    # Garante o selo no catálogo (cria/atualiza cor) — `aplicar_selo` faz upsert sem
+    # cor, então fazemos o upsert COM a cor aqui (manual pode definir cor).
     _upsert_catalogo(org, nome, cor)
 
-    selos = _selos_do_contato(contact)
-    if nome not in selos:
-        selos = [*selos, nome]
-        _set_selos_do_contato(contact, selos)
+    # Camada com LOG: aplica + registra origem="manual" (idempotente).
+    aplicar_selo(contact, nome, origem="manual")
 
     await session.commit()
     return {"contato_id": str(contact.id), "selos": _selos_do_contato(contact)}
@@ -244,9 +336,9 @@ async def remove_selo(
     contact = await _get_contact(session, org, contact_id)
     alvo = (nome or "").strip()
 
-    selos = _selos_do_contato(contact)
-    if alvo in selos:
-        _set_selos_do_contato(contact, [s for s in selos if s != alvo])
+    # Camada com LOG: remove + registra origem="manual" (idempotente; só commita se
+    # de fato removeu, mantendo o comportamento anterior de não commitar à toa).
+    if remover_selo(contact, alvo, origem="manual"):
         await session.commit()
 
     return {"contato_id": str(contact.id), "selos": _selos_do_contato(contact)}
@@ -297,11 +389,9 @@ async def add_outreach(
 
     # Aplica o selo 'contatado' (idempotente) + garante no catálogo: assim o board de
     # clientes (coluna "Contatado") e os stats concordam — registrar uma abordagem já
-    # coloca o cliente na coluna, sem precisar marcar o selo à mão.
-    selos = _selos_do_contato(contact)
-    if SELO_CONTATADO not in selos:
-        _set_selos_do_contato(contact, [*selos, SELO_CONTATADO])
-        _upsert_catalogo(org, SELO_CONTATADO, None)
+    # coloca o cliente na coluna, sem precisar marcar o selo à mão. Camada com LOG,
+    # origem="abordagem" (registra `por` da abordagem quando informado).
+    aplicar_selo(contact, SELO_CONTATADO, origem="abordagem", por=abordagem.get("por"), org=org)
 
     # Marca abordado=True + abordado_em (se nulo) em TODOS os feedbacks do contato.
     feedbacks = (
@@ -681,11 +771,8 @@ async def forms_import(
             existing.text = text
             updated += 1
 
-        # Aplica o selo 'respondeu' (idempotente).
-        _upsert_catalogo(org, SELO_RESPONDEU, None)
-        selos = _selos_do_contato(contact)
-        if SELO_RESPONDEU not in selos:
-            _set_selos_do_contato(contact, [*selos, SELO_RESPONDEU])
+        # Aplica o selo 'respondeu' (idempotente) — camada com LOG, origem="form".
+        aplicar_selo(contact, SELO_RESPONDEU, origem="form", org=org)
 
     await session.commit()
     return {"created": created, "updated": updated, "skipped": skipped}

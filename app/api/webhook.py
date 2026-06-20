@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._security import require_waha_webhook_secret
+from app.api.campanha import SELO_RESPONDEU, aplicar_selo, remover_selo
 from app.config import settings
 from app.db import get_session
 from app.domain.contacts.whatsapp import classify_phone, phone_key, phone_variants
@@ -298,6 +299,43 @@ def _extract_inbound(payload: dict[str, Any]) -> dict[str, Any] | None:
     return out
 
 
+# Selo aplicado quando o cliente RESPONDE no WhatsApp e o que ele "perde" ao responder.
+# `nao_respondeu` é a contraparte negativa (selo de "ainda não respondeu" que o operador
+# pode aplicar) — ao chegar inbound real, removemos esse e aplicamos `respondeu`.
+_SELO_NAO_RESPONDEU = "nao_respondeu"
+
+
+def _selo_auto_inbound_ligado(org: Organization) -> bool:
+    """Flag por-org `settings["selo_auto_inbound"]` — DEFAULT LIGADO (True).
+
+    Segue o padrão multi-tenant do webhook (que já lê `org.settings["waha_session"]`):
+    a config de selo automático no inbound é por organização. Chave AUSENTE = ligado;
+    só `False` explícito desliga. Tolerante a None/sujeira no settings.
+    """
+    return (org.settings or {}).get("selo_auto_inbound", True) is not False
+
+
+def _aplicar_selos_inbound(contact: Contact, org: Organization) -> None:
+    """INBOUND real de cliente → aplica `respondeu` e remove `nao_respondeu`.
+
+    Idempotente (via camada `aplicar_selo`/`remover_selo`, que não duplica evento se o
+    selo já estava no estado-alvo) e registra ambos no log `profile_data["selos_log"]`
+    com origem="inbound". Gated por `_selo_auto_inbound_ligado`. Best-effort: NUNCA
+    levanta — o webhook do WAHA não pode cair por causa de um selo. NÃO faz commit (o
+    caller é dono da transação; o commit do fluxo persiste o profile_data marcado sujo).
+
+    Só é chamado para inbound 1:1 genuíno: grupo (@g.us), broadcast e self-test já
+    foram barrados em `_extract_inbound` antes do contato existir.
+    """
+    if not _selo_auto_inbound_ligado(org):
+        return
+    try:
+        aplicar_selo(contact, SELO_RESPONDEU, origem="inbound", org=org)
+        remover_selo(contact, _SELO_NAO_RESPONDEU, origem="inbound")
+    except Exception:  # noqa: BLE001 — selo é best-effort; não derruba o webhook.
+        logger.warning("WAHA webhook: falha ao aplicar selos de inbound", exc_info=True)
+
+
 # A captura na Mega Central da inbound SEM pesquisa pendente (antes inline aqui como
 # `_capturar_resposta_central` + `_contato_eh_churn`) mora agora em
 # app/domain/survey/message_handler.py (InboundMessageHandler) — funil próprio,
@@ -498,6 +536,15 @@ async def waha_webhook(
             )
             await session.commit()
             return {"status": "duplicate"}
+
+        # --- selo automático de RESPONDEU (o furo que faltava) --------------
+        # Chegou um turno inbound GENUÍNO de cliente (grupo/broadcast/self-test já
+        # barrados em _extract_inbound; retry/duplicata já curto-circuitou acima): o
+        # contato passou de "a contatar/contatado" para "respondeu". Aplica o selo
+        # `respondeu` e remove `nao_respondeu` (idempotente, com log origem="inbound"),
+        # gated por org.settings["selo_auto_inbound"] (default ON). Best-effort: roda
+        # ANTES dos branches de áudio-falho/hand-off/pesquisa para valer em TODOS eles.
+        _aplicar_selos_inbound(contact, org)
 
         # Áudio que não transcreveu: acolhe e encerra (não joga marcador no resolver).
         if audio_failed:

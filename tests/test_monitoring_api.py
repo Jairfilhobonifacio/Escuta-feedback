@@ -133,9 +133,10 @@ async def test_clientes_enriquece_e_agrega(client, org, session):
     assert len(data) == 2
 
     # Chaves exatas do contrato (inclui `selos` desde a camada de campanha win-back,
-    # e `tem_whatsapp`/`estado` desde a correção do universo de churn).
+    # `tem_whatsapp`/`estado` desde a correção do universo de churn, e `selos_vivos`
+    # — selos derivados do estado, read-only).
     assert set(data[0].keys()) == {
-        "id", "nome", "whatsapp", "opt_in", "tem_whatsapp", "estado", "selos",
+        "id", "nome", "whatsapp", "opt_in", "tem_whatsapp", "estado", "selos", "selos_vivos",
         "perfil", "plano", "plan_type", "nps_score", "dias_para_renovar",
         "ultimo_feedback_em", "ultimo_feedback_tipo", "total_feedbacks",
         "health", "health_band", "health_factors", "criado_em",
