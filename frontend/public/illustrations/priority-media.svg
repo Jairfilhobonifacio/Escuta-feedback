@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-label="Prioridade média">
+  <!-- ESCUTA · prioridade MÉDIA — 2/3 barras cheias, a 3ª esvaziada (contorno).
+       Cor: âmbar gold-soft #946105 no fill (AA), trilho vazio em #e4e5f0. -->
+  <rect x="3.5"  y="13" width="4.2" height="7.5"  rx="1.6" fill="#b3760a"/>
+  <rect x="9.9"  y="9"  width="4.2" height="11.5" rx="1.6" fill="#b3760a"/>
+  <rect x="16.3" y="4.5" width="4.2" height="16"   rx="1.6" fill="none" stroke="#d9c4a0" stroke-width="1.8"/>
+</svg>

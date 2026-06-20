@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="180" viewBox="0 0 240 180" role="img" aria-label="Nenhuma melhoria ainda">
+  <!-- ============================================================
+       ESCUTA · empty-state MELHORIAS — "Nenhuma melhoria ainda"
+       Conceito: um card de roadmap com a esteira ainda vazia + uma
+       bandeira de chegada (gold) — o convite a "fechar o loop".
+       Família: indigo (estrutura) · gold-fill (acento/chegada) · papel.
+       Luz: superior-esquerda. Traço fino (lucide ~2px).
+       ============================================================ -->
+  <defs>
+    <clipPath id="r-card"><rect x="44" y="34" width="120" height="112" rx="14"/></clipPath>
+  </defs>
+
+  <!-- cartela ambiente discreta -->
+  <rect x="20" y="22" width="200" height="136" rx="24" fill="#f0f0f9"/>
+  <rect x="20" y="22" width="200" height="136" rx="24" fill="none" stroke="#e4e5f0"/>
+
+  <!-- ===== card de roadmap (folha de melhorias, elevado) ===== -->
+  <rect x="44" y="34" width="120" height="112" rx="14" fill="#ffffff" stroke="#cfd0e0" stroke-width="2"/>
+  <g clip-path="url(#r-card)">
+    <rect x="44" y="34" width="120" height="5" fill="#ffffff"/>
+    <!-- fio de função no topo (assinatura: card de melhoria = acento indigo) -->
+    <rect x="44" y="34" width="120" height="4" fill="#6c5ce7" opacity="0.9"/>
+    <path d="M164 104 L164 146 L44 146 L44 134 C92 144 138 130 164 104 Z" fill="#1a1830" opacity="0.03"/>
+  </g>
+
+  <!-- título "fantasma" do card (linha forte) -->
+  <rect x="58" y="50" width="58" height="8" rx="4" fill="#d9d8ea"/>
+
+  <!-- 3 linhas de melhoria, ainda vazias: caixa de check + barra de texto -->
+  <g>
+    <!-- linha 1 -->
+    <rect x="58" y="72" width="16" height="16" rx="5" fill="#ffffff" stroke="#cfd0e0" stroke-width="2"/>
+    <rect x="82" y="76" width="64" height="7" rx="3.5" fill="#eceef6"/>
+    <!-- linha 2 -->
+    <rect x="58" y="96" width="16" height="16" rx="5" fill="#ffffff" stroke="#cfd0e0" stroke-width="2"/>
+    <rect x="82" y="100" width="50" height="7" rx="3.5" fill="#eceef6"/>
+    <!-- linha 3 -->
+    <rect x="58" y="120" width="16" height="16" rx="5" fill="#ffffff" stroke="#cfd0e0" stroke-width="2"/>
+    <rect x="82" y="124" width="58" height="7" rx="3.5" fill="#eceef6"/>
+  </g>
+
+  <!-- ===== bandeira de chegada (o "loop fechado" do roadmap) ===== -->
+  <!-- vive sobreposta à borda direita do card, ancorada por sua sombra -->
+  <g>
+    <!-- sombra projetada do mastro (luz sup-esq) -->
+    <ellipse cx="174" cy="138" rx="22" ry="5" fill="#1a1830" opacity="0.08"/>
+    <!-- mastro -->
+    <rect x="168" y="56" width="7" height="82" rx="3.5" fill="#5b4bcf"/>
+    <rect x="168" y="56" width="3" height="82" rx="1.5" fill="#7c6cf0"/>
+    <!-- topo arredondado do mastro -->
+    <circle cx="171.5" cy="57" r="4.5" fill="#5b4bcf"/>
+    <!-- base do mastro -->
+    <rect x="158" y="134" width="27" height="7" rx="3.5" fill="#5b4bcf"/>
+    <!-- flâmula gold (acento de valor/chegada), na altura do título do card,
+         com dobra (sombra própria) e realce de luz na borda superior -->
+    <path d="M175 64 L205 72 L197 80 L205 88 L175 88 Z" fill="#f5a623"/>
+    <path d="M175 76 L200 76 L197 80 L200 84 L175 84 Z" fill="#d98c0c" opacity="0.45"/>
+    <path d="M175 65 L202 72" fill="none" stroke="#ffd486" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- check verde-indigo "concluído" surgindo na 1ª linha (semente do progresso):
+       sutilíssimo, sugere que a primeira melhoria está a um clique. -->
+  <g opacity="0.9">
+    <rect x="58" y="72" width="16" height="16" rx="5" fill="#6c5ce7"/>
+    <path d="M61.5 80 L65 83.5 L70.5 76.5" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

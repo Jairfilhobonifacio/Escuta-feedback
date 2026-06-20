@@ -283,6 +283,26 @@ export interface FeedbackCluster {
   /** Melhoria ligada a esta dor (usado no Roadmap depois) ou null. */
   improvement_id: string | null;
   created_at: string | null;
+
+  // --- Índice de prioridade (volume × receita × gravidade) -------------------
+  // Campos ADITIVOS e OPCIONAIS (FRENTE F1, `app/domain/prioridade.py`). Quando
+  // ausentes (backend antigo ou cálculo ainda não disponível), a UI faz fallback
+  // gracioso para `pain_score`/volume — nenhum consumidor existente quebra.
+  /** nº de clientes distintos (COUNT(DISTINCT contact_id)) no cluster. */
+  distinct_customers?: number;
+  /** nº de clientes pagantes (partner.subscription) entre os distintos. */
+  paying_customers?: number;
+  /** Índice de prioridade final, 0–100. */
+  priority_index?: number;
+  /** Banda do índice — define o selo de prioridade. */
+  priority_band?: "alta" | "media" | "baixa";
+  /** Componentes normalizados (0–1) + pesos — explicam "por que essa prioridade". */
+  priority_breakdown?: {
+    volume_score: number;
+    revenue_score: number;
+    gravity_score: number;
+    weights: { volume: number; revenue: number; gravity: number };
+  };
 }
 
 /** Resposta de GET /api/feedbacks/clusters — descoberta de dores por significado. */
@@ -293,8 +313,9 @@ export interface ClustersResponse {
 }
 
 /** Ordenação de GET /api/feedbacks/clusters:
-    'dor' (pain_score desc) | 'volume' (item_count desc) | 'recente' (created desc). */
-export type ClustersSort = "dor" | "volume" | "recente";
+    'prioridade' (priority_index desc — novo default) | 'dor' (pain_score desc) |
+    'volume' (item_count desc) | 'recente' (created desc). */
+export type ClustersSort = "prioridade" | "dor" | "volume" | "recente";
 
 /** Filtros opcionais de GET /api/feedbacks/clusters.
     `days`: só clusters dos últimos N dias (null/0 = todos; default backend = 30). */

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-label="Prioridade alta">
+  <!-- ESCUTA · prioridade ALTA — barras de sinal cheias (3/3) + seta p/ cima.
+       Cor: detrator #cf4d4d (peso 600 já garante leitura). Traço/cantos lucide. -->
+  <rect x="3.5"  y="13" width="4.2" height="7.5"  rx="1.6" fill="#cf4d4d"/>
+  <rect x="9.9"  y="9"  width="4.2" height="11.5" rx="1.6" fill="#cf4d4d"/>
+  <rect x="16.3" y="4.5" width="4.2" height="16"   rx="1.6" fill="#cf4d4d"/>
+  <!-- acento de direção: micro-seta p/ cima sobre a barra mais alta (urgência) -->
+  <path d="M18.4 2.2 L21.2 5.4 L15.6 5.4 Z" fill="#cf4d4d"/>
+</svg>

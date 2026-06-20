@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Modal from "@/components/Modal";
-import { Reveal, Stagger, StaggerItem } from "@/components/Motion";
+import Avatar from "@/components/Avatar";
+import { Reveal } from "@/components/Motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -24,7 +25,20 @@ import {
 const EMOJI_PULL = "\u{1F3AF}"; // 🎯 — "puxar dor para o roadmap"
 const EMOJI_HEART = "\u{1F49C}"; // 💜 — loop fechado (flash de sucesso)
 
-// ===== vocabulário (estágios / esforço) =====================================
+/** Destinatário do "fechar o loop" + campos opcionais que o backend pode mandar
+ *  para o chip "pagante" (a tipagem canônica vive em lib/api.ts e é off-limits
+ *  aqui; estendemos INLINE e lemos defensivamente — sem o campo, sem o chip). */
+type LoopRecipient = NotifyRecipient & {
+  pagante?: boolean | null;
+  is_paying?: boolean | null;
+  plano?: string | null;
+};
+
+function isPaying(r: LoopRecipient): boolean {
+  return r.pagante === true || r.is_paying === true;
+}
+
+// ===== vocabulário (estágios / esforço / colunas do Kanban) =================
 
 /** Estágios na ordem do funil (ideia → entregue). Cada um com rótulo humano e a
     classe de badge que melhor representa o "calor" (neutro → promotor → gold). */
@@ -39,9 +53,20 @@ const STAGES: { key: ImprovementStatus; label: string; badge: string }[] = [
 const STAGE_LABEL: Record<string, string> = Object.fromEntries(
   STAGES.map((s) => [s.key, s.label]),
 );
-const STAGE_BADGE: Record<string, string> = Object.fromEntries(
-  STAGES.map((s) => [s.key, s.badge]),
-);
+
+/** As 3 colunas do Kanban "Você pediu, a gente fez". Cada coluna agrega um ou
+    mais estágios; "descartada" fica fora (não é fluxo de entrega). */
+const COLUMNS: {
+  key: "ideias" | "fazendo" | "entregue";
+  label: string;
+  /** Para onde o card vai ao cair nesta coluna (estágio canônico da coluna). */
+  drop: ImprovementStatus;
+  statuses: ImprovementStatus[];
+}[] = [
+  { key: "ideias", label: "Ideias", drop: "ideia", statuses: ["ideia", "planejada"] },
+  { key: "fazendo", label: "Fazendo", drop: "em_andamento", statuses: ["em_andamento"] },
+  { key: "entregue", label: "Entregue", drop: "entregue", statuses: ["entregue"] },
+];
 
 const EFFORTS: { key: ImprovementEffort; label: string }[] = [
   { key: "P", label: "P · pequeno" },
@@ -64,6 +89,22 @@ function fmtMaybeDate(iso: string | null | undefined): string | null {
   return Number.isNaN(d.getTime()) ? null : fmtDate.format(d);
 }
 
+/** Mascara o miolo do telefone p/ a lista do modal (cuidado com a pessoa):
+    mantém DDI/DDD e os 4 últimos dígitos, oculta o resto. "+5524998365809"
+    → "+55 24 9****-5809". Tolera formatos curtos/sem dígitos. */
+function maskPhone(raw: string | null | undefined): string {
+  const s = (raw || "").trim();
+  if (!s) return "sem telefone";
+  const digits = s.replace(/\D/g, "");
+  if (digits.length < 6) return s; // curto demais p/ mascarar com sentido
+  const last4 = digits.slice(-4);
+  const ddi = digits.length >= 12 ? digits.slice(0, 2) : "";
+  const ddd = digits.length >= 10 ? digits.slice(ddi.length, ddi.length + 2) : "";
+  const lead = digits.length >= 11 ? "9" : "";
+  const parts = [ddi && `+${ddi}`, ddd, `${lead}****-${last4}`].filter(Boolean);
+  return parts.join(" ");
+}
+
 /** Mapeia o sentimento dominante do cluster para a classe + rótulo do badge .sent. */
 function sentimentBadge(s: string | null): { cls: string; label: string } | null {
   switch (s) {
@@ -78,61 +119,52 @@ function sentimentBadge(s: string | null): { cls: string; label: string } | null
   }
 }
 
-// ===== card de uma melhoria na lista priorizada =============================
+// ===== card de uma melhoria no Kanban =======================================
+
+/** Chip "📊 N clientes pediram" — a demanda que justifica a melhoria. Mono no
+    número (dado verificável), ícone de barras como glifo de volume. */
+function DemandChip({ n }: { n: number }) {
+  return (
+    <span className="imp-demand-chip" title="Feedbacks vinculados a esta melhoria">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M5 20V10" />
+        <path d="M12 20V4" />
+        <path d="M19 20v-6" />
+      </svg>
+      <b className="mono">{fmtNum.format(n)}</b>
+      <span>{n === 1 ? "cliente pediu" : "clientes pediram"}</span>
+    </span>
+  );
+}
 
 function ImprovementCard({
   imp,
   busy,
   onChangeStage,
   onCloseLoop,
-  className = "",
-  style,
 }: {
   imp: ImprovementRoadmapItem;
   busy: boolean;
   onChangeStage: (status: ImprovementStatus) => void;
   onCloseLoop: () => void;
-  /** Permite aplicar .reveal direto no .survey-item (preserva :first/:last-child). */
-  className?: string;
-  style?: React.CSSProperties;
 }) {
-  const badgeCls = STAGE_BADGE[imp.status] ?? "neutral";
   const delivered = imp.status === "entregue";
   const notified = notifiedAt(imp);
   const canCloseLoop = delivered && !notified;
   const target = fmtMaybeDate(imp.target_date);
 
   return (
-    <div className={`survey-item ${className}`.trim()} style={style}>
-      <div className="survey-name">
-        {imp.title}
-        <span className={`badge ${badgeCls}`}>{STAGE_LABEL[imp.status] ?? imp.status}</span>
-        {notified && (
-          <span className="badge abordado" title="Clientes já foram avisados">
-            ✓ loop fechado
-          </span>
-        )}
-      </div>
+    <div className={`card board-card imp-card ${busy ? "is-busy" : ""}`.trim()}>
+      <div className="imp-card-title">{imp.title}</div>
 
-      {imp.description && <div className="survey-q">{imp.description}</div>}
+      {imp.description && <p className="board-card-text imp-card-desc">{imp.description}</p>}
 
-      {/* métricas: nº de pedidos + score de prioridade */}
-      <div className="imp-metrics">
-        <span className="imp-demand" title="Feedbacks vinculados a esta melhoria">
-          <b className="mono">{fmtNum.format(imp.feedback_count)}</b>{" "}
-          {imp.feedback_count === 1 ? "cliente pediu isso" : "clientes pediram isso"}
-        </span>
-        {typeof imp.priority_score === "number" && (
-          <span className="imp-score" title="Prioridade: pedidos × urgência × negatividade da dor">
-            <span className="imp-score-lbl">prioridade</span>
-            <span className="imp-score-val mono">{imp.priority_score.toFixed(1)}</span>
-          </span>
-        )}
-      </div>
+      {/* a demanda: quantos clientes pediram isso */}
+      <DemandChip n={imp.feedback_count} />
 
-      {/* chips: esforço + dor de origem (clicável → Temas) + data-alvo */}
+      {/* chips: esforço + dor de origem (clicável → Mapeamento) + data-alvo */}
       {(imp.effort || imp.cluster_label || target) && (
-        <div className="theme-chips imp-chips">
+        <div className="board-card-meta imp-card-meta">
           {imp.effort && (
             <span className="chip" title="Esforço estimado">
               esforço {imp.effort}
@@ -142,9 +174,9 @@ function ImprovementCard({
             <Link
               href="/temas"
               className="chip imp-chip-link"
-              title="Ver a dor de origem em Temas (Por significado)"
+              title="Ver a dor de origem em Mapeamento (Por significado)"
             >
-              🎯 {imp.cluster_label}
+              {EMOJI_PULL} {imp.cluster_label}
             </Link>
           )}
           {target && (
@@ -155,61 +187,125 @@ function ImprovementCard({
         </div>
       )}
 
-      {/* ações: trocar estágio + fechar o loop */}
-      <div className="imp-actions">
-        <label className="imp-stage">
-          <span className="act-label">Estágio</span>
-          <select
-            value={imp.status}
-            disabled={busy}
-            onChange={(e) => onChangeStage(e.target.value as ImprovementStatus)}
-            aria-label={`Estágio de "${imp.title}"`}
-          >
-            {STAGES.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {canCloseLoop && (
+      {/* faixa de loop: na coluna Entregue, convida a avisar quem pediu */}
+      {canCloseLoop && (
+        <div className="imp-loop-band">
+          <span className="imp-loop-msg">
+            <b className="mono">{fmtNum.format(imp.feedback_count)}</b>{" "}
+            {imp.feedback_count === 1 ? "cliente esperando retorno" : "clientes esperando retorno"}
+          </span>
           <button
             type="button"
-            className="btn-wa-sm imp-close-loop"
+            className="btn btn-wa sm imp-loop-cta"
             onClick={onCloseLoop}
             disabled={busy}
-            title="Avisar quem pediu que a melhoria saiu"
+            title="Avisar pelo WhatsApp quem pediu que a melhoria saiu"
           >
-            ✓ Fechar o loop
+            Avisar
           </button>
-        )}
-        {delivered && notified && (
-          <span className="act-saved">clientes avisados ✓</span>
-        )}
-      </div>
+        </div>
+      )}
+      {delivered && notified && (
+        <div className="imp-loop-done">
+          <span className="badge promoter">✓ loop fechado</span>
+          <span className="imp-loop-done-sub">clientes avisados</span>
+        </div>
+      )}
+
+      {/* mover de coluna = trocar o estágio (PATCH status) */}
+      <label className="imp-stage imp-card-stage">
+        <span className="act-label">Estágio</span>
+        <select
+          value={imp.status}
+          disabled={busy}
+          onChange={(e) => onChangeStage(e.target.value as ImprovementStatus)}
+          aria-label={`Estágio de "${imp.title}"`}
+        >
+          {STAGES.map((s) => (
+            <option key={s.key} value={s.key}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 }
 
-// ===== modal "fechar o loop" (preview + confirmar envio) ====================
+// ===== Kanban: 3 colunas (Ideias / Fazendo / Entregue) ======================
 
-function RecipientRow({ r, kind }: { r: NotifyRecipient; kind: "send" | "skip" }) {
+function KanbanColumn({
+  col,
+  items,
+  busyId,
+  onChangeStage,
+  onCloseLoop,
+}: {
+  col: (typeof COLUMNS)[number];
+  items: ImprovementRoadmapItem[];
+  busyId: string | null;
+  onChangeStage: (imp: ImprovementRoadmapItem, status: ImprovementStatus) => void;
+  onCloseLoop: (imp: Improvement) => void;
+}) {
+  return (
+    <section className="board-col imp-col" aria-label={col.label}>
+      <div className="board-col-head">
+        <span className="board-col-name">{col.label}</span>
+        <span className="board-col-count mono">{items.length}</span>
+      </div>
+      <div className="board-col-body">
+        {items.length === 0 ? (
+          <div className="board-col-empty">nada aqui</div>
+        ) : (
+          items.map((imp) => (
+            <ImprovementCard
+              key={imp.id}
+              imp={imp}
+              busy={busyId === imp.id}
+              onChangeStage={(s) => onChangeStage(imp, s)}
+              onCloseLoop={() => onCloseLoop(imp)}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ===== modal "Avisar quem pediu" (preview + confirmar envio) ================
+
+/** Linha de um destinatário que VAI receber: avatar + nome + telefone parcial
+    + chip "pagante" (se o backend informar). Espelha o mockup_loop.png. */
+function SendRecipientRow({ r }: { r: LoopRecipient }) {
+  return (
+    <div className="loop-recip">
+      <Avatar name={r.contato_nome} seed={r.contato_id} size={36} />
+      <div className="loop-recip-txt">
+        <span className="loop-recip-name">{r.contato_nome || "sem nome"}</span>
+        <span className="loop-recip-phone mono">{maskPhone(r.contato_whatsapp)}</span>
+      </div>
+      {isPaying(r) && <span className="badge promoter loop-recip-pag">pagante</span>}
+    </div>
+  );
+}
+
+/** Linha de quem ficou de fora desta vez, com o motivo. */
+function SkipRecipientRow({ r }: { r: LoopRecipient }) {
   const reasonLabel: Record<string, string> = {
     sem_whatsapp: "sem WhatsApp",
     sem_opt_in: "sem opt-in",
-    cooldown: "enviado há pouco",
+    cooldown: "avisado há pouco",
   };
   return (
-    <div className={`notify-row ${kind === "skip" ? "is-skip" : ""}`}>
-      <div className="notify-row-head">
-        <span className="notify-who">{r.contato_nome || "sem nome"}</span>
-        <span className="mono dim notify-phone">{r.contato_whatsapp}</span>
-        {kind === "skip" && r.reason && (
-          <span className="badge neutral notify-reason">{reasonLabel[r.reason] ?? r.reason}</span>
-        )}
+    <div className="loop-recip is-skip">
+      <Avatar name={r.contato_nome} seed={r.contato_id} size={36} />
+      <div className="loop-recip-txt">
+        <span className="loop-recip-name">{r.contato_nome || "sem nome"}</span>
+        <span className="loop-recip-phone mono">{maskPhone(r.contato_whatsapp)}</span>
       </div>
-      {kind === "send" && r.mensagem && <p className="confirm-quote notify-msg">{r.mensagem}</p>}
+      {r.reason && (
+        <span className="badge neutral loop-recip-reason">{reasonLabel[r.reason] ?? r.reason}</span>
+      )}
     </div>
   );
 }
@@ -229,72 +325,131 @@ function CloseLoopModal({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
   const loading = preview === null && error === null;
-  const willSend = preview?.would_send ?? [];
-  const skipped = preview?.skipped ?? [];
+  const willSend = (preview?.would_send ?? []) as LoopRecipient[];
+  const skipped = (preview?.skipped ?? []) as LoopRecipient[];
+
+  // prévia da mensagem: a do 1º elegível representa o balão (todas seguem o
+  // mesmo molde, personalizado pelo tema da dor no backend).
+  const sampleMsg = willSend.find((r) => r.mensagem)?.mensagem ?? "";
+  const now = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 
   return (
-    <Modal title="Fechar o loop" onClose={onClose} labelledById="close-loop-title">
-      <div className="modal-body">
-        <p className="confirm-text">
-          Avisar pelo WhatsApp quem pediu <b>{imp.title}</b> que a melhoria saiu
-          {preview?.theme ? (
-            <>
-              {" "}
-              (mensagem personalizada com o tema <b>{preview.theme}</b>)
-            </>
-          ) : null}
-          .
-        </p>
+    <Modal title="Avisar quem pediu" onClose={onClose} labelledById="close-loop-title">
+      <div className="modal-body loop-body">
+        {/* topo: a melhoria entregue */}
+        <div className="loop-head-card">
+          <span className="loop-head-ico" aria-hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </span>
+          <div className="loop-head-txt">
+            <span className="loop-head-kicker">Melhoria entregue</span>
+            <span className="loop-head-title">{imp.title}</span>
+          </div>
+        </div>
 
-        {error && <div className="flash err">{error}</div>}
+        {error && (
+          <div className="flash err">
+            {error}. O WhatsApp pode estar desconectado — confira em <b>Conexão</b> e tente de novo.
+          </div>
+        )}
 
-        {loading && <div className="empty">Montando o preview…</div>}
+        {loading && <div className="empty loop-empty">Montando a lista de quem pediu…</div>}
 
         {!loading && !error && (
           <>
-            <div className="notify-block">
-              <div className="notify-block-head">
-                <span className="act-label">
-                  Vão receber ({willSend.length})
+            {/* meio: quem pediu (vai receber) */}
+            <div className="loop-section">
+              <div className="loop-section-head">
+                <span className="act-label">Quem pediu</span>
+                <span className="loop-section-count">
+                  {fmtNum.format(willSend.length)}{" "}
+                  {willSend.length === 1 ? "cliente" : "clientes"}
                 </span>
               </div>
               {willSend.length === 0 ? (
                 <p className="picker-empty">
-                  Ninguém elegível agora (sem opt-in, sem WhatsApp ou em cooldown). Nada será
-                  enviado.
+                  Ninguém elegível agora (sem opt-in, sem WhatsApp ou avisado há pouco). Nada
+                  será enviado.
                 </p>
               ) : (
-                willSend.map((r) => <RecipientRow key={r.contato_id} r={r} kind="send" />)
+                <div className="loop-recip-list">
+                  {willSend.map((r) => (
+                    <SendRecipientRow key={r.contato_id} r={r} />
+                  ))}
+                </div>
+              )}
+              {skipped.length > 0 && (
+                <details className="loop-skip">
+                  <summary>
+                    + {fmtNum.format(skipped.length)}{" "}
+                    {skipped.length === 1 ? "cliente fora desta vez" : "clientes fora desta vez"}
+                  </summary>
+                  <div className="loop-recip-list">
+                    {skipped.map((r) => (
+                      <SkipRecipientRow key={r.contato_id} r={r} />
+                    ))}
+                  </div>
+                </details>
               )}
             </div>
 
-            {skipped.length > 0 && (
-              <div className="notify-block">
-                <div className="notify-block-head">
-                  <span className="act-label">Fora desta vez ({skipped.length})</span>
+            {/* prévia da mensagem do WhatsApp */}
+            {sampleMsg && (
+              <div className="loop-section">
+                <div className="loop-section-head">
+                  <span className="act-label">Prévia da mensagem</span>
+                  {preview?.theme && (
+                    <span className="loop-section-count">tema: {preview.theme}</span>
+                  )}
                 </div>
-                {skipped.map((r) => (
-                  <RecipientRow key={r.contato_id} r={r} kind="skip" />
-                ))}
+                <div className="wa-preview">
+                  <div className="wa-bubble">
+                    <p className="wa-bubble-text">{sampleMsg}</p>
+                    <span className="wa-bubble-time mono">{now}</span>
+                  </div>
+                </div>
+                {editing && (
+                  <p className="loop-edit-note">
+                    A mensagem é escrita automaticamente, na voz da Escuta, e personalizada
+                    pelo tema da dor. A edição manual por envio chega em breve.
+                  </p>
+                )}
               </div>
             )}
           </>
         )}
       </div>
 
-      <div className="modal-foot">
-        <Button variant="ghost" onClick={onClose} disabled={sending}>
-          Cancelar
-        </Button>
+      <div className="modal-foot loop-foot">
         <button
           type="button"
-          className="btn btn-wa"
+          className="btn ghost loop-edit-btn"
+          onClick={() => setEditing((v) => !v)}
+          disabled={loading || sending || !sampleMsg}
+          aria-pressed={editing}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+          Editar mensagem
+        </button>
+        <button
+          type="button"
+          className="btn btn-wa loop-send-btn"
           onClick={onConfirm}
           disabled={loading || sending || willSend.length === 0}
-          title={willSend.length === 0 ? "Ninguém elegível para receber" : "Enviar de verdade"}
+          title={willSend.length === 0 ? "Ninguém elegível para receber" : "Enviar de verdade pelo WhatsApp"}
         >
-          {sending ? "Enviando…" : `Confirmar envio (${willSend.length})`}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m22 2-7 20-4-9-9-4Z" />
+            <path d="M22 2 11 13" />
+          </svg>
+          {sending ? "Enviando…" : `Enviar para os ${willSend.length}`}
         </button>
       </div>
     </Modal>
@@ -308,21 +463,16 @@ function PendingPainRow({
   cluster,
   busy,
   onPull,
-  className = "",
-  style,
 }: {
   cluster: FeedbackCluster;
   busy: boolean;
   onPull: () => void;
-  /** Permite aplicar .reveal direto no .survey-item (preserva :first/:last-child). */
-  className?: string;
-  style?: React.CSSProperties;
 }) {
   const title = cluster.label ?? "Dor sem rótulo";
   const sent = sentimentBadge(cluster.dominant_sentiment);
 
   return (
-    <div className={`survey-item ${className}`.trim()} style={style}>
+    <div className="survey-item">
       <div className="survey-name">
         {title}
         {sent && <span className={`badge sent ${sent.cls}`}>{sent.label}</span>}
@@ -409,22 +559,21 @@ function PullFromThemes({
           <div className="empty-title">Nenhuma dor pendente</div>
           <p className="empty-sub">
             Tudo já está no roadmap. Quando novos feedbacks formarem uma dor em{" "}
-            <b>Temas → Por significado</b>, ela aparece aqui para ser puxada.
+            <b>Mapeamento → Por significado</b>, ela aparece aqui para ser puxada.
           </p>
         </div>
       ) : (
         !error && (
-          <Stagger className="imp-list" style={{ margin: "0 -20px -18px" }}>
+          <div className="imp-list" style={{ margin: "0 -20px -18px" }}>
             {pains.map((c) => (
-              <StaggerItem key={c.id}>
-                <PendingPainRow
-                  cluster={c}
-                  busy={busyId === c.id}
-                  onPull={() => onPull(c)}
-                />
-              </StaggerItem>
+              <PendingPainRow
+                key={c.id}
+                cluster={c}
+                busy={busyId === c.id}
+                onPull={() => onPull(c)}
+              />
             ))}
-          </Stagger>
+          </div>
         )
       )}
     </div>
@@ -447,13 +596,12 @@ function ImprovementRowSkeleton() {
   );
 }
 
-/** Lista de skeletons dentro de um card (usada na coluna do roadmap). */
-function ImprovementListSkeleton({ count = 4 }: { count?: number }) {
+/** Placeholder de um card de melhoria dentro de uma coluna do Kanban. */
+function KanbanCardSkeleton() {
   return (
-    <div className="card imp-list" aria-busy="true">
-      {Array.from({ length: count }).map((_, i) => (
-        <ImprovementRowSkeleton key={i} />
-      ))}
+    <div className="card board-card imp-card" aria-busy="true">
+      <div className="sk-line w-90" style={{ marginTop: 2 }} />
+      <div className="sk-line w-60" style={{ marginTop: 10, height: 22, borderRadius: 999 }} />
     </div>
   );
 }
@@ -465,12 +613,11 @@ export default function MelhoriasPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  // sucesso de "loop fechado" → celebração com ilustração (some no próximo flash/ação)
+  const [loopDone, setLoopDone] = useState<string | null>(null);
 
   // id da melhoria com PATCH/notify em voo (trava os controles do card)
   const [busyId, setBusyId] = useState<string | null>(null);
-
-  // filtro de estágio
-  const [filter, setFilter] = useState<ImprovementStatus | "todos">("todos");
 
   // form de criação
   const [title, setTitle] = useState("");
@@ -496,8 +643,7 @@ export default function MelhoriasPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = filter === "todos" ? "" : `?status=${filter}`;
-      const rows = await api.get<ImprovementRoadmapItem[]>(`/api/improvements/roadmap${qs}`);
+      const rows = await api.get<ImprovementRoadmapItem[]>(`/api/improvements/roadmap`);
       setItems(rows);
       setErr(null);
     } catch (e) {
@@ -505,7 +651,7 @@ export default function MelhoriasPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -539,10 +685,27 @@ export default function MelhoriasPage() {
     [items],
   );
 
+  // agrupa as melhorias por coluna do Kanban (mantém a ordem priorizada do backend)
+  const byColumn = useMemo(() => {
+    const map: Record<string, ImprovementRoadmapItem[]> = { ideias: [], fazendo: [], entregue: [] };
+    for (const it of items) {
+      const col = COLUMNS.find((c) => c.statuses.includes(it.status));
+      if (col) map[col.key].push(it);
+    }
+    return map;
+  }, [items]);
+
+  // melhorias entregues ainda sem aviso → número-âncora "loops abertos"
+  const openLoops = useMemo(
+    () => byColumn.entregue.filter((it) => !notifiedAt(it)).length,
+    [byColumn],
+  );
+
   async function createImprovement(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setFlash(null);
+    setLoopDone(null);
     try {
       const body: ImprovementInput = {
         title: title.trim(),
@@ -570,6 +733,7 @@ export default function MelhoriasPage() {
     if (status === imp.status) return;
     setBusyId(imp.id);
     setFlash(null);
+    setLoopDone(null);
     try {
       await api.patch<Improvement>(`/api/improvements/${imp.id}`, { status });
       setFlash({ kind: "ok", msg: `"${imp.title}" → ${STAGE_LABEL[status] ?? status}.` });
@@ -586,6 +750,7 @@ export default function MelhoriasPage() {
   async function pullFromCluster(cluster: FeedbackCluster) {
     setPullingId(cluster.id);
     setFlash(null);
+    setLoopDone(null);
     const label = cluster.label ?? "Dor sem rótulo";
     try {
       const imp = await melhorias.fromCluster(cluster.id);
@@ -631,10 +796,10 @@ export default function MelhoriasPage() {
         {},
       );
       const n = res.sent_count ?? res.would_send.length;
-      setFlash({
-        kind: "ok",
-        msg: `${EMOJI_HEART} Loop fechado: ${n} cliente${n === 1 ? "" : "s"} avisado${n === 1 ? "" : "s"} no WhatsApp.`,
-      });
+      setFlash(null);
+      setLoopDone(
+        `${n} cliente${n === 1 ? "" : "s"} avisado${n === 1 ? "" : "s"} no WhatsApp. Loop fechado.`,
+      );
       closeLoopModal();
       await load();
     } catch (e) {
@@ -643,44 +808,53 @@ export default function MelhoriasPage() {
     }
   }
 
+  const hasItems = items.length > 0;
+
   return (
     <div>
       <div className="page-head">
         <div>
           <h1 className="page-title">Melhorias</h1>
-          <div className="page-sub">
-            O roadmap que nasce das dores dos clientes — priorize, entregue e feche o loop avisando
-            quem pediu
-          </div>
+          <div className="page-sub">Você pediu, a gente fez.</div>
         </div>
-        {!loading && !err && items.length > 0 && (
+        {!loading && !err && hasItems && (
           <span className="refresh-note">
             {fmtNum.format(items.length)} {items.length === 1 ? "melhoria" : "melhorias"} ·{" "}
             {fmtNum.format(totalDemand)} pedidos
+            {openLoops > 0 && (
+              <>
+                {" · "}
+                <b>{fmtNum.format(openLoops)}</b> {openLoops === 1 ? "loop aberto" : "loops abertos"}
+              </>
+            )}
           </span>
         )}
       </div>
 
+      {loopDone && (
+        <div className="loop-celebrate" role="status">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/illustrations/sucesso-loop-fechado.svg" alt="" width={92} height={80} />
+          <div className="loop-celebrate-txt">
+            <div className="loop-celebrate-title">{EMOJI_HEART} Você pediu, a gente fez.</div>
+            <p className="loop-celebrate-sub">{loopDone}</p>
+          </div>
+          <button
+            type="button"
+            className="loop-celebrate-close"
+            onClick={() => setLoopDone(null)}
+            aria-label="Fechar aviso"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {flash && <div className={`flash ${flash.kind}`}>{flash.msg}</div>}
 
-      <div className="two-col">
-        {/* ---- esquerda: lista priorizada ---- */}
+      <div className="two-col imp-layout">
+        {/* ---- esquerda: o Kanban "Você pediu, a gente fez" ---- */}
         <div>
-          <div className="status-tabs" role="tablist" aria-label="Filtrar por estágio">
-            {(["todos", ...STAGES.map((s) => s.key)] as (ImprovementStatus | "todos")[]).map((k) => (
-              <button
-                key={k}
-                type="button"
-                role="tab"
-                aria-selected={filter === k}
-                className={`status-tab ${filter === k ? "active" : ""}`}
-                onClick={() => setFilter(k)}
-              >
-                {k === "todos" ? "Todas" : STAGE_LABEL[k]}
-              </button>
-            ))}
-          </div>
-
           {err && (
             <div className="flash err">
               Não consegui carregar o roadmap ({err}). A API está rodando em{" "}
@@ -688,44 +862,50 @@ export default function MelhoriasPage() {
             </div>
           )}
 
-          {!err && loading && items.length === 0 ? (
-            <ImprovementListSkeleton />
-          ) : !err && items.length === 0 ? (
+          {!err && loading && !hasItems ? (
+            <div className="board-cols imp-board" aria-busy="true">
+              {COLUMNS.map((col) => (
+                <section className="board-col imp-col" key={col.key} aria-label={col.label}>
+                  <div className="board-col-head">
+                    <span className="board-col-name">{col.label}</span>
+                  </div>
+                  <div className="board-col-body">
+                    <KanbanCardSkeleton />
+                    <KanbanCardSkeleton />
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : !err && !hasItems ? (
             <div className="card">
               <div className="empty">
-                <div className="empty-illu">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M9 18h6" />
-                    <path d="M10 21h4" />
-                    <path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z" />
-                  </svg>
+                <div className="empty-illu-scene">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/illustrations/empty-melhorias.svg" alt="" width={200} height={150} />
                 </div>
-                <div className="empty-title">
-                  {filter === "todos"
-                    ? "Nenhuma melhoria ainda"
-                    : `Nada em "${STAGE_LABEL[filter] ?? filter}"`}
-                </div>
+                <div className="empty-title">Nenhuma melhoria ainda</div>
                 <p className="empty-sub">
-                  Crie uma ao lado, ou vá em <b>Temas → Por significado</b> e use{" "}
-                  <b>“Virar melhoria”</b> numa dor para começar o roadmap já com os feedbacks
-                  vinculados.
+                  Vire uma dor recorrente em melhoria e feche o loop. Use{" "}
+                  <b>Puxar dos temas</b> ao lado, ou crie uma na mão.
                 </p>
               </div>
             </div>
           ) : (
             !err && (
-              <Stagger className="card imp-list">
-                {items.map((imp) => (
-                  <StaggerItem key={imp.id}>
-                    <ImprovementCard
-                      imp={imp}
-                      busy={busyId === imp.id}
-                      onChangeStage={(s) => changeStage(imp, s)}
-                      onCloseLoop={() => openCloseLoop(imp)}
+              <Reveal>
+                <div className="board-cols imp-board">
+                  {COLUMNS.map((col) => (
+                    <KanbanColumn
+                      key={col.key}
+                      col={col}
+                      items={byColumn[col.key] ?? []}
+                      busyId={busyId}
+                      onChangeStage={changeStage}
+                      onCloseLoop={openCloseLoop}
                     />
-                  </StaggerItem>
-                ))}
-              </Stagger>
+                  ))}
+                </div>
+              </Reveal>
             )
           )}
         </div>
@@ -745,7 +925,7 @@ export default function MelhoriasPage() {
           <Reveal className="card" style={{ padding: "18px 20px" }} delay={0.05}>
             <h2 className="section-title">Nova melhoria</h2>
           <p className="section-sub">
-            Registre algo que você vai construir. Vincule a dores depois pela aba Temas.
+            Registre algo que você vai construir. Vincule a dores depois pela aba Mapeamento.
           </p>
           <form onSubmit={createImprovement}>
             <div className="field">

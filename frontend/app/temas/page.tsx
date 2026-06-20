@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   api,
   type ClustersResponse,
+  type ClustersSort,
   type FeedbackCluster,
   type Improvement,
   type Tema,
@@ -25,6 +26,15 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "dor", label: "Por dor (volume × negatividade)" },
   { key: "volume", label: "Por volume" },
   { key: "negativos", label: "Por nº de negativos" },
+];
+
+// Ordenação do "Mapa de dores" (clusters). O backend (F1) ordena por
+// `priority_index` quando recebe `sort=prioridade` (default da tela).
+const CLUSTER_SORT_OPTIONS: { key: ClustersSort; label: string }[] = [
+  { key: "prioridade", label: "Por prioridade" },
+  { key: "dor", label: "Por dor (volume × negatividade)" },
+  { key: "volume", label: "Por volume" },
+  { key: "recente", label: "Mais recentes" },
 ];
 
 // ===== períodos =============================================================
@@ -66,6 +76,36 @@ function compareThemes(a: Tema, b: Tema, key: SortKey): number {
 }
 
 const fmtNum = new Intl.NumberFormat("pt-BR");
+
+// ===== prioridade da dor (selo + barra do índice) ===========================
+// O índice (volume × receita × gravidade) vem PRONTO do backend (F1) em
+// `priority_index`/`priority_band`. Aqui só traduzimos a banda em selo visual.
+// Tudo é tolerante à ausência dos campos: backend antigo → fallback gracioso.
+
+type PriorityBand = "alta" | "media" | "baixa";
+
+/** Selo de prioridade: rótulo, ícone (SVG da marca) e classe de cor do card. */
+const PRIORITY_SELO: Record<
+  PriorityBand,
+  { label: string; icon: string; cls: string; alt: string }
+> = {
+  alta: { label: "Prioridade Alta", icon: "/illustrations/priority-alta.svg", cls: "pri-alta", alt: "Prioridade alta" },
+  media: { label: "Prioridade Média", icon: "/illustrations/priority-media.svg", cls: "pri-media", alt: "Prioridade média" },
+  baixa: { label: "Prioridade Baixa", icon: "/illustrations/priority-baixa.svg", cls: "pri-baixa", alt: "Prioridade baixa" },
+};
+
+/** Banda só quando o backend a manda E é uma das três conhecidas. */
+function priorityBand(cluster: FeedbackCluster): PriorityBand | null {
+  const b = cluster.priority_band;
+  return b === "alta" || b === "media" || b === "baixa" ? b : null;
+}
+
+/** Rótulo PT-BR do sentimento dominante (para a linha "📊/💳/🔴"). */
+function sentimentLabel(s: string | null): { txt: string; cls: "neg" | "neu" | "pos" } {
+  if (s === "negativo") return { txt: "negativo", cls: "neg" };
+  if (s === "positivo") return { txt: "positivo", cls: "pos" };
+  return { txt: "neutro", cls: "neu" };
+}
 
 // ===== barra de distribuição de sentimento ==================================
 
@@ -206,50 +246,6 @@ function TemaCard({ tema, rank, maxCount }: { tema: Tema; rank: number; maxCount
   );
 }
 
-// ===== barra de sentimento de um cluster ====================================
-// Reusa o visual da SentimentBar de tags (.tema-sent*), mas o cluster só expõe
-// neg_count vs item_count — então mostramos "negativos" × "demais".
-
-function ClusterSentimentBar({ cluster }: { cluster: FeedbackCluster }) {
-  const total = cluster.item_count || 1;
-  const neg = Math.min(cluster.neg_count, cluster.item_count);
-  const rest = Math.max(0, cluster.item_count - neg);
-  // Sem nenhum negativo classificado num cluster com volume, "demais" na verdade é
-  // "ainda sem classificação" — não é o mesmo que ter sido lido como não-negativo.
-  const restLabel = neg === 0 && cluster.item_count > 0 ? "sem classificação" : "demais";
-
-  return (
-    <div className="tema-sent">
-      <div
-        className="tema-sent-bar"
-        role="img"
-        aria-label={`Sentimento do cluster: ${neg} negativo${neg === 1 ? "" : "s"}, ${rest} ${restLabel}`}
-      >
-        {neg > 0 && (
-          <span className="seg neg" style={{ width: `${(neg / total) * 100}%` }} />
-        )}
-        {rest > 0 && (
-          <span className="seg none" style={{ width: `${(rest / total) * 100}%` }} />
-        )}
-      </div>
-      <div className="tema-sent-legend">
-        {neg > 0 && (
-          <span className="leg neg">
-            <span className="dot" />
-            {fmtNum.format(neg)} negativo{neg === 1 ? "" : "s"}
-          </span>
-        )}
-        {rest > 0 && (
-          <span className="leg none">
-            <span className="dot" />
-            {fmtNum.format(rest)} {restLabel}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ===== card de um cluster (aba "Por significado") ===========================
 
 // Estado da ação "Virar melhoria" de um card de dor.
@@ -260,20 +256,39 @@ type PromoteState =
   | { phase: "error"; msg: string };
 
 function ClusterCard({ cluster, rank }: { cluster: FeedbackCluster; rank: number }) {
-  // O "índice de dor" (volume × fração negativa) só é confiável quando os itens
-  // têm sentimento POR ITEM classificado. Enquanto a IA não classificou (neg_count=0
-  // num cluster com volume), pain_score sai 0.0 e a barra fica vazia — o que é
-  // enganoso, ainda mais com o cluster rotulado como "negativo" pelo LLM. Nesse caso
-  // tratamos o índice como PENDENTE e usamos o VOLUME como medida de dor.
+  // O índice de prioridade (volume × receita × gravidade) vem PRONTO do backend
+  // (F1) em `priority_index`/`priority_band`. Quando o backend ainda não manda
+  // esses campos, caímos no índice de dor antigo (pain_score) — fallback gracioso.
+  const band = priorityBand(cluster);
+  const hasPriority = band !== null && typeof cluster.priority_index === "number";
+  const selo = band ? PRIORITY_SELO[band] : null;
+
+  // O sentimento por item só é confiável quando há negativos classificados. Sem isso
+  // (neg_count=0 num cluster com volume), pain_score sai 0.0 — sinalizamos "pendente".
   const hasItemSentiment = cluster.neg_count > 0;
-  const painPending = !hasItemSentiment && cluster.item_count > 0;
-  // "Dor crítica" só quando há base por item (negativos de verdade) com volume — não
-  // pode aparecer junto de um índice 0.0. Sem classificação, não cravamos "crítica".
+  const painPending = !hasPriority && !hasItemSentiment && cluster.item_count > 0;
+
+  // Acento do card pela banda (alta=vermelho, média=âmbar, baixa=indigo). Sem
+  // prioridade, mantém a régua antiga: "dor crítica" = vermelho (.is-pain).
   const isCritical =
+    !hasPriority &&
     hasItemSentiment &&
     cluster.item_count >= 3 &&
     cluster.dominant_sentiment === "negativo";
+  const cardCls = selo ? selo.cls : isCritical ? "is-pain" : "";
+
   const title = cluster.label ?? "Cluster sem rótulo";
+  const sent = sentimentLabel(cluster.dominant_sentiment);
+
+  // Valor e largura da barra. Com prioridade: índice 0–100 → % direta (92 → 92%).
+  // Sem prioridade: usa pain_score como antes (sem barra proporcional confiável).
+  const indexValue = hasPriority ? (cluster.priority_index as number) : cluster.pain_score;
+  const barPct = hasPriority ? Math.max(2, Math.min(100, indexValue)) : 0;
+
+  // Contagens da linha de meta. `distinct_customers`/`paying_customers` são do F1;
+  // sem eles, cai para o volume de itens (clientes ≈ feedbacks) — nunca quebra.
+  const customers = cluster.distinct_customers ?? cluster.item_count;
+  const paying = cluster.paying_customers ?? 0;
 
   // Já existe uma melhoria pra essa dor? (FK no cluster). Se sim, o botão vira link.
   const [promote, setPromote] = useState<PromoteState>(() =>
@@ -295,75 +310,85 @@ function ClusterCard({ cluster, rank }: { cluster: FeedbackCluster; rank: number
   }
 
   return (
-    <div className={`card tema-card ${isCritical ? "is-pain" : ""}`}>
-      <div className="tema-head">
+    <div className={`card tema-card pain-card ${cardCls}`}>
+      <div className="pain-head">
         <span className={`tema-rank ${rank <= 3 ? "top" : ""}`} aria-hidden>
           {rank}
         </span>
         <h2 className="tema-name" title={title}>
           {title}
         </h2>
-        {isCritical && (
+
+        {/* Selo de prioridade (ícone da marca + rótulo) — empurrado p/ a direita.
+            Sem banda do backend, mostramos o estado "sentimento pendente" no lugar. */}
+        {selo ? (
           <span
-            className="badge detractor tema-flag"
-            title="3+ feedbacks com sentimento predominantemente negativo"
+            className={`pri-selo ${selo.cls}`}
+            title={
+              cluster.priority_breakdown
+                ? `Volume ${Math.round(cluster.priority_breakdown.volume_score * 100)}% · ` +
+                  `Receita ${Math.round(cluster.priority_breakdown.revenue_score * 100)}% · ` +
+                  `Gravidade ${Math.round(cluster.priority_breakdown.gravity_score * 100)}%`
+                : selo.label
+            }
           >
-            🔥 dor crítica
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="pri-selo-ico" src={selo.icon} alt="" aria-hidden width={14} height={14} />
+            {selo.label}
           </span>
-        )}
-        {painPending && (
+        ) : painPending ? (
           <span
             className="badge tema-flag"
-            title="Feedbacks ainda sem sentimento classificado pela IA — o índice de dor usa o volume por enquanto"
+            title="Feedbacks ainda sem sentimento classificado pela IA — a prioridade usa volume por enquanto"
           >
             ⏳ sentimento pendente
           </span>
-        )}
-        <span className="tema-count" title="Feedbacks agrupados neste cluster">
-          {fmtNum.format(cluster.item_count)}
-          <span className="tema-count-unit">
-            {cluster.item_count === 1 ? "feedback" : "feedbacks"}
+        ) : isCritical ? (
+          <span className="badge detractor tema-flag" title="3+ feedbacks predominantemente negativos">
+            🔥 dor crítica
           </span>
+        ) : null}
+      </div>
+
+      {/* Linha de meta: clientes · pagantes · sentimento dominante. */}
+      <div className="pain-meta" aria-label={`${customers} clientes, ${paying} pagantes, sentimento ${sent.txt}`}>
+        <span className="pain-meta-item">
+          📊 <b className="pain-meta-num">{fmtNum.format(customers)}</b>{" "}
+          {customers === 1 ? "cliente" : "clientes"}
+        </span>
+        <span className="pain-meta-sep" aria-hidden>·</span>
+        <span className="pain-meta-item">
+          💳 <b className="pain-meta-num">{fmtNum.format(paying)}</b>{" "}
+          {paying === 1 ? "pagante" : "pagantes"}
+        </span>
+        <span className="pain-meta-sep" aria-hidden>·</span>
+        <span className={`pain-meta-item pain-sent ${sent.cls}`}>
+          <span className="pain-sent-dot" aria-hidden />
+          {sent.txt}
         </span>
       </div>
 
-      {cluster.description && (
-        <p className="cluster-desc" title={cluster.description}>
-          {cluster.description}
-        </p>
-      )}
-
-      {/* Índice de dor em destaque (volume × negatividade). Quando o sentimento
-          por item ainda não foi classificado, o índice não é calculável — então
-          mostramos o VOLUME como medida provisória de dor, deixando claro o motivo. */}
-      {painPending ? (
-        <div
-          className="cluster-pain"
-          aria-label={`Sentimento pendente — ${cluster.item_count} feedbacks neste cluster`}
-        >
-          <span className="cluster-pain-label">Volume (dor pendente)</span>
-          <span className="cluster-pain-value">{fmtNum.format(cluster.item_count)}</span>
+      {/* Índice de dor: rótulo + barra proporcional ao índice + número no fim.
+          Sem prioridade do backend, vira "volume (dor pendente)" ou o pain_score. */}
+      {hasPriority || !painPending ? (
+        <div className="pain-index" aria-label={`Índice de dor ${indexValue.toFixed(hasPriority ? 0 : 1)}`}>
+          <span className="pain-index-lbl">Índice de dor</span>
+          <span className="pain-index-track">
+            <span className="pain-index-fill" style={{ width: `${barPct}%` }} />
+          </span>
+          <span className="pain-index-val">
+            {hasPriority ? Math.round(indexValue) : indexValue.toFixed(1)}
+          </span>
         </div>
       ) : (
-        <div className="cluster-pain" aria-label={`Índice de dor ${cluster.pain_score.toFixed(1)}`}>
-          <span className="cluster-pain-label">Índice de dor</span>
-          <span className="cluster-pain-value">{cluster.pain_score.toFixed(1)}</span>
+        <div className="pain-index" aria-label={`Sentimento pendente — ${cluster.item_count} feedbacks`}>
+          <span className="pain-index-lbl">Volume (dor pendente)</span>
+          <span className="pain-index-track" aria-hidden />
+          <span className="pain-index-val">{fmtNum.format(cluster.item_count)}</span>
         </div>
       )}
 
-      <ClusterSentimentBar cluster={cluster} />
-
-      {cluster.top_themes.length > 0 && (
-        <div className="theme-chips cluster-themes">
-          {cluster.top_themes.map((t, i) => (
-            <span key={`${t}-${i}`} className="chip">
-              {t}
-            </span>
-          ))}
-        </div>
-      )}
-
-      <div className="tema-foot cluster-foot">
+      <div className="tema-foot cluster-foot pain-foot">
         <Link href={`/feedbacks?cluster_id=${encodeURIComponent(cluster.id)}`} className="tema-link">
           Ver feedbacks
           <span aria-hidden> →</span>
@@ -455,6 +480,8 @@ export default function TemasPage() {
   const [clusterData, setClusterData] = useState<ClustersResponse | null>(null);
   const [clusterErr, setClusterErr] = useState<string | null>(null);
   const [clusterLoading, setClusterLoading] = useState(true);
+  // Default = prioridade (volume × receita × gravidade): a leitura que o mockup pede.
+  const [clusterSort, setClusterSort] = useState<ClustersSort>("prioridade");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -472,9 +499,24 @@ export default function TemasPage() {
   const loadClusters = useCallback(async () => {
     setClusterLoading(true);
     try {
-      const raw = await api.get<ClustersResponse>(
-        `/api/feedbacks/clusters?sort=dor&days=${days}`,
-      );
+      let raw: ClustersResponse;
+      try {
+        raw = await api.get<ClustersResponse>(
+          `/api/feedbacks/clusters?sort=${clusterSort}&days=${days}`,
+        );
+      } catch (e) {
+        // Backend antigo (F1 ainda não no ar) não conhece sort=prioridade e
+        // responde 422. Em vez de quebrar a tela, refazemos a busca por "dor"
+        // (sempre aceito): os cards já caem no fallback gracioso sem os campos
+        // de prioridade. Qualquer outro erro continua propagando.
+        if (clusterSort === "prioridade" && e instanceof Error && "status" in e && e.status === 422) {
+          raw = await api.get<ClustersResponse>(
+            `/api/feedbacks/clusters?sort=dor&days=${days}`,
+          );
+        } else {
+          throw e;
+        }
+      }
       setClusterData(raw);
       setClusterErr(null);
     } catch (e) {
@@ -482,9 +524,9 @@ export default function TemasPage() {
     } finally {
       setClusterLoading(false);
     }
-  }, [days]);
+  }, [days, clusterSort]);
 
-  // Carrega só a aba ativa (e recarrega quando muda o período).
+  // Carrega só a aba ativa (e recarrega quando muda o período ou a ordenação).
   useEffect(() => {
     if (tab === "tags") load();
     else loadClusters();
@@ -519,7 +561,9 @@ export default function TemasPage() {
         <div>
           <h1 className="page-title">Mapeamento</h1>
           <div className="page-sub">
-            As dores dos clientes agrupadas por significado — o que mais aparece e o que mais dói
+            {isTags
+              ? "As dores dos clientes agrupadas por significado — o que mais aparece e o que mais dói"
+              : "As dores dos clientes, agrupadas por significado e priorizadas."}
           </div>
         </div>
         {isTags
@@ -532,8 +576,9 @@ export default function TemasPage() {
           : !clusterLoading && !clusterErr && clusters.length > 0 && (
               <span className="refresh-note">
                 {fmtNum.format(clusters.length)}{" "}
-                {clusters.length === 1 ? "dor" : "dores"} ·{" "}
-                {fmtNum.format(clusterData?.total_items_clustered ?? 0)} agrupados
+                {clusters.length === 1 ? "dor" : "dores"} · agrupadas de{" "}
+                {fmtNum.format(clusterData?.total_items_clustered ?? 0)} feedbacks
+                {clusterSort === "prioridade" ? " · ordenadas por prioridade" : ""}
               </span>
             )}
       </div>
@@ -565,8 +610,8 @@ export default function TemasPage() {
         ) : (
           <span>
             As dores são descobertas automaticamente agrupando feedbacks por{" "}
-            <b>significado</b> (semântica), não por palavra exata. Cada cluster vira uma dor
-            com um <b>índice de dor</b> (volume × negatividade) para priorizar.
+            <b>significado</b> (semântica), não por palavra exata. A ordem segue a{" "}
+            <b>prioridade</b> — volume de clientes × receita (pagantes) × gravidade.
           </span>
         )}
       </div>
@@ -586,7 +631,7 @@ export default function TemasPage() {
             ))}
           </select>
         </label>
-        {isTags && (
+        {isTags ? (
           <label className="tema-control">
             <span className="tema-control-lbl">Ordenar</span>
             <select
@@ -595,6 +640,21 @@ export default function TemasPage() {
               aria-label="Ordenar temas"
             >
               {SORT_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <label className="tema-control">
+            <span className="tema-control-lbl">Ordenar</span>
+            <select
+              value={clusterSort}
+              onChange={(e) => setClusterSort(e.target.value as ClustersSort)}
+              aria-label="Ordenar dores"
+            >
+              {CLUSTER_SORT_OPTIONS.map((o) => (
                 <option key={o.key} value={o.key}>
                   {o.label}
                 </option>
@@ -655,17 +715,20 @@ export default function TemasPage() {
           ) : !clusterErr && clusters.length === 0 ? (
             <div className="card">
               <div className="empty">
-                <div className="empty-illu">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M14.5 9.5 11 11l-1.5 3.5L13 13z" />
-                  </svg>
+                <div className="empty-illu-scene">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/illustrations/empty-mapeamento.svg"
+                    alt=""
+                    aria-hidden
+                    width={200}
+                    height={150}
+                  />
                 </div>
-                <div className="empty-title">Nenhuma dor agrupada neste período</div>
+                <div className="empty-title">Nenhuma dor mapeada ainda.</div>
                 <p className="empty-sub">
-                  Os clusters aparecem quando há feedbacks com texto suficiente para a IA
-                  agrupar por significado. Tente um período maior ou volte após novas
-                  respostas.
+                  Conforme os feedbacks chegam, agrupamos as dores aqui — por significado e
+                  priorizadas. Tente um período maior ou volte após novas respostas.
                 </p>
               </div>
             </div>

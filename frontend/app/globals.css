@@ -2847,3 +2847,291 @@ tbody tr:hover td { color: var(--text); }
   box-shadow: inset 3px 0 0 #22c55e, var(--shadow);
 }
 
+/* ===== Mapeamento — card de dor priorizada (F2) =============================
+   Redesign do card de dor da aba "Mapa de dores": cartões largos empilhados em
+   coluna única, com faixa de acento à esquerda pela BANDA de prioridade, selo
+   (ícone da marca + rótulo), linha "📊 clientes · 💳 pagantes · 🔴 sentimento" e
+   a barra do ÍNDICE DE DOR (largura ∝ priority_index). Reusa .tema-card/.tema-rank/
+   .tema-name/.tema-foot/.cluster-foot — só acrescenta o que o layout novo pede.
+   Cores só com função (manual de marca): alta=detrator · média=âmbar · baixa=indigo. */
+
+/* No "Mapa de dores" a grade vira coluna única (cartões largos do mockup). O grid
+   de tags (.tema-grid) segue multi-coluna; aqui sobrescrevemos só quando há cards
+   de dor dentro dele. */
+.tema-grid:has(.pain-card) { grid-template-columns: 1fr; }
+
+.pain-card { padding: 18px 22px; }
+
+/* faixa de acento à esquerda pela banda (mesma linguagem do .is-pain) */
+.pain-card.pri-alta  { border-color: var(--detractor-line); box-shadow: inset 4px 0 0 var(--detractor), var(--shadow); }
+.pain-card.pri-media { border-color: var(--passive-line);   box-shadow: inset 4px 0 0 var(--gold-fill),  var(--shadow); }
+.pain-card.pri-baixa { border-color: var(--promoter-line);  box-shadow: inset 4px 0 0 var(--indigo),     var(--shadow); }
+.pain-card.pri-alta:hover  { box-shadow: inset 4px 0 0 var(--detractor), var(--shadow-pop); }
+.pain-card.pri-media:hover { box-shadow: inset 4px 0 0 var(--gold-fill),  var(--shadow-pop); }
+.pain-card.pri-baixa:hover { box-shadow: inset 4px 0 0 var(--indigo),     var(--shadow-pop); }
+
+/* rank tingido pela banda (espelha o que o .is-pain faz com o rank) */
+.pain-card.pri-alta  .tema-rank { background: var(--detractor-soft); color: var(--detractor);    border-color: var(--detractor-line); }
+.pain-card.pri-media .tema-rank { background: var(--passive-soft);   color: var(--gold-soft);     border-color: var(--passive-line); }
+.pain-card.pri-baixa .tema-rank { background: var(--promoter-soft);  color: var(--indigo-light);  border-color: var(--promoter-line); }
+
+/* cabeçalho: rank + nome (esq) · selo de prioridade empurrado p/ a direita */
+.pain-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pain-head .tema-name { margin-right: auto; }
+
+/* selo de prioridade — pílula (manual §3.2) com ícone da marca + rótulo */
+.pri-selo {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px; line-height: 1;
+  padding: 6px 11px; border-radius: 999px;
+  border: 1px solid transparent; white-space: nowrap;
+  box-shadow: var(--edge);
+}
+.pri-selo-ico { display: block; width: 14px; height: 14px; flex-shrink: 0; }
+.pri-selo.pri-alta  { background: var(--detractor-soft); color: var(--detractor);   border-color: var(--detractor-line); }
+.pri-selo.pri-media { background: var(--passive-soft);   color: var(--gold-soft);    border-color: var(--passive-line); }
+.pri-selo.pri-baixa { background: var(--promoter-soft);  color: var(--indigo-light); border-color: var(--promoter-line); }
+
+/* linha de meta: clientes · pagantes · sentimento (dado em mono, manual §2) */
+.pain-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 9px;
+  margin: 12px 0 16px; font-size: 13px; color: var(--text-dim);
+}
+.pain-meta-item { display: inline-flex; align-items: center; gap: 5px; }
+.pain-meta-num { font-family: var(--mono); font-weight: 600; color: var(--text); }
+.pain-meta-sep { color: var(--text-ghost); }
+.pain-sent { gap: 6px; font-weight: 600; }
+.pain-sent-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: currentColor; }
+.pain-sent.neg { color: var(--detractor); }
+.pain-sent.neu { color: var(--gold-soft); }
+.pain-sent.pos { color: var(--indigo-light); }
+
+/* índice de dor: rótulo + trilho proporcional + número (mono) no fim */
+.pain-index { display: flex; align-items: center; gap: 12px; margin: 0 0 4px; }
+.pain-index-lbl {
+  flex-shrink: 0;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-faint);
+}
+.pain-index-track {
+  flex: 1; min-width: 0; height: 8px; border-radius: 999px; overflow: hidden;
+  background: var(--ink); border: 1px solid var(--charcoal);
+}
+.pain-index-fill {
+  display: block; height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--indigo), var(--indigo-light));
+  transition: width 320ms var(--ease);
+}
+.pain-card.pri-alta  .pain-index-fill { background: linear-gradient(90deg, var(--detractor), #eb9090); }
+.pain-card.pri-media .pain-index-fill { background: var(--grad-gold); }
+.pain-card.pri-baixa .pain-index-fill { background: var(--grad-indigo); }
+.pain-index-val {
+  flex-shrink: 0; min-width: 30px; text-align: right;
+  font-family: var(--mono); font-size: 18px; font-weight: 600; letter-spacing: -0.6px;
+  color: var(--text);
+}
+.pain-card.pri-alta  .pain-index-val { color: var(--detractor); }
+.pain-card.pri-media .pain-index-val { color: var(--gold-soft); }
+.pain-card.pri-baixa .pain-index-val { color: var(--indigo-light); }
+@media (prefers-reduced-motion: reduce) {
+  .pain-index-fill { transition: none; }
+}
+
+/* rodapé do card de dor (já reusa .cluster-foot): só garante o respiro do mockup */
+.pain-foot { margin-top: 14px; }
+
+/* empty-state ilustrado (cena 240×180, não cabe no .empty-illu circular de 60px) */
+.empty-illu-scene { margin-bottom: 8px; line-height: 0; }
+.empty-illu-scene img { display: block; width: clamp(160px, 40vw, 200px); height: auto; }
+
+/* ===== Melhorias — Kanban "Você pediu, a gente fez" (Camada 3, F3) ==========
+   Reusa .board-cols / .board-col / .board-card / .badge / .chip / .avatar e os
+   tokens da marca. Só ADITIVO: nada acima é alterado. O Kanban tem 3 colunas
+   (Ideias / Fazendo / Entregue); o modal "Avisar quem pediu" mostra a lista de
+   quem pediu + a prévia do WhatsApp. */
+
+/* layout: o Kanban ocupa a coluna larga; some o grid em telas estreitas */
+.imp-layout { align-items: start; }
+
+/* 3 colunas (o .board-cols base é repeat(5)); rola na horizontal no estreito */
+.imp-board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1180px) {
+  .imp-board {
+    grid-auto-flow: column; grid-template-columns: none;
+    grid-auto-columns: minmax(244px, 1fr); overflow-x: auto; padding-bottom: 8px;
+  }
+}
+
+/* contador da coluna: pílula mono discreta no cabeçalho */
+.board-col-count {
+  font-size: 12px; font-weight: 600; color: var(--text-faint);
+  background: var(--ink-800); border: 1px solid var(--charcoal);
+  border-radius: 999px; min-width: 22px; height: 22px; padding: 0 7px;
+  display: inline-grid; place-items: center;
+}
+
+/* card de melhoria dentro da coluna: não é arrastável (move pelo select),
+   então cursor padrão (sobrescreve o grab do .board-card) */
+.imp-card { cursor: default; display: flex; flex-direction: column; gap: 0; }
+.imp-card:active { cursor: default; }
+.imp-card.is-busy { opacity: 0.6; pointer-events: none; }
+.imp-card-title {
+  font-family: var(--font-display);
+  font-size: 14.5px; font-weight: 600; letter-spacing: -0.3px;
+  color: var(--text); line-height: 1.32; text-wrap: pretty;
+}
+.imp-card-desc { margin: 7px 0 0; -webkit-line-clamp: 2; }
+
+/* chip "📊 N clientes pediram": glifo de barras + número mono */
+.imp-demand-chip {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  margin-top: 11px; padding: 5px 10px;
+  background: var(--ink); border: 1px solid var(--charcoal);
+  border-radius: 999px; font-size: 12px; color: var(--text-dim);
+}
+.imp-demand-chip svg { width: 13px; height: 13px; color: var(--indigo-light); }
+.imp-demand-chip b { color: var(--text); font-weight: 600; }
+
+.imp-card-meta { margin-top: 11px; }
+
+/* faixa "N clientes esperando retorno → Avisar" (verde suave, coluna Entregue) */
+.imp-loop-band {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 12px; padding: 9px 10px 9px 12px;
+  background: rgba(37, 211, 102, 0.09);
+  border: 1px solid rgba(37, 211, 102, 0.32);
+  border-radius: var(--radius-sm);
+}
+.imp-loop-msg { flex: 1; min-width: 0; font-size: 12.5px; color: #11633a; line-height: 1.35; }
+.imp-loop-msg b { color: #0c4f2e; }
+.imp-loop-cta { flex-shrink: 0; }
+
+/* melhoria já avisada: selo discreto de loop fechado */
+.imp-loop-done { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.imp-loop-done-sub { font-size: 11.5px; color: var(--text-faint); }
+
+/* o seletor de estágio fica no rodapé do card, full-width, separado por fio */
+.imp-card-stage {
+  display: flex; align-items: center; gap: 9px;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--charcoal);
+}
+.imp-card-stage .act-label { flex-shrink: 0; }
+.imp-card-stage select { flex: 1; min-width: 0; }
+
+/* ----- modal "Avisar quem pediu" (preview + envio) ----- */
+.loop-body { display: flex; flex-direction: column; gap: 4px; }
+
+/* topo: a melhoria entregue, num bloco indigo-suave com check */
+.loop-head-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 15px; margin-bottom: 4px;
+  background: var(--promoter-soft); border: 1px solid var(--promoter-line);
+  border-radius: var(--radius-sm);
+}
+.loop-head-ico {
+  display: grid; place-items: center; flex-shrink: 0;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--indigo); color: #fff;
+}
+.loop-head-ico svg { width: 18px; height: 18px; }
+.loop-head-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.loop-head-kicker {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--indigo-light);
+}
+.loop-head-title {
+  font-family: var(--font-display); font-size: 15px; font-weight: 600;
+  letter-spacing: -0.3px; color: var(--text); line-height: 1.3;
+}
+
+.loop-empty { padding: 28px 0; }
+
+.loop-section { margin-top: 14px; }
+.loop-section-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-bottom: 9px;
+}
+.loop-section-count { font-size: 12px; color: var(--text-faint); }
+
+/* lista de quem pediu: avatar + nome + telefone parcial + chip "pagante" */
+.loop-recip-list { display: flex; flex-direction: column; gap: 2px; }
+.loop-recip {
+  display: flex; align-items: center; gap: 11px;
+  padding: 8px 4px; border-bottom: 1px solid var(--charcoal);
+}
+.loop-recip:last-child { border-bottom: none; }
+.loop-recip.is-skip { opacity: 0.7; }
+.loop-recip-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.loop-recip-name {
+  font-family: var(--font-display); font-weight: 600; font-size: 13.5px;
+  color: var(--text); letter-spacing: -0.2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.loop-recip-phone { font-size: 12px; color: var(--text-faint); }
+.loop-recip-pag, .loop-recip-reason { flex-shrink: 0; }
+
+/* "+ N clientes fora desta vez" — recolhível, discreto */
+.loop-skip { margin-top: 8px; }
+.loop-skip > summary {
+  cursor: pointer; list-style: none; font-size: 12.5px; color: var(--text-faint);
+  padding: 6px 0;
+}
+.loop-skip > summary::-webkit-details-marker { display: none; }
+.loop-skip > summary:hover { color: var(--text-dim); }
+
+/* prévia da mensagem: balão de WhatsApp (verde da plataforma, manual §1.4) */
+.wa-preview { display: flex; }
+.wa-bubble {
+  position: relative; max-width: 84%;
+  background: #e3f7e8; border: 1px solid rgba(37, 211, 102, 0.3);
+  border-radius: 14px 14px 14px 4px;
+  padding: 9px 12px 7px; box-shadow: var(--edge);
+}
+.wa-bubble-text {
+  margin: 0; font-size: 13.5px; line-height: 1.5; color: #0c2a18; text-wrap: pretty;
+}
+.wa-bubble-time {
+  display: block; text-align: right; margin-top: 3px;
+  font-size: 10.5px; color: #2f7d52;
+}
+.loop-edit-note {
+  margin: 9px 0 0; font-size: 12px; line-height: 1.5; color: var(--text-faint);
+  text-wrap: pretty;
+}
+
+/* rodapé do modal: "Editar mensagem" (ghost) + "Enviar para os N" (verde) */
+.loop-foot { justify-content: space-between; }
+.loop-edit-btn svg, .loop-send-btn svg { width: 15px; height: 15px; }
+.loop-edit-btn[aria-pressed="true"] {
+  border-color: var(--indigo); color: var(--indigo-light); background: var(--promoter-soft);
+}
+
+/* ----- celebração "loop fechado" (banner com ilustração) ----- */
+.loop-celebrate {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 16px 12px 12px; margin-bottom: 16px;
+  background:
+    radial-gradient(140% 140% at 0% 0%, var(--promoter-soft), transparent 60%),
+    var(--ink-800);
+  border: 1px solid var(--promoter-line); border-radius: var(--radius);
+  box-shadow: var(--edge), var(--shadow-soft);
+}
+.loop-celebrate > img { flex-shrink: 0; width: 76px; height: auto; }
+.loop-celebrate-txt { flex: 1; min-width: 0; }
+.loop-celebrate-title {
+  font-family: var(--font-display); font-size: 15px; font-weight: 600;
+  letter-spacing: -0.3px; color: var(--text);
+}
+.loop-celebrate-sub { margin: 3px 0 0; font-size: 13px; color: var(--text-dim); line-height: 1.45; }
+.loop-celebrate-close {
+  flex-shrink: 0; align-self: flex-start; background: transparent; border: none;
+  color: var(--text-faint); font-size: 15px; cursor: pointer; padding: 2px 4px;
+  line-height: 1; border-radius: var(--radius-xs);
+}
+.loop-celebrate-close:hover { color: var(--text); background: var(--ink-700); }
+
+@media (max-width: 560px) {
+  .loop-celebrate > img { width: 60px; }
+}
+

@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="190" viewBox="0 0 220 190" role="img" aria-label="Você pediu, a gente fez — loop fechado">
+  <!-- ============================================================
+       ESCUTA · sucesso "VOCÊ PEDIU, A GENTE FEZ" (loop fechado)
+       Conceito: a voz do cliente (balão + waveform) entra no ciclo
+       e volta entregue — seta circular de loop + selo de check gold.
+       Família: indigo (estrutura/ciclo) · gold-fill (valor/feito) · papel.
+       Luz: superior-esquerda. Traço fino (lucide ~3px no anel).
+       ============================================================ -->
+  <defs>
+    <clipPath id="s-bubble">
+      <path d="M58 60 C58 50 66 42 78 42 L120 42 C132 42 140 50 140 60 L140 84
+               C140 94 132 102 120 102 L92 102 L78 116 L80 102 L78 102
+               C66 102 58 94 58 84 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- cartela ambiente discreta -->
+  <rect x="16" y="16" width="188" height="158" rx="26" fill="#f0f0f9"/>
+  <rect x="16" y="16" width="188" height="158" rx="26" fill="none" stroke="#e4e5f0"/>
+
+  <!-- ===== anel de LOOP (o ciclo que se fecha) ===== -->
+  <!-- arco quase completo no sentido horário, com a abertura no topo-direita;
+       termina numa ponta de seta indigo: "voltou, fechou". -->
+  <g>
+    <!-- sombra projetada do conjunto, ancorando ao chão da cartela -->
+    <ellipse cx="112" cy="150" rx="58" ry="9" fill="#1a1830" opacity="0.06"/>
+    <!-- trilho do anel (sutil) -->
+    <circle cx="110" cy="98" r="58" fill="none" stroke="#e4e5f0" stroke-width="10"/>
+    <!-- arco indigo (o progresso do loop): quase volta inteira, abertura no topo -->
+    <path d="M150 58 A58 58 0 1 1 132 47"
+          fill="none" stroke="#6c5ce7" stroke-width="10" stroke-linecap="round"/>
+    <!-- realce de luz no topo-esquerdo do arco -->
+    <path d="M70 60 A58 58 0 0 1 96 43"
+          fill="none" stroke="#9d92f0" stroke-width="4" stroke-linecap="round"/>
+    <!-- ponta de seta fechando o loop: triângulo equilátero centrado na ponta
+         do arco (~topo), mesma massa visual da espessura do anel -->
+    <path d="M132 47 L121 41 L133 33 Z" fill="#6c5ce7" stroke="#6c5ce7" stroke-width="2" stroke-linejoin="round"/>
+  </g>
+
+  <!-- ===== balão de fala (a VOZ do cliente que pediu) ===== -->
+  <g>
+    <path d="M58 60 C58 50 66 42 78 42 L120 42 C132 42 140 50 140 60 L140 84
+             C140 94 132 102 120 102 L92 102 L78 116 L80 102 L78 102
+             C66 102 58 94 58 84 Z"
+          fill="#ffffff" stroke="#cfd0e0" stroke-width="2"/>
+    <g clip-path="url(#s-bubble)">
+      <!-- luz no topo + sombra própria embaixo-direita -->
+      <rect x="58" y="42" width="82" height="5" fill="#ffffff"/>
+      <path d="M140 86 L140 102 L78 102 L120 102 C132 102 140 94 140 86 Z" fill="#1a1830" opacity="0.04"/>
+    </g>
+    <!-- waveform dentro do balão (assinatura "Escuta" = voz) -->
+    <g fill="#6c5ce7">
+      <rect x="74"  y="68" width="4" height="10" rx="2"/>
+      <rect x="82"  y="62" width="4" height="22" rx="2"/>
+      <rect x="90"  y="56" width="4" height="34" rx="2"/>
+      <rect x="98"  y="64" width="4" height="18" rx="2"/>
+      <rect x="106" y="60" width="4" height="26" rx="2" fill="#f5a623"/>
+      <rect x="114" y="66" width="4" height="14" rx="2"/>
+      <rect x="122" y="70" width="4" height="8"  rx="2"/>
+    </g>
+  </g>
+
+  <!-- ===== selo de CHECK (o "a gente fez" / valor entregue) ===== -->
+  <!-- na base do ciclo, onde o loop se completa: disco gold com check branco -->
+  <g>
+    <!-- aura suave de valor -->
+    <circle cx="110" cy="138" r="28" fill="#f5a623" opacity="0.12"/>
+    <!-- disco -->
+    <circle cx="110" cy="138" r="22" fill="#f5a623"/>
+    <!-- sombra própria (metade inferior-direita) -->
+    <path d="M110 116 A22 22 0 0 1 110 160 A22 22 0 0 0 128 127 Z" fill="#d98c0c" opacity="0.30"/>
+    <!-- realce de luz (arco superior-esquerdo) -->
+    <path d="M94 124 A22 22 0 0 1 116 117" fill="none" stroke="#ffd486" stroke-width="3" stroke-linecap="round"/>
+    <!-- check -->
+    <path d="M100 138 L107 145 L121 130" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

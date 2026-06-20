@@ -266,6 +266,117 @@ async def test_list_clusters_pain_score_e_sort(client, org, session):
     vol = (await client.get("/api/feedbacks/clusters", params={"sort": "volume", "days": 0})).json()
     assert [c["item_count"] for c in vol["clusters"]] == [3, 2]
 
+    # pain_score (back-compat) CONTINUA presente em todos os cards.
+    assert all("pain_score" in c for c in data["clusters"])
+    # E os campos NOVOS do índice de prioridade vêm em todo card.
+    for c in data["clusters"]:
+        assert "distinct_customers" in c
+        assert "paying_customers" in c
+        assert "priority_index" in c
+        assert c["priority_band"] in ("alta", "media", "baixa")
+        bd = c["priority_breakdown"]
+        assert set(bd) == {"volume_score", "revenue_score", "gravity_score", "weights"}
+        assert bd["weights"] == {"volume": 0.5, "revenue": 0.3, "gravity": 0.2}
+
+
+@pytest.mark.asyncio
+async def test_list_clusters_indice_de_prioridade(client, org, session):
+    """distinct_customers conta CLIENTES (não itens); paying reflete o partner;
+    gravity = neg/item; e o índice combina os três com os pesos default da §2.3."""
+    pagante_anual = Contact(
+        organization_id=org.id, phone="5531900000001", name="Ana", profile_data={
+            "partner": {"subscription": {"state": "active_paying", "planType": "anual"}}
+        },
+    )
+    pagante_mensal = Contact(
+        organization_id=org.id, phone="5531900000002", name="Bia", profile_data={
+            "partner": {"subscription": {"state": "active_paying", "planType": "mensal"}}
+        },
+    )
+    nao_pagante = Contact(
+        organization_id=org.id, phone="5531900000003", name="Cau", profile_data={
+            "partner": {"subscription": {"state": "cancelled"}}
+        },
+    )
+    session.add_all([pagante_anual, pagante_mensal, nao_pagante])
+    dor = FeedbackCluster(
+        organization_id=org.id, label="Acesso", dominant_sentiment="negativo", item_count=4,
+    )
+    session.add(dor)
+    await session.flush()
+
+    # 4 itens, 3 clientes distintos (Ana aparece 2x → conta 1), 2 negativos.
+    session.add_all([
+        FeedbackItem(organization_id=org.id, contact_id=pagante_anual.id, source="s",
+                     type="nps", text="a1", sentiment="negativo", cluster_id=dor.id),
+        FeedbackItem(organization_id=org.id, contact_id=pagante_anual.id, source="s",
+                     type="nps", text="a2", sentiment="neutro", cluster_id=dor.id),
+        FeedbackItem(organization_id=org.id, contact_id=pagante_mensal.id, source="s",
+                     type="nps", text="b1", sentiment="negativo", cluster_id=dor.id),
+        FeedbackItem(organization_id=org.id, contact_id=nao_pagante.id, source="s",
+                     type="nps", text="c1", sentiment="positivo", cluster_id=dor.id),
+    ])
+    await session.commit()
+
+    card = (await client.get("/api/feedbacks/clusters", params={"days": 0})).json()["clusters"][0]
+    # 3 clientes distintos (Ana 2 itens contam 1).
+    assert card["distinct_customers"] == 3
+    # 2 pagantes (anual + mensal); o cancelado não conta.
+    assert card["paying_customers"] == 2
+    bd = card["priority_breakdown"]
+    # volume_score = min(1, 3/10) = 0.3
+    assert bd["volume_score"] == pytest.approx(0.3)
+    # paying_weighted = 1.5 (anual) + 1.0 (mensal) = 2.5; revenue = 2.5/3 ≈ 0.833
+    assert bd["revenue_score"] == pytest.approx(2.5 / 3, abs=1e-3)
+    # gravity = 2/4 = 0.5
+    assert bd["gravity_score"] == pytest.approx(0.5)
+    esperado = round(100 * (0.5 * 0.3 + 0.3 * (2.5 / 3) + 0.2 * 0.5), 1)
+    assert card["priority_index"] == esperado
+
+
+@pytest.mark.asyncio
+async def test_list_clusters_sort_prioridade_default(client, org, session):
+    """sort=prioridade (default) ordena por priority_index desc; mais clientes
+    pagantes + mais negatividade sobe a dor."""
+    # Dor FORTE: 2 clientes pagantes, 100% negativo.
+    forte = FeedbackCluster(organization_id=org.id, label="Forte", item_count=2,
+                            dominant_sentiment="negativo")
+    # Dor FRACA: 1 cliente não-pagante, 0% negativo.
+    fraca = FeedbackCluster(organization_id=org.id, label="Fraca", item_count=1,
+                            dominant_sentiment="positivo")
+    p1 = Contact(organization_id=org.id, phone="5531911111111", profile_data={
+        "partner": {"subscription": {"state": "active_paying", "planType": "mensal"}}})
+    p2 = Contact(organization_id=org.id, phone="5531922222222", profile_data={
+        "partner": {"subscription": {"state": "active_paying", "planType": "mensal"}}})
+    np_ = Contact(organization_id=org.id, phone="5531933333333", profile_data={
+        "partner": {"subscription": {"state": "cancelled"}}})
+    session.add_all([forte, fraca, p1, p2, np_])
+    await session.flush()
+    session.add_all([
+        FeedbackItem(organization_id=org.id, contact_id=p1.id, source="s", type="nps",
+                     text="x", sentiment="negativo", cluster_id=forte.id),
+        FeedbackItem(organization_id=org.id, contact_id=p2.id, source="s", type="nps",
+                     text="y", sentiment="negativo", cluster_id=forte.id),
+        FeedbackItem(organization_id=org.id, contact_id=np_.id, source="s", type="nps",
+                     text="z", sentiment="positivo", cluster_id=fraca.id),
+    ])
+    await session.commit()
+
+    # default = prioridade (sem passar sort)
+    default = (await client.get("/api/feedbacks/clusters", params={"days": 0})).json()
+    labels = [c["label"] for c in default["clusters"]]
+    assert labels == ["Forte", "Fraca"]
+    assert default["clusters"][0]["priority_index"] > default["clusters"][1]["priority_index"]
+
+    # sort=prioridade explícito = mesmo resultado
+    pr = (await client.get("/api/feedbacks/clusters",
+                           params={"days": 0, "sort": "prioridade"})).json()
+    assert [c["label"] for c in pr["clusters"]] == ["Forte", "Fraca"]
+
+    # sort=dor (legado) continua funcionando (não quebra).
+    dor = (await client.get("/api/feedbacks/clusters", params={"days": 0, "sort": "dor"})).json()
+    assert {c["label"] for c in dor["clusters"]} == {"Forte", "Fraca"}
+
 
 @pytest.mark.asyncio
 async def test_list_clusters_filtro_days(client, org, session):
@@ -308,6 +419,12 @@ async def test_get_cluster_detalhe_com_itens(client, org, session):
     body = r.json()
     assert body["cluster"]["label"] == "Acesso"
     assert body["cluster"]["item_count"] == 1
+    # O detalhe também expõe o índice de prioridade (1 cliente pagante? não: Ana sem
+    # partner → 0 pagantes; 1 distinto; 1 negativo de 1 → gravity 1.0).
+    assert body["cluster"]["distinct_customers"] == 1
+    assert body["cluster"]["paying_customers"] == 0
+    assert body["cluster"]["priority_band"] in ("alta", "media", "baixa")
+    assert "priority_breakdown" in body["cluster"]
     assert len(body["items"]) == 1
     # Itens no formato do feed (mesmas chaves do inbox).
     assert body["items"][0]["text"] == "não logo"

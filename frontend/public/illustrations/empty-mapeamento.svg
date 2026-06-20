@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="180" viewBox="0 0 240 180" role="img" aria-label="Nenhuma dor mapeada ainda">
+  <!-- ============================================================
+       ESCUTA · empty-state MAPEAMENTO — "Nenhuma dor mapeada ainda"
+       Conceito: feedbacks (pontos) espalhados num mapa, ainda não
+       agrupados em dores; lupa indigo examina a superfície.
+       Família: indigo #6c5ce7 (estrutura) · sentimento suave · papel.
+       Luz: superior-esquerda. Traço fino (lucide ~2px).
+       ============================================================ -->
+  <defs>
+    <clipPath id="m-surf">
+      <rect x="40" y="40" width="160" height="100" rx="16"/>
+    </clipPath>
+  </defs>
+
+  <!-- cartela ambiente discreta (tinta indigo lavada) -->
+  <rect x="20" y="22" width="200" height="136" rx="24" fill="#f0f0f9"/>
+  <rect x="20" y="22" width="200" height="136" rx="24" fill="none" stroke="#e4e5f0"/>
+
+  <!-- ===== superfície / mapa (card claro elevado) ===== -->
+  <rect x="40" y="40" width="160" height="100" rx="16" fill="#ffffff" stroke="#cfd0e0" stroke-width="2"/>
+  <g clip-path="url(#m-surf)">
+    <!-- luz no topo (hairline) + sombra suave embaixo-direita -->
+    <rect x="40" y="40" width="160" height="5" fill="#ffffff"/>
+    <path d="M200 96 L200 140 L40 140 L40 128 C96 138 156 124 200 96 Z" fill="#1a1830" opacity="0.03"/>
+    <!-- curvas de nível (mapa topográfico) — leves, concêntricas, orgânicas -->
+    <g stroke="#e7e7f2" stroke-width="2" fill="none" stroke-linecap="round">
+      <path d="M60 58 C100 50 150 56 192 52"/>
+      <path d="M52 78 C92 70 150 82 200 74"/>
+      <path d="M52 100 C96 94 150 104 198 96"/>
+      <path d="M58 122 C100 116 150 124 196 120"/>
+    </g>
+    <!-- pino de localização fantasma (sugere "lugar no mapa"), bem sutil -->
+    <path d="M163 70 C163 64 168 60 173 60 C178 60 183 64 183 70 C183 77 173 86 173 86 C173 86 163 77 163 70 Z"
+          fill="none" stroke="#d9d8ea" stroke-width="2"/>
+    <circle cx="173" cy="70" r="3.5" fill="none" stroke="#d9d8ea" stroke-width="2"/>
+  </g>
+
+  <!-- pontos de feedback (soltos = sem cluster). Trinca de sentimento, suave;
+       posições/tamanhos irregulares = vida. Espalhados por todo o mapa. -->
+  <g>
+    <circle cx="64"  cy="62"  r="5.5" fill="#6c5ce7" opacity="0.9"/>
+    <circle cx="150" cy="58"  r="4.5" fill="#f5a623" opacity="0.9"/>
+    <circle cx="178" cy="92"  r="5"   fill="#6c5ce7" opacity="0.75"/>
+    <circle cx="60"  cy="104" r="4.5" fill="#cf4d4d" opacity="0.85"/>
+    <circle cx="100" cy="120" r="4"   fill="#f5a623" opacity="0.8"/>
+    <circle cx="128" cy="116" r="5"   fill="#6c5ce7" opacity="0.7"/>
+    <!-- ponto sob a lupa, em destaque (o que está sendo examinado) -->
+    <circle cx="104" cy="88" r="13" fill="#6c5ce7" opacity="0.10"/>
+    <circle cx="104" cy="88" r="5.5" fill="#cf4d4d"/>
+  </g>
+
+  <!-- ===== lupa (gesto: "procurando o padrão") — toda contida sobre o card ===== -->
+  <g>
+    <!-- sombra projetada (luz sup-esq → cai p/ baixo-dir), contida na superfície -->
+    <ellipse cx="112" cy="128" rx="34" ry="6" fill="#1a1830" opacity="0.07"/>
+    <!-- cabo: do aro p/ baixo-direita, terminando dentro da cartela -->
+    <rect x="124" y="104" width="30" height="9" rx="4.5" transform="rotate(42 124 104)" fill="#5b4bcf"/>
+    <!-- aro -->
+    <circle cx="104" cy="88" r="28" fill="#ffffff" opacity="0.5"/>
+    <circle cx="104" cy="88" r="28" fill="none" stroke="#6c5ce7" stroke-width="5"/>
+    <!-- realce de luz no aro (arco superior-esquerdo) -->
+    <path d="M85 71 A28 28 0 0 1 110 60" fill="none" stroke="#9d92f0" stroke-width="3" stroke-linecap="round"/>
+    <!-- brilho de vidro -->
+    <path d="M90 96 A16 16 0 0 1 100 86" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.85"/>
+  </g>
+</svg>

@@ -8,6 +8,7 @@ import {
   MessageCircle,
   Kanban,
   Map,
+  Lightbulb,
   Users,
   ClipboardList,
   Smartphone,
@@ -30,7 +31,6 @@ type NavItem = { href: string; label: string; icon: IconType; feature?: boolean 
    acessíveis por URL (nada foi apagado). Reverter = devolver o item a um grupo:
      /dashboard  -> substituído pela Monitorar
      /temas      -> "Mapeamento": mapa de dores (clustering por significado)
-     /melhorias  -> roadmap ("pra que serve?")
      /campanha   -> win-back ("inútil, dados errôneos")
      /tarefas    -> "deveria estar no board, não separado"
      /playbooks  -> automação ("não faz sentido")
@@ -45,6 +45,7 @@ const groups: { label: string; items: NavItem[] }[] = [
       { href: "/chat", label: "Chat", icon: MessageCircle, feature: true },
       { href: "/board", label: "Board", icon: Kanban },
       { href: "/temas", label: "Mapeamento", icon: Map },
+      { href: "/melhorias", label: "Melhorias", icon: Lightbulb },
     ],
   },
   {

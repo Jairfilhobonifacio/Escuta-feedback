@@ -46,3 +46,4 @@ docs/_nps_dados.json
 docs/_preview_nps/
 docs/NPS_Bizzu_*.pptx
 docs/_gen_nps_bizzu_pptx.py
+.specs/scratchpad/

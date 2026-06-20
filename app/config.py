@@ -111,6 +111,18 @@ class Settings:
     # (não envia nada). Mesmo ON, passa por 3 gates (opt-in, cooldown, alcançável).
     # WhatsApp real só com OK explícito do dono — manter OFF até lá.
     voc_whatsapp_tool_enabled: bool = os.getenv("VOC_WHATSAPP_TOOL_ENABLED", "0") == "1"
+    # Índice de Prioridade das DORES (Mapeamento): pesos do índice
+    # volume×receita×gravidade calculado na leitura de /api/feedbacks/clusters (ver
+    # app/domain/prioridade.py). TRANSPARENTES: vão no payload (priority_breakdown.weights)
+    # para a UI explicar a prioridade, e ajustáveis por env sem tocar código. Os defaults
+    # (0.50/0.30/0.20, somando 1.0) seguem a SPEC §2.3.
+    priority_weight_volume: float = float(os.getenv("PRIORITY_WEIGHT_VOLUME", "0.50"))
+    priority_weight_revenue: float = float(os.getenv("PRIORITY_WEIGHT_REVENUE", "0.30"))
+    priority_weight_gravity: float = float(os.getenv("PRIORITY_WEIGHT_GRAVITY", "0.20"))
+    # Volume (clientes distintos) que satura o volume_score em 1.0.
+    priority_volume_ref: int = int(os.getenv("PRIORITY_VOLUME_REF", "10"))
+    # Multiplicador de receita do pagante de plano ALTO (anual) vs. mensal (1.0).
+    priority_plano_alto_mult: float = float(os.getenv("PRIORITY_PLANO_ALTO_MULT", "1.5"))
 
 
 settings = Settings()
