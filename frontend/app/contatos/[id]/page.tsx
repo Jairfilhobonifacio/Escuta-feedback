@@ -533,17 +533,27 @@ function fmtDay(iso: string | null | undefined): string {
   });
 }
 
-/** Forma do snapshot partner.subscription (espelha `_build_partner_profile` do sync;
-    são EXATAMENTE estes campos — não há data de assinatura nem valor no snapshot). */
+/** Centavos (int) → moeda BRL. Ex.: 29900 → "R$ 299,00". */
+function fmtMoney(centavos: number | null | undefined): string {
+  if (centavos == null) return "—";
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
+    centavos / 100,
+  );
+}
+
+/** Forma do snapshot partner.subscription (espelha `_build_partner_profile` do sync). */
 interface PartnerSub {
   state?: string | null;
   active?: boolean | null;
   cancelled?: boolean | null;
   complimentary?: boolean | null;
   planType?: string | null;
+  planName?: string | null;
+  startedAt?: string | null;
   cancellationReason?: string | null;
   daysAsSubscriber?: number | null;
   currentPeriodEnd?: string | null;
+  totalPaidCentavos?: number | null;
 }
 
 /** Rótulo legível do estado da assinatura (espelha ESTADO_META da tela Clientes). */
@@ -597,8 +607,10 @@ function ProfileCard({ partner }: { partner: Record<string, unknown> }) {
         {field("Perfil", perfilLabel(partner.profile as string | null) || null)}
         {subStatusBadge(sub)}
         {field("Ciclo", cicloLabel(sub.planType))}
+        {sub.startedAt != null && field("Assinou em", fmtDay(sub.startedAt))}
         {sub.currentPeriodEnd != null && field(renovaLabel, fmtDay(sub.currentPeriodEnd))}
         {field("Dias de casa", sub.daysAsSubscriber)}
+        {sub.totalPaidCentavos != null && field("Total pago", fmtMoney(sub.totalPaidCentavos))}
         {field("NPS (nota)", nps.score)}
         {field("Motivo de churn", churnReasonLabel(sub.cancellationReason) || null)}
       </div>

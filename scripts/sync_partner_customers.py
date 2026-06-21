@@ -142,9 +142,12 @@ def _build_partner_profile(customer: dict, classification: dict) -> dict:
             "cancelled": sub.get("cancelled"),
             "complimentary": sub.get("complimentary"),
             "planType": sub.get("planType"),
+            "planName": sub.get("planName"),
+            "startedAt": sub.get("startedAt"),
             "cancellationReason": sub.get("cancellationReason"),
             "daysAsSubscriber": sub.get("daysAsSubscriber"),
             "currentPeriodEnd": sub.get("currentPeriodEnd"),
+            "totalPaidCentavos": sub.get("totalPaidCentavos"),
         },
         "nps": {
             "voted": nps.get("voted"),
