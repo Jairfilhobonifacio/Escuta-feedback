@@ -74,6 +74,9 @@ async def classify_batch(dry_run: bool, limit: int | None) -> int:
     import app.models.core  # noqa: F401
     import app.models.feedback  # noqa: F401
     import app.models.survey  # noqa: F401
+    import app.models.improvement  # noqa: F401  (FK feedback_items.improvement_id)
+    import app.models.cluster  # noqa: F401  (FK feedback_items.cluster_id)
+    import app.models.playbook  # noqa: F401
     from app.config import settings
     from app.db import SessionLocal
     from app.models.feedback import FeedbackItem
