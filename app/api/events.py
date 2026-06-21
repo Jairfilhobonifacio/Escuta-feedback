@@ -291,7 +291,10 @@ async def bizzu_event(
     try:
         payload = BizzuEvent.model_validate_json(raw_body)
     except ValidationError as e:
-        raise HTTPException(status_code=422, detail=e.errors())
+        # B4: não vaza `e.errors()` crus ao emissor externo (estrutura interna do schema).
+        # Detalhes ficam só no log para debug.
+        logger.warning("evento bizzu inválido: %s", e.errors())
+        raise HTTPException(status_code=422, detail="payload inválido")
 
     phone = re.sub(r"\D", "", payload.user.phone)
     if len(phone) < 10:

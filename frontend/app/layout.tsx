@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
-import Sidebar from "@/components/Sidebar";
+import Shell from "@/components/Shell";
 import "./globals.css";
 
 // Tipografia da marca Bizzu (regra dura do brand-guidelines):
@@ -38,10 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${spaceGrotesk.variable} ${inter.variable} ${jetbrainsMono.variable}`}
     >
       <body>
-        <div className="shell">
-          <Sidebar />
-          <main className="main">{children}</main>
-        </div>
+        <Shell>{children}</Shell>
       </body>
     </html>
   );

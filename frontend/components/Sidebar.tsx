@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import type { ComponentType } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useState, type ComponentType } from "react";
 import {
   MessageSquare,
   MessageCircle,
@@ -14,7 +14,9 @@ import {
   Smartphone,
   Settings,
   Radar,
+  LogOut,
 } from "lucide-react";
+import { auth } from "@/lib/api";
 
 /* Ícones da família Lucide (traço, currentColor): herdam a cor do item da nav
    (dim -> text no hover; gold no item de destaque). Coesos com o tema claro.
@@ -66,6 +68,20 @@ const groups: { label: string; items: NavItem[] }[] = [
 
 export default function Sidebar() {
   const path = usePathname();
+  const router = useRouter();
+  const [saindo, setSaindo] = useState(false);
+
+  async function sair() {
+    if (saindo) return;
+    setSaindo(true);
+    try {
+      await auth.logout();
+    } catch {
+      /* logout é best-effort; o cookie é apagado pelo BFF de toda forma */
+    }
+    router.replace("/login");
+  }
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -110,6 +126,16 @@ export default function Sidebar() {
         ))}
       </nav>
       <div className="sidebar-foot">
+        <button
+          type="button"
+          className="sidebar-logout"
+          onClick={sair}
+          disabled={saindo}
+          title="Encerrar a sessão"
+        >
+          <LogOut size={15} strokeWidth={1.75} aria-hidden />
+          {saindo ? "Saindo…" : "Sair"}
+        </button>
         <span className="brand-by">
           by <b>Bizzu</b>
           <span className="brand-by-dot">.</span>

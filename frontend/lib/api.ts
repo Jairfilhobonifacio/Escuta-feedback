@@ -7,7 +7,7 @@
  * NEXT_PUBLIC_API_URL (ex.: http://localhost:8000); em prod deixe vazio. */
 const API = process.env.NEXT_PUBLIC_API_URL ?? "";
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
     super(message);
@@ -218,6 +218,11 @@ export interface Timeline360Item {
   por?: string | null;
   /** De onde veio a ação do selo (só kind='selo'). */
   origem?: SeloOrigem;
+  /** Operador que editou este feedback por último (só kind='feedback_item';
+      do `feedback_log`). null/ausente = nunca editado / backend antigo. */
+  editado_por?: string | null;
+  /** Quando foi a última edição manual deste feedback (ISO/UTC) ou null. */
+  editado_em?: string | null;
   at: string | null;
 }
 
@@ -487,6 +492,12 @@ export interface Feedback {
   // (`_enrich_feedback_cards` do backend). No feed normal (/api/feedbacks) eles
   // não aparecem — por isso opcionais. assignee/team_tag/improvement_id/abordado
   // já existem acima e também são reafirmados pelo backend no card do board.
+  /** Operador que editou o feedback por último (do `feedback_log` em
+      profile_data, exposto pelo backend após o login de operador). null/ausente
+      = nunca editado manualmente ou backend antigo. */
+  editado_por?: string | null;
+  /** Quando foi a última edição manual (ISO/UTC) ou null/ausente. */
+  editado_em?: string | null;
   /** Existe alguma CsTask vinculada a este feedback? (card do board) */
   tem_tarefa?: boolean;
   /** Status da CsTask MAIS RECENTE vinculada, ou null se não há tarefa. */
@@ -1649,4 +1660,40 @@ export const config = {
   /** Salva SÓ os customizados (por lista). Retorna as listas efetivas resultantes.
       Pode lançar ApiError(422) em caso de colisão de key com um default. */
   update: (body: ConfigUpdate) => api.put<ConfigResponse>("/api/config", body),
+};
+
+// --- Auth do OPERADOR (login por cookie httpOnly via BFF) -------------------
+// O JWT nunca chega ao JS: o BFF (`app/api/[...path]/route.ts`) grava/lê o
+// cookie `escuta_session` (httpOnly). Aqui só falamos os contratos públicos.
+
+/** Corpo do POST /api/auth/login (usuário + senha do operador). */
+export interface LoginInput {
+  user: string;
+  password: string;
+}
+
+/** Resposta do login VIA BFF — o token NÃO volta ao browser (fica no cookie);
+    o BFF responde só `{ok, user}`. (O FastAPI por baixo devolve `{token,...}`,
+    mas isso não cruza para o cliente.) */
+export interface LoginResult {
+  ok: true;
+  user: string;
+}
+
+/** Resposta de GET /api/auth/me — identidade do operador logado. */
+export interface MeResult {
+  user: string;
+  /** `exp` do token corrente (unix seconds). */
+  exp: number;
+}
+
+/** Helpers tipados de AUTH. Erros propagam como `ApiError`:
+    401 = credenciais inválidas / sessão ausente; 503 = login não configurado. */
+export const auth = {
+  /** Faz login. Em 200 o cookie httpOnly já está setado pelo BFF. */
+  login: (body: LoginInput) => api.post<LoginResult>("/api/auth/login", body),
+  /** Encerra a sessão (BFF apaga o cookie). Idempotente. */
+  logout: () => api.post<{ ok: true }>("/api/auth/logout", {}),
+  /** Quem está logado (valida o JWT no FastAPI). 401 se sessão ausente/expirada. */
+  me: () => api.get<MeResult>("/api/auth/me"),
 };

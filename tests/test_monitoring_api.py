@@ -56,6 +56,8 @@ _ITEM_KEYS = {
     "score", "nps_bucket", "sentiment", "themes", "text", "urgencia",
     "action_status", "action_note", "assignee", "team_tag", "improvement_id",
     "abordado", "abordado_em", "follow_up_at", "occurred_em", "created_em",
+    # Auditoria do "quem editou" (hardening) — null quando nunca editado.
+    "editado_por", "editado_em",
 }
 
 

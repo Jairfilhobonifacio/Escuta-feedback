@@ -32,6 +32,10 @@ async def require_panel_key(x_panel_key: str | None = Header(default=None)) -> N
     """
     expected = settings.panel_api_key
     if not expected:
+        # C1: em produção, segredo ausente é fail-CLOSED (503) — a porta NÃO fica
+        # aberta. Em dev, mantém o fail-OPEN histórico (libera + WARN) p/ o piloto/suíte.
+        if settings.app_env == "production":
+            raise HTTPException(status_code=503, detail="PANEL_API_KEY não configurada (produção)")
         logger.warning(
             "painel SEM autenticação (defina PANEL_API_KEY para travar /api/* do painel)"
         )
@@ -52,6 +56,11 @@ async def require_waha_webhook_secret(
     """
     expected = settings.waha_webhook_secret
     if not expected:
+        # C1: produção é fail-CLOSED (503); dev mantém fail-OPEN (libera + WARN).
+        if settings.app_env == "production":
+            raise HTTPException(
+                status_code=503, detail="WAHA_WEBHOOK_SECRET não configurado (produção)"
+            )
         logger.warning(
             "webhook WAHA SEM autenticação (defina WAHA_WEBHOOK_SECRET para exigir X-Webhook-Secret)"
         )

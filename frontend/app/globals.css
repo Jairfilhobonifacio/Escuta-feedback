@@ -3387,3 +3387,164 @@ tbody tr:hover td { color: var(--text); }
   transition: opacity .12s ease;
 }
 .mon-followup-link:hover { opacity: .8; text-decoration: underline; }
+
+/* ===== Auth: login do operador + logout + selo "editado por" =================
+   APPEND (não altera regras acima). styled-jsx não roda no SSR → todo CSS novo
+   vive aqui. Reusa os tokens da marca (indigo #6c5ce7, fontes Space Grotesk /
+   Inter / JetBrains Mono). Tema CLARO. */
+
+/* Página /login renderizada FORA do shell (sem Sidebar) — ver components/Shell.tsx */
+.bare-main {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--void);
+  padding: var(--s-6, 32px);
+}
+
+.login-wrap {
+  width: 100%;
+  max-width: 380px;
+}
+
+.login-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--ink-800);
+  border: 1px solid var(--charcoal);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  padding: 30px 28px 22px;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.login-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.login-title {
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--text);
+  margin: 6px 0 0;
+}
+.login-hint {
+  font-size: 13px;
+  color: var(--text-faint);
+  margin: 0 0 6px;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.login-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.login-field input {
+  width: 100%;
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--void);
+  border: 1px solid var(--charcoal-2);
+  border-radius: var(--radius-xs);
+  padding: 11px 12px;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.login-field input:focus {
+  outline: none;
+  border-color: var(--indigo);
+  box-shadow: var(--ring-indigo);
+}
+.login-field input:disabled {
+  opacity: .6;
+}
+
+.login-error {
+  font-size: 13px;
+  color: var(--detractor);
+  background: var(--detractor-soft);
+  border: 1px solid var(--detractor-line);
+  border-radius: var(--radius-xs);
+  padding: 9px 11px;
+}
+
+.login-btn {
+  margin-top: 4px;
+  width: 100%;
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--grad-indigo);
+  border: none;
+  border-radius: var(--radius-xs);
+  padding: 12px 14px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px var(--indigo-glow);
+  transition: filter .12s ease, transform .06s ease, opacity .12s ease;
+}
+.login-btn:hover:not(:disabled) { filter: brightness(1.04); }
+.login-btn:active:not(:disabled) { transform: translateY(1px); }
+.login-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+.login-foot {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: -0.5px;
+}
+.login-foot b { color: var(--text); font-weight: 700; }
+.login-foot-dot { color: var(--gold-fill); font-weight: 700; }
+
+/* Botão "Sair" no rodapé da Sidebar */
+.sidebar-logout {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--charcoal-2);
+  border-radius: var(--radius-xs);
+  padding: 7px 11px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.sidebar-logout:hover:not(:disabled) {
+  background: var(--ink-700);
+  color: var(--text);
+  border-color: var(--charcoal);
+}
+.sidebar-logout:disabled { opacity: .6; cursor: default; }
+
+/* Selo discreto "editado por <operador>" — feedbacks + timeline 360 */
+.fb-edited {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+.tl-edited {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-style: italic;
+}

@@ -48,6 +48,18 @@ router = APIRouter(tags=["webhook"])
 _DEDUP_INDEX = "uq_messages_org_channel_msg_id"
 
 
+def _mask_phone(p: str | None) -> str:
+    """Mascara um telefone p/ log (M5): mantém DDI/início e os 2 últimos dígitos.
+
+    Ex.: '5524998365809' -> '5524****09'. None/curto -> '****'. Defesa adicional contra
+    PII nos logs do self-chat (que, de todo modo, M5 proíbe em produção).
+    """
+    s = (p or "").strip()
+    if len(s) < 6:
+        return "****"
+    return f"{s[:4]}****{s[-2:]}"
+
+
 def _is_dedup_violation(exc: IntegrityError) -> bool:
     """True só se o IntegrityError for da colisão no índice de dedup do transcript.
 
@@ -410,13 +422,13 @@ async def waha_webhook(
     inbound = _extract_inbound(raw)
     if inbound is None:
         if settings.self_chat_test:
-            # Modo de teste é verboso de propósito: dá visibilidade do que foi descartado.
-            import json as _json
-
-            logger.warning(
-                "[self-chat-test] descartado; raw=%s",
-                _json.dumps(raw, ensure_ascii=False, default=str)[:1500],
-            )
+            # Modo de teste: visibilidade do descarte, mas SEM despejar o raw cru (pode
+            # conter telefone/PII). Loga só as chaves de topo (estrutura, não conteúdo).
+            try:
+                _keys = list(raw.keys()) if isinstance(raw, dict) else type(raw).__name__
+            except Exception:  # noqa: BLE001
+                _keys = "?"
+            logger.warning("[self-chat-test] descartado; payload_keys=%s", _keys)
         return {"status": "ignored"}
 
     phone = inbound["from"]
@@ -442,12 +454,12 @@ async def waha_webhook(
             if settings.self_chat_test:
                 logger.warning(
                     "[self-chat-test] descartado (from!=to após resolução): from=%s to=%s",
-                    phone, to_phone,
+                    _mask_phone(phone), _mask_phone(to_phone),
                 )
             return {"status": "ignored"}
 
     if settings.self_chat_test:
-        logger.warning("[self-chat-test] aceito: phone=%s body=%.60r", phone, body)
+        logger.warning("[self-chat-test] aceito: phone=%s body=%.60r", _mask_phone(phone), body)
 
     # Dedup por waha_message_id é feito adiante (após resolver o contato), via
     # Message.channel_msg_id — curto-circuita retries do gateway.

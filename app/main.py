@@ -12,6 +12,8 @@ truststore.inject_into_ssl()
 
 import logging
 
+from app.config import settings
+
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +22,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api._security import require_panel_key
 from app.api.admin import router as admin_router
+from app.api.auth import require_operator
+from app.api.auth import router as auth_router
 from app.api.boards import router as boards_router
 from app.api.campanha import router as campanha_router
 from app.api.central import router as central_router
@@ -33,6 +37,21 @@ from app.api.webhook import router as webhook_router
 from app.api.whatsapp import router as whatsapp_router
 
 logger = logging.getLogger(__name__)
+
+# M5: SELF_CHAT_TEST aceita mensagens "do chat consigo mesmo" (fromMe) e loga o raw —
+# inaceitável em produção. Fail-FAST: o app NÃO sobe em prod com o modo ligado.
+if settings.app_env == "production" and settings.self_chat_test:
+    raise RuntimeError(
+        "SELF_CHAT_TEST ligado em produção — desligue SELF_CHAT_TEST (é só para E2E local)"
+    )
+
+# C2: origins do CORS vêm da env (CSV). Guard duro: nunca "*" junto com credentials —
+# o cookie de sessão é same-origin via BFF, mas a regra de segurança vale sempre.
+_cors_origins = settings.cors_allowed_origins_list
+if "*" in _cors_origins:
+    raise RuntimeError(
+        "CORS_ALLOWED_ORIGINS não pode conter '*' (incompatível com allow_credentials=True)"
+    )
 
 app = FastAPI(title="Escuta")
 
@@ -65,20 +84,28 @@ async def _catch_unhandled_errors(request: Request, call_next):
 # produz, anexando os headers de CORS na resposta de erro.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001", "http://127.0.0.1:3001"],
+    allow_origins=_cors_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Auth do PAINEL (X-Panel-Key) aplicada a TODOS os routers do painel via
-# dependencies=[Depends(require_panel_key)]. Fail-OPEN quando PANEL_API_KEY não está
-# setado (libera + WARN, p/ não quebrar piloto/suíte); fail-CLOSED quando setado.
-# ⚠️ EM PRODUÇÃO É OBRIGATÓRIO SETAR `PANEL_API_KEY` para a trava valer.
-# Exceções (NÃO ganham a dep do painel):
+# Auth do PAINEL em DUAS camadas, aplicada a TODOS os routers do painel:
+#   - require_panel_key (X-Panel-Key): "a chamada veio do nosso BFF" (trust server→server).
+#     Fail-OPEN em dev quando PANEL_API_KEY ausente; fail-CLOSED (503) em produção (C1).
+#   - require_operator (Authorization: Bearer <jwt>): "tem um operador logado por trás"
+#     (identidade p/ auditoria). SEM fail-open: sem token válido = 401 sempre.
+# ⚠️ EM PRODUÇÃO É OBRIGATÓRIO SETAR `PANEL_API_KEY` + os env de login (ver app/api/auth.py).
+# Exceções (NÃO ganham a dep do painel nem do operador):
 #   - webhook: tem a sua própria (require_waha_webhook_secret, #4);
 #   - events: tem HMAC próprio no handler (X-Escuta-Signature) — não mexemos;
-#   - integration: tem a sua (require_api_key, X-API-Key).
-_panel = [Depends(require_panel_key)]
+#   - integration: tem a sua (require_api_key, X-API-Key);
+#   - auth: login público (não pode exigir operador para logar).
+_panel = [Depends(require_panel_key), Depends(require_operator)]
+
+# Auth: login público de operador. Mantém o trust BFF (require_panel_key) mas NÃO exige
+# require_operator (senão ninguém logaria). /me e /logout validam o token no próprio handler.
+app.include_router(auth_router, prefix="/api", dependencies=[Depends(require_panel_key)])
 
 app.include_router(webhook_router, prefix="/api")
 app.include_router(admin_router, prefix="/api", dependencies=_panel)

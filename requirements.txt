@@ -9,6 +9,10 @@ pydantic>=2.6
 pydantic-settings>=2.2
 python-dotenv>=1.0
 numpy>=1.26
+# Login de operador (JWT HS256 + bcrypt). Puros (sem rede/TLS); bcrypt direto
+# (hashpw/checkpw) basta — sem passlib, sem argon2 (este quebra no win32).
+PyJWT>=2.8
+bcrypt>=4.1
 
 # Dev / testes
 pytest>=8.0

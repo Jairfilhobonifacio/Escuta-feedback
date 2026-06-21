@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import logging
 
+from app.api.auth import require_operator
 from app.config import settings
 from app.db import get_session
 from app.domain.clustering.inline import maybe_schedule_embed
@@ -85,6 +86,16 @@ async def _get_org(session: AsyncSession) -> Organization:
     if org is None:
         raise HTTPException(status_code=404, detail=f"org '{settings.default_org_slug}' não encontrada (rode o seed)")
     return org
+
+
+def _escape_like(s: str) -> str:
+    """Escapa os curingas de LIKE (`\\`, `%`, `_`) num termo de busca do usuário.
+
+    Sem isso, um termo com `%`/`_` vira curinga SQL (ex.: "100%" casaria qualquer coisa
+    começando com "100"). Escapamos a barra PRIMEIRO (senão re-escaparíamos as barras que
+    nós mesmos inserimos). Usar SEMPRE com `escape="\\"` no `.like()` (PG e SQLite honram).
+    """
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _abordado_inicio(periodo: str) -> datetime | None:
@@ -655,6 +666,13 @@ async def contact_360(contact_id: str, session: AsyncSession = Depends(get_sessi
                 # Nota interna do operador — editável na 360 (PATCH action_note).
                 "action_note": f.action_note,
                 "abordado": f.abordado,
+                # Auditoria: quem editou este item por último (feedback_log do contato).
+                "editado_por": (lambda e: e.get("por") if e else None)(
+                    _last_feedback_edit(contact, str(f.id))
+                ),
+                "editado_em": (lambda e: e.get("at") if e else None)(
+                    _last_feedback_edit(contact, str(f.id))
+                ),
                 "at": when.isoformat() if when else None,
             }
         )
@@ -1188,11 +1206,13 @@ async def list_clientes(
     # Contatos (com filtros SQL portáveis: search no nome/phone; perfil/plan_type no JSON).
     stmt = select(Contact).where(Contact.organization_id == org.id)
     if search:
-        term = f"%{search.strip().lower()}%"
+        # Escapa curingas do LIKE no termo do usuário (`%`/`_`/`\`) e casa o `escape`.
+        esc = _escape_like(search.strip())
+        term = f"%{esc.lower()}%"
         stmt = stmt.where(
             or_(
-                func.lower(func.coalesce(Contact.name, "")).like(term),
-                Contact.phone.like(f"%{re.sub(r'%', '', search.strip())}%"),
+                func.lower(func.coalesce(Contact.name, "")).like(term, escape="\\"),
+                Contact.phone.like(f"%{esc}%", escape="\\"),
             )
         )
     if perfil:
@@ -1408,6 +1428,7 @@ async def create_feedback(
     body: FeedbackCreateIn,
     session: AsyncSession = Depends(get_session),
     brain: SurveyBrain | None = Depends(get_brain),
+    operator: str = Depends(require_operator),
 ) -> dict[str, Any]:
     """Registra um feedback manual na mega central. Exige contato (id OU whatsapp).
 
@@ -1475,10 +1496,50 @@ async def create_feedback(
     )
     session.add(item)
     await session.commit()
+    # Auditoria: quem criou (log estruturado; o item novo ainda não tem histórico de edição).
+    logger.info("audit feedback_create por=%s id=%s type=%s", operator, item.id, item.type)
     # Camada 1: gera o embedding em background (fire-and-forget) SE a flag estiver ON.
     # Best-effort — não bloqueia nem pode derrubar a resposta. Off (default) = no-op.
     maybe_schedule_embed(item.id, org.id, text)
     return _feedback_out(item, contact)
+
+
+def _feedback_log_do_contato(contact: Contact | None) -> list[dict[str, Any]]:
+    """Log de edições de feedback do contato (append-only), tolerante a None/sujeira."""
+    if contact is None:
+        return []
+    raw = (contact.profile_data or {}).get("feedback_log")
+    if isinstance(raw, list):
+        return [e for e in raw if isinstance(e, dict)]
+    return []
+
+
+def _append_feedback_log(
+    contact: Contact, *, feedback_id: str, campos: list[str], por: str
+) -> None:
+    """Faz append de UM evento de edição em `profile_data["feedback_log"]` (auditoria
+    do "quem editou"). Mesmo mecanismo append-only do `selos_log` (copia-edita-reatribui
+    o profile_data inteiro p/ marcar o JSONB sujo). Formato do evento:
+    `{"feedback_id": str, "campos": [str...], "at": <ISO8601 UTC>, "por": str}`.
+    """
+    evento = {
+        "feedback_id": feedback_id,
+        "campos": campos,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "por": por,
+    }
+    p = dict(contact.profile_data or {})
+    p["feedback_log"] = [*_feedback_log_do_contato(contact), evento]
+    contact.profile_data = p
+
+
+def _last_feedback_edit(contact: Contact | None, feedback_id: str) -> dict[str, Any] | None:
+    """Último evento de edição (por data `at`) para um feedback_id, do feedback_log do
+    contato. None quando não há contato/log/evento. Usado p/ expor editado_por/editado_em."""
+    eventos = [e for e in _feedback_log_do_contato(contact) if e.get("feedback_id") == feedback_id]
+    if not eventos:
+        return None
+    return max(eventos, key=lambda e: e.get("at") or "")
 
 
 def _feedback_out(
@@ -1513,6 +1574,9 @@ def _feedback_out(
         raw_selos = (contact.profile_data or {}).get("selos")
         if isinstance(raw_selos, list):
             selos = [str(x) for x in raw_selos if x]
+    # Auditoria do "quem editou" (feedback_log no profile_data do contato). Opcional:
+    # null quando o item nunca foi editado por um operador (fallback gracioso na UI).
+    ultima_edicao = _last_feedback_edit(contact, str(f.id))
     return {
         "id": str(f.id),
         "contato_id": str(f.contact_id) if f.contact_id else None,
@@ -1537,6 +1601,9 @@ def _feedback_out(
         "follow_up_at": f.follow_up_at.isoformat() if f.follow_up_at else None,
         "occurred_em": when.isoformat() if when else None,
         "created_em": f.created_at.isoformat() if f.created_at else None,
+        # Auditoria (quem editou por último). null quando nunca editado.
+        "editado_por": ultima_edicao.get("por") if ultima_edicao else None,
+        "editado_em": ultima_edicao.get("at") if ultima_edicao else None,
     }
 
 
@@ -1722,11 +1789,12 @@ async def list_feedbacks(
             _follow_up_vencido_clause(follow_up_vencido, datetime.now(timezone.utc))
         )
     if search:
-        term = f"%{search.strip().lower()}%"
+        # Escapa curingas do LIKE no termo do usuário (`%`/`_`/`\`) e casa o `escape`.
+        term = f"%{_escape_like(search.strip()).lower()}%"
         base = base.where(
             or_(
-                func.lower(func.coalesce(FeedbackItem.text, "")).like(term),
-                func.lower(func.coalesce(Contact.name, "")).like(term),
+                func.lower(func.coalesce(FeedbackItem.text, "")).like(term, escape="\\"),
+                func.lower(func.coalesce(Contact.name, "")).like(term, escape="\\"),
             )
         )
     # Filtros "por tipo de cliente" (snapshot partner do CONTATO juntado): estado/perfil/
@@ -1892,6 +1960,7 @@ async def move_feedback(
     feedback_id: str,
     body: FeedbackMoveIn,
     session: AsyncSession = Depends(get_session),
+    operator: str = Depends(require_operator),
 ) -> dict[str, Any]:
     """Move um card no board: troca o `action_status` (valida o vocabulário). Se
     `status=='planejado'` e vier `improvement_id`, vincula o feedback à melhoria (404 se
@@ -1936,8 +2005,6 @@ async def move_feedback(
     if "assignee" in sent:
         feedback.assignee = (body.assignee.strip() or None) if body.assignee else None
 
-    await session.commit()
-
     contact = None
     if feedback.contact_id is not None:
         contact = (
@@ -1948,6 +2015,17 @@ async def move_feedback(
                 )
             )
         ).scalar_one_or_none()
+
+    # Auditoria do "quem moveu": grava no feedback_log do contato (append-only) E loga.
+    if contact is not None:
+        _append_feedback_log(
+            contact, feedback_id=str(feedback.id), campos=["action_status"], por=operator
+        )
+    logger.info(
+        "audit feedback_move por=%s id=%s status=%s", operator, feedback.id, feedback.action_status
+    )
+
+    await session.commit()
     return _feedback_out(feedback, contact)
 
 
@@ -1980,6 +2058,7 @@ async def update_feedback_action(
     feedback_id: str,
     body: FeedbackActionIn,
     session: AsyncSession = Depends(get_session),
+    operator: str = Depends(require_operator),
 ) -> dict[str, Any]:
     """Edição parcial de um feedback: ação (status/nota), flag `abordado` (ao virar
     True grava `abordado_em`=agora se vazio; ao virar False zera), atribuição
@@ -2072,8 +2151,6 @@ async def update_feedback_action(
             else None
         )
 
-    await session.commit()
-
     contact = None
     if feedback.contact_id is not None:
         contact = (
@@ -2084,6 +2161,22 @@ async def update_feedback_action(
                 )
             )
         ).scalar_one_or_none()
+
+    # Auditoria do "quem editou": grava append-only no feedback_log do contato (mesmo
+    # padrão do selos_log), só quando há contato E algum campo foi de fato enviado.
+    # `sent` é o conjunto de campos do PATCH (model_fields_set) — distingue "não enviado".
+    # Best-effort: a auditoria NÃO derruba o PATCH (try/except que engole).
+    campos = sorted(sent)
+    if contact is not None and campos:
+        try:
+            _append_feedback_log(
+                contact, feedback_id=str(feedback.id), campos=campos, por=operator
+            )
+        except Exception:  # noqa: BLE001 — auditoria é best-effort.
+            logger.warning("audit feedback_patch: falha ao gravar feedback_log", exc_info=True)
+    logger.info("audit feedback_patch por=%s id=%s campos=%s", operator, feedback.id, campos)
+
+    await session.commit()
     return _feedback_out(feedback, contact)
 
 
@@ -2091,6 +2184,7 @@ async def update_feedback_action(
 async def delete_feedback(
     feedback_id: str,
     session: AsyncSession = Depends(get_session),
+    operator: str = Depends(require_operator),
 ) -> None:
     """Remove um feedback da org. 404 se não pertencer à org. 204 sem corpo."""
     org = await _get_org(session)
@@ -2108,6 +2202,10 @@ async def delete_feedback(
     ).scalar_one_or_none()
     if feedback is None:
         raise HTTPException(status_code=404, detail="feedback não encontrado")
+
+    # Auditoria do "quem apagou": o item some, então não há onde anexar log — registramos
+    # via log estruturado (warning, por ser destrutivo).
+    logger.warning("audit feedback_delete por=%s id=%s", operator, fid)
 
     await session.delete(feedback)
     await session.commit()

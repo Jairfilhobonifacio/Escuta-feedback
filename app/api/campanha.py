@@ -31,6 +31,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import _get_org
+from app.api.auth import require_operator
 from app.config import settings
 from app.db import get_session
 from app.domain.contacts.whatsapp import alcance as _wa_alcance
@@ -336,9 +337,17 @@ async def delete_selo(nome: str, session: AsyncSession = Depends(get_session)) -
 
 @router.post("/contacts/{contact_id}/selos", status_code=201)
 async def apply_selo(
-    contact_id: str, body: SeloApplyIn, session: AsyncSession = Depends(get_session)
+    contact_id: str,
+    body: SeloApplyIn,
+    session: AsyncSession = Depends(get_session),
+    operator: str = Depends(require_operator),
 ) -> dict[str, Any]:
-    """Aplica um selo a um contato (cria no catálogo se for novo; idempotente)."""
+    """Aplica um selo a um contato (cria no catálogo se for novo; idempotente).
+
+    Captura a identidade do operador (`sub` do JWT) para auditar o "quem" no
+    `selos_log.por` — o router já está protegido por `_panel`; este param só lê a
+    identidade, espelhando o que admin.py faz no PATCH de feedbacks.
+    """
     org = await _get_org(session)
     contact = await _get_contact(session, org, contact_id)
     nome = body.nome.strip()
@@ -350,8 +359,8 @@ async def apply_selo(
     # cor, então fazemos o upsert COM a cor aqui (manual pode definir cor).
     _upsert_catalogo(org, nome, cor)
 
-    # Camada com LOG: aplica + registra origem="manual" (idempotente).
-    aplicar_selo(contact, nome, origem="manual")
+    # Camada com LOG: aplica + registra origem="manual" e por=operador (idempotente).
+    aplicar_selo(contact, nome, origem="manual", por=operator)
 
     await session.commit()
     return {"contato_id": str(contact.id), "selos": _selos_do_contato(contact)}
@@ -359,16 +368,23 @@ async def apply_selo(
 
 @router.delete("/contacts/{contact_id}/selos/{nome}", status_code=200)
 async def remove_selo(
-    contact_id: str, nome: str, session: AsyncSession = Depends(get_session)
+    contact_id: str,
+    nome: str,
+    session: AsyncSession = Depends(get_session),
+    operator: str = Depends(require_operator),
 ) -> dict[str, Any]:
-    """Remove o selo daquele contato (não mexe no catálogo)."""
+    """Remove o selo daquele contato (não mexe no catálogo).
+
+    Captura a identidade do operador (`sub` do JWT) para auditar o "quem" no
+    `selos_log.por` — espelha apply_selo/admin.py; o param só lê a identidade.
+    """
     org = await _get_org(session)
     contact = await _get_contact(session, org, contact_id)
     alvo = (nome or "").strip()
 
-    # Camada com LOG: remove + registra origem="manual" (idempotente; só commita se
-    # de fato removeu, mantendo o comportamento anterior de não commitar à toa).
-    if remover_selo(contact, alvo, origem="manual"):
+    # Camada com LOG: remove + registra origem="manual" e por=operador (idempotente; só
+    # commita se de fato removeu, mantendo o comportamento anterior de não commitar à toa).
+    if remover_selo(contact, alvo, origem="manual", por=operator):
         await session.commit()
 
     return {"contato_id": str(contact.id), "selos": _selos_do_contato(contact)}

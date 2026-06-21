@@ -1294,6 +1294,14 @@ function FeedbackCard({
         {isChurn && <span className="badge detractor fb-chip-sm">Churn</span>}
         {followUp.agendado && <FollowUpPill iso={fb.follow_up_at} />}
         {themeChips(fb.themes)}
+        {fb.editado_por && (
+          <span
+            className="fb-edited"
+            title={`Editado manualmente${fb.editado_em ? ` em ${fmtDate(fb.editado_em)}` : ""}`}
+          >
+            editado por {fb.editado_por}
+          </span>
+        )}
         <SeloControl fb={fb} onSelosChanged={(selos) => onSelosChanged(fb.id, selos)} />
       </div>
 

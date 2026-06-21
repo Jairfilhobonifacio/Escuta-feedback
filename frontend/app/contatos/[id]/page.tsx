@@ -1281,6 +1281,12 @@ function TimelineRow({
         </div>
       )}
       {themeChips(t.themes)}
+      {t.editado_por && (
+        <div className="tl-edited" title="Edição manual do feedback">
+          editado por {t.editado_por}
+          {t.editado_em ? ` · ${fmtDate(t.editado_em)}` : ""}
+        </div>
+      )}
       <div className="tl-src">
         via {SOURCE_LABEL[t.source] ?? t.source}
         {t.survey_name ? ` · ${t.survey_name}` : ""}
@@ -1858,6 +1864,8 @@ export default function Contact360Page() {
                 score: updated.score,
                 bucket: updated.nps_bucket,
                 follow_up_at: updated.follow_up_at,
+                editado_por: updated.editado_por,
+                editado_em: updated.editado_em,
               }
             : t,
         ),

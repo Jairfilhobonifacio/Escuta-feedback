@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import sys
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -28,6 +29,26 @@ import app.models.feedback  # noqa: E402,F401
 import app.models.improvement  # noqa: E402,F401
 import app.models.playbook  # noqa: E402,F401
 import app.models.cluster  # noqa: E402,F401
+
+
+@pytest.fixture(autouse=True)
+def _operator_override():
+    """Hardening: os routers do painel agora exigem `require_operator` (Bearer JWT) além
+    do X-Panel-Key. A suíte de integração não emite JWT — então, por DEFAULT, sobrepomos a
+    dependency com um operador de teste fixo. Os testes específicos de auth (test_auth.py)
+    LIMPAM esse override quando precisam exercitar o 401 real.
+    """
+    from app.api.auth import require_operator
+    from app.main import app
+
+    async def _fake_operator() -> str:
+        return "operador-teste"
+
+    app.dependency_overrides[require_operator] = _fake_operator
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(require_operator, None)
 
 
 @pytest_asyncio.fixture

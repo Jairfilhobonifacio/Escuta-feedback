@@ -11,6 +11,27 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Settings:
+    # Ambiente de execução: "dev" (default) ou "production". Liga o fail-CLOSED dos
+    # segredos do painel/webhook (ver app/api/_security.py) e o guard do SELF_CHAT_TEST
+    # no startup (app/main.py). NUNCA confiar só nele para segurança — é o gatilho que
+    # transforma os fail-OPEN de dev em fail-CLOSED.
+    app_env: str = os.getenv("APP_ENV", "dev")
+    # CSV de origins permitidos no CORS. Default = localhost dev (3001). Em produção,
+    # setar o domínio do painel (Vercel). NUNCA pode conter "*" junto com credentials
+    # (guard duro no startup do main.py). Parse via `cors_allowed_origins_list`.
+    cors_allowed_origins: str = os.getenv(
+        "CORS_ALLOWED_ORIGINS", "http://localhost:3001,http://127.0.0.1:3001"
+    )
+    # --- Login de operador (JWT HS256) -------------------------------------------
+    # Segredo de assinatura do JWT (HS256). VIVE SÓ NO BACKEND (o front nunca o vê).
+    # >=32 bytes aleatórios. Sem ele, /api/auth/login responde 503 (login desligado) e,
+    # em produção, require_operator também fecha (503). Gerar com secrets.token_urlsafe.
+    jwt_secret: str | None = os.getenv("JWT_SECRET")
+    # Usuário do operador (piloto = 1 operador). String. Sem ele, login = 503.
+    operator_user: str | None = os.getenv("ESCUTA_OPERATOR_USER")
+    # Hash bcrypt da senha do operador ($2b$...). Gerado por scripts/_gen_operator_hash.py
+    # (NUNCA a senha em claro). Sem ele, login = 503.
+    operator_password_hash: str | None = os.getenv("ESCUTA_OPERATOR_PASSWORD_HASH")
     # postgresql+asyncpg://user:pass@host:5432/db  (Supabase)
     database_url: str = os.getenv("DATABASE_URL", "")
     # Gateway WAHA
@@ -123,6 +144,11 @@ class Settings:
     priority_volume_ref: int = int(os.getenv("PRIORITY_VOLUME_REF", "10"))
     # Multiplicador de receita do pagante de plano ALTO (anual) vs. mensal (1.0).
     priority_plano_alto_mult: float = float(os.getenv("PRIORITY_PLANO_ALTO_MULT", "1.5"))
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        """Origins do CORS parseados do CSV `cors_allowed_origins` (sem vazios)."""
+        return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
 
 
 settings = Settings()
