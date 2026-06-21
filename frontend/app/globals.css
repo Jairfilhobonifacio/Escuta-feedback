@@ -2349,209 +2349,259 @@ tbody tr:hover td { color: var(--text); }
   .active\:translate-y-0:active { transform: none !important; }
 }
 
-/* ===== Tela Monitorar — 4 numeros / NPS / respostas (movido do styled-jsx) ===== */
-        /* ---- 4 números-herói: grandes, muito respiro, 1 acento por card ---- */
-        .mon-hero {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: var(--s-7);
-          margin-bottom: var(--s-9);
-        }
-        .mon-num {
-          position: relative;
-          overflow: hidden;
-          padding: var(--s-8) var(--s-7) var(--s-7);
-          transition-property: transform, box-shadow, border-color;
-          transition-duration: 180ms;
-          transition-timing-function: var(--ease);
-        }
-        .mon-num:hover {
-          transform: translateY(-2px);
-          box-shadow: var(--shadow-pop);
-          border-color: var(--charcoal-2);
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .mon-num:hover {
-            transform: none;
-          }
-        }
-        .mon-num-accent {
-          position: absolute;
-          left: 0;
-          right: 0;
-          top: 0;
-          height: 3px;
-        }
-        .mon-num-label {
-          font-size: 12px;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-          color: var(--text-faint);
-        }
-        .mon-num-value {
-          font-family: var(--mono);
-          font-size: clamp(44px, 5vw, 60px);
-          font-weight: 600;
-          line-height: 1;
-          letter-spacing: -2px;
-          color: var(--text);
-          margin: 18px 0 14px;
-        }
-        .mon-num-sub {
-          font-size: 13px;
-          line-height: 1.5;
-          color: var(--text-faint);
-          text-wrap: pretty;
-        }
+/* ===== Tela Monitorar — 1 FOCO (NPS herói) + satélites + ação + respostas =====
+   Composição: o NPS é a ÚNICA mancha dominante (gold, ~96px). Os 4 números
+   recuam ao redor (~40px mono → salto ≥2,3×). Cor de destaque (gold) reservada
+   ao focal; indigo = estrutura/marca. Ritmo na escala 8/16/24/40. Caminho do
+   olho: cabeçalho → herói → satélites → faixa de ação → métricas → respostas. */
 
-        /* ---- NPS: score à esquerda, distribuição arejada à direita ---- */
-        .mon-nps {
-          display: grid;
-          grid-template-columns: minmax(180px, 0.7fr) 2fr;
-          gap: var(--s-8);
-          align-items: center;
-          padding: var(--s-8);
-          margin-bottom: var(--s-9);
-        }
-        .mon-nps-score {
-          border-right: 1px solid var(--charcoal);
-          padding-right: var(--s-8);
-        }
-        .mon-nps-eyebrow {
-          font-size: 12px;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-          color: var(--text-faint);
-        }
-        .mon-nps-value {
-          font-family: var(--mono);
-          font-size: clamp(52px, 6vw, 72px);
-          font-weight: 600;
-          line-height: 1;
-          letter-spacing: -2px;
-          margin: 12px 0 10px;
-        }
-        .mon-nps-cap {
-          font-size: 13px;
-          color: var(--text-faint);
-        }
-        .mon-nps-dist .dist-bar {
-          height: 16px;
-          margin-top: 0;
-        }
-        .mon-nps-legend {
-          display: flex;
-          flex-wrap: wrap;
-          gap: var(--s-7);
-          margin-top: var(--s-6);
-        }
-        .mon-nps-leg {
-          display: flex;
-          align-items: baseline;
-          gap: 8px;
-        }
-        .mon-nps-leg .dot {
-          width: 9px;
-          height: 9px;
-          border-radius: 999px;
-          align-self: center;
-        }
-        .mon-nps-leg-n {
-          font-size: 20px;
-          font-weight: 600;
-          color: var(--text);
-        }
-        .mon-nps-leg-l {
-          font-size: 13px;
-          color: var(--text-dim);
-        }
-        .mon-empty-inline {
-          font-size: 13.5px;
-          color: var(--text-faint);
-          font-style: italic;
-          margin: 0;
-        }
+/* ---- cabeçalho: kicker + título + régua de marca (gesto §3.4) ---- */
+.mon-head-left { min-width: 0; }
+.mon-kicker {
+  display: block;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.4px; color: var(--text-faint);
+  margin-bottom: 8px;
+}
+.mon-rule {
+  display: block;
+  width: 54px; height: 3px; border-radius: 3px;
+  margin: 12px 0 0;
+  background: var(--grad-indigo);
+}
+.mon-rule.sm { width: 40px; height: 2px; margin: 8px 0 10px; }
 
-        /* ---- lista de respostas: nota + fala, bastante espaço entre linhas ---- */
-        .mon-resp-list {
-          list-style: none;
-          margin: 0;
-          padding: 0;
-          display: flex;
-          flex-direction: column;
-        }
-        .mon-resp-item {
-          display: flex;
-          align-items: flex-start;
-          gap: var(--s-5);
-          padding: var(--s-6) var(--pad-card-x);
-          border-top: 1px solid var(--charcoal);
-        }
-        .mon-resp-item:first-child {
-          border-top: none;
-        }
-        .mon-resp-body {
-          min-width: 0;
-          flex: 1;
-        }
-        .mon-resp-top {
-          display: flex;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 10px;
-          margin-bottom: 6px;
-        }
-        .mon-resp-who {
-          font-family: var(--font-display);
-          font-weight: 700;
-          font-size: 15px;
-          letter-spacing: -0.3px;
-          color: var(--text);
-        }
-        .mon-resp-when {
-          margin-left: auto;
-          font-size: 12.5px;
-          color: var(--text-faint);
-          white-space: nowrap;
-        }
-        .mon-resp-text {
-          font-size: 14.5px;
-          line-height: 1.6;
-          color: var(--text);
-          margin: 0;
-          text-wrap: pretty;
-        }
-        .mon-resp-text.empty-text {
-          color: var(--text-faint);
-          font-style: italic;
-        }
+/* ---- FOCO + SATÉLITES: herói à esquerda, grade 2×2 à direita ---- */
+.mon-top {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: var(--s-6);
+  margin-bottom: var(--s-7);
+}
 
-        @media (max-width: 980px) {
-          .mon-hero {
-            grid-template-columns: repeat(2, 1fr);
-          }
-          .mon-nps {
-            grid-template-columns: 1fr;
-            gap: var(--s-6);
-          }
-          .mon-nps-score {
-            border-right: none;
-            border-bottom: 1px solid var(--charcoal);
-            padding-right: 0;
-            padding-bottom: var(--s-6);
-          }
-        }
-        @media (max-width: 560px) {
-          .mon-hero {
-            grid-template-columns: 1fr;
-          }
-          .mon-resp-when {
-            margin-left: 0;
-            flex-basis: 100%;
-          }
-        }
+/* HERÓI: card do NPS — fio gold no topo, número gigante gold, leve banho gold */
+.mon-hero-nps {
+  position: relative;
+  overflow: hidden;
+  padding: var(--s-7) var(--s-8) var(--s-7);
+  border-color: var(--charcoal-2);
+  background:
+    linear-gradient(180deg, rgba(245, 166, 35, 0.06), transparent 42%),
+    var(--ink-800);
+  display: flex; flex-direction: column;
+}
+.mon-hero-nps::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; height: 3px;
+  background: linear-gradient(90deg, var(--gold-fill), transparent 72%);
+}
+.mon-hero-eyebrow {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.2px; color: var(--text-faint);
+}
+.mon-hero-value {
+  font-family: var(--font-display);
+  font-size: clamp(72px, 8vw, 96px);
+  font-weight: 700; line-height: 0.95;
+  letter-spacing: -4px;
+  color: var(--gold-soft);
+  margin: 14px 0 8px;
+  display: flex; align-items: baseline;
+}
+.mon-hero-unit {
+  font-family: var(--mono);
+  font-size: 22px; font-weight: 600; letter-spacing: -0.5px;
+  color: var(--text-ghost); margin-left: 10px;
+}
+.mon-hero-cap { font-size: 13.5px; color: var(--text-faint); }
+.mon-hero-dist { margin-top: var(--s-6); }
+.mon-hero-dist .dist-bar { height: 14px; margin-top: 0; }
+.mon-hero-legend {
+  display: flex; flex-wrap: wrap; gap: var(--s-6) var(--s-7);
+  margin-top: var(--s-4);
+}
+.mon-hero-leg { display: flex; align-items: baseline; gap: 7px; }
+.mon-hero-leg .dot { width: 8px; height: 8px; border-radius: 999px; align-self: center; }
+.mon-hero-leg-n { font-size: 16px; font-weight: 600; color: var(--text); }
+.mon-hero-leg-l { font-size: 12.5px; color: var(--text-dim); }
+.mon-empty-inline {
+  font-size: 13.5px; color: var(--text-faint); font-style: italic;
+  margin: var(--s-6) 0 0;
+}
+
+/* SATÉLITES: grade 2×2 dos 4 números — recuam (escala ~40px) */
+.mon-sats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-4);
+}
+.mon-sat {
+  position: relative;
+  overflow: hidden;
+  padding: var(--s-5) var(--s-6);
+  display: flex; flex-direction: column;
+  transition-property: transform, box-shadow, border-color;
+  transition-duration: 180ms;
+  transition-timing-function: var(--ease);
+}
+.mon-sat:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-pop);
+  border-color: var(--charcoal-2);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mon-sat:hover { transform: none; }
+}
+.mon-sat-accent {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+}
+.mon-sat-label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.8px; color: var(--text-faint);
+}
+.mon-sat-value {
+  font-family: var(--mono);
+  font-size: clamp(34px, 3.6vw, 42px);
+  font-weight: 600; line-height: 1;
+  letter-spacing: -1.5px; color: var(--text);
+  margin: 10px 0 8px;
+  display: flex; align-items: baseline;
+}
+.mon-sat-unit {
+  font-size: 16px; font-weight: 500; margin-left: 5px; color: var(--text-faint);
+}
+.mon-sat-sub {
+  font-size: 12.5px; line-height: 1.45; color: var(--text-faint);
+  text-wrap: pretty; margin-top: auto;
+}
+
+/* ---- FAIXA "o que fazer agora": ponte de ação, acento indigo à esquerda ---- */
+.mon-act {
+  position: relative;
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-3) var(--s-4);
+  padding: var(--s-4) var(--s-5) var(--s-4) calc(var(--s-5) + 4px);
+  margin-bottom: var(--s-7);
+  background: var(--ink-800);
+  border: 1px solid var(--charcoal);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.mon-act-bar {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: var(--grad-indigo);
+}
+.mon-act-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text-faint); white-space: nowrap;
+}
+.mon-act-pills { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.mon-act-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 600; line-height: 1.25;
+  border: 1px solid transparent;
+}
+.mon-act-pill .mon-act-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+}
+.mon-act-pill.alert {
+  color: var(--detractor);
+  background: var(--detractor-soft);
+  border-color: var(--detractor-line);
+}
+.mon-act-pill.alert .mon-act-dot { background: var(--detractor); }
+.mon-act-pill.watch {
+  color: var(--indigo-light);
+  background: var(--promoter-soft);
+  border-color: var(--promoter-line);
+}
+.mon-act-pill.watch .mon-act-dot { background: var(--indigo); }
+
+/* ---- seções (métricas / respostas): título + régua + sub, depois ritmo ---- */
+.mon-section { margin-bottom: var(--s-8); }
+.mon-section-head { margin-bottom: var(--s-5); }
+.mon-section-head .card-head-sub { margin-top: 0; }
+
+.mon-met-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s-4);
+}
+.mon-met { padding: var(--s-6); }
+.mon-met .mon-sat-value { font-size: clamp(34px, 3.6vw, 44px); }
+
+/* NPS por tema — mini-lista */
+.mon-temas { margin-top: var(--s-4); }
+.mon-temas-list { list-style: none; margin: 0; padding: 0; }
+.mon-temas-item {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: 12px var(--pad-card-x);
+  border-top: 1px solid var(--charcoal);
+}
+.mon-temas-txt { min-width: 0; flex: 1; }
+.mon-temas-name { font-weight: 600; font-size: 14.5px; color: var(--text); }
+.mon-temas-meta { font-size: 12.5px; color: var(--text-faint); margin-top: 2px; }
+
+/* ---- lista de respostas: badge em COLUNA FIXA, fala, nota mono à direita ---- */
+.mon-resp-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+}
+.mon-resp-item {
+  display: flex; align-items: flex-start; gap: var(--s-4);
+  padding: var(--s-5) var(--pad-card-x);
+  border-top: 1px solid var(--charcoal);
+}
+.mon-resp-item:first-child { border-top: none; }
+.mon-resp-item > .score-pill { flex-shrink: 0; }
+.mon-resp-body { min-width: 0; flex: 1; }
+.mon-resp-top {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 9px;
+  margin-bottom: 5px;
+}
+.mon-resp-who {
+  font-family: var(--font-display);
+  font-weight: 700; font-size: 15px; letter-spacing: -0.3px;
+  color: var(--text);
+}
+.mon-resp-when {
+  font-size: 12.5px; color: var(--text-faint); white-space: nowrap;
+}
+.mon-resp-text {
+  font-size: 14.5px; line-height: 1.6; color: var(--text);
+  margin: 0; text-wrap: pretty;
+}
+.mon-resp-text.empty-text { color: var(--text-faint); font-style: italic; }
+
+/* nota grande mono à direita (coluna fixa, eixo alinhado em todas as linhas) */
+.mon-resp-nota {
+  flex-shrink: 0; width: 56px;
+  display: flex; flex-direction: column; align-items: flex-end;
+  text-align: right;
+}
+.mon-resp-nota-lbl {
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text-ghost);
+}
+.mon-resp-nota-n {
+  font-family: var(--mono);
+  font-size: 26px; font-weight: 600; line-height: 1.1;
+  letter-spacing: -1px; color: var(--text);
+}
+.mon-resp-nota-n.promoter { color: var(--indigo-light); }
+.mon-resp-nota-n.passive { color: var(--gold-soft); }
+.mon-resp-nota-n.detractor { color: var(--detractor); }
+
+@media (max-width: 980px) {
+  .mon-top { grid-template-columns: 1fr; gap: var(--s-5); }
+}
+@media (max-width: 560px) {
+  .mon-sats { grid-template-columns: 1fr; }
+  .mon-resp-item { gap: var(--s-3); }
+  .mon-resp-nota { width: 44px; }
+  .mon-resp-nota-n { font-size: 22px; }
+}
 
 /* === Board follow-up =======================================================
    O "Trello simples" do dono (board default-followup): 3 colunas, cards ENXUTOS,

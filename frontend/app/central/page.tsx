@@ -12,17 +12,19 @@ import {
 /* ============================================================================
    MONITORAR — a tela principal do painel (a home redireciona pra cá).
 
-   Pensada pra uma reunião: bate o olho e entende. De cima pra baixo:
-     1) Título "Monitorar" + uma linha de contexto.
-     2) Os 4 NÚMEROS GRANDES e honestos sobre a BASE TOTAL de contatos:
-        Abordados · Responderam · Não responderam · Cancelaram. Quando é um
-        recorte (Cancelaram é um segmento), o número mostra o denominador.
-     3) O NPS — média + promotores/neutros/detratores.
-     4) As RESPOSTAS dos clientes, limpas: nome, nota, texto e data.
+   Composição (1 FOCO + satélites + ação): bate o olho e entende em 2s.
+     1) Kicker + título "Monitorar" + régua de marca + linha de contexto.
+     2) HERÓI: o NPS (número gigante em GOLD, fio gold no topo) — a ÚNICA
+        mancha dominante. Ao lado, em escala ~2,3× menor, os 4 NÚMEROS
+        satélites sobre a base total: Abordados · Responderam · Não
+        responderam · Cancelaram. "Cancelaram" mostra o denominador.
+     3) Faixa "o que fazer agora" — ponte de AÇÃO (pills acionáveis).
+     4) MÉTRICAS da operação: resolução, loops, tempo, follow-ups (+NPS/tema).
+     5) RESPOSTAS dos clientes: badge em coluna fixa, fala, nota mono à direita.
 
-   Clareza acima de tudo: muito respiro, hierarquia óbvia, nada poluído.
-   Reusa o design system Bizzu (card/kpi/badge/score-pill) e os tokens de tema
-   (CSS vars). Sem emoji literal (bundler Windows) — só ícones SVG inline.
+   Cor de destaque (gold) RESERVADA ao focal (NPS). Indigo é estrutura/marca
+   (régua, barras, faixa). Caminho do olho top→fim. Reusa o design system Bizzu
+   e os tokens de tema (CSS vars). Sem emoji literal (bundler Windows).
 
    Consome 2 endpoints sob /api/central (overview / nps). Cada bloco degrada
    com elegância (skeleton no load; erro só quando o overview — a espinha —
@@ -181,14 +183,21 @@ function buildDestaques(ov: CentralOverview): Destaque[] {
 function MonitorarSkeleton() {
   return (
     <div aria-busy="true">
-      <div className="mon-hero">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="card mon-num">
-            <div className="sk-line sk-sm w-60" />
-            <div className="sk-line sk-lg w-40" style={{ height: 52, margin: "18px 0 14px" }} />
-            <div className="sk-line sk-sm w-80" />
-          </div>
-        ))}
+      <div className="mon-top">
+        <div className="card mon-hero-nps">
+          <div className="sk-line sk-sm w-40" />
+          <div className="sk-line sk-lg" style={{ height: 84, width: 160, margin: "20px 0 16px" }} />
+          <div className="sk-line sk-sm w-80" />
+        </div>
+        <div className="mon-sats">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="card mon-sat">
+              <div className="sk-line sk-sm w-60" />
+              <div className="sk-line sk-lg w-40" style={{ height: 34, margin: "12px 0 10px" }} />
+              <div className="sk-line sk-sm w-80" />
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -220,7 +229,11 @@ export default function MonitorarPage() {
     return (
       <div>
         <div className="page-head">
-          <h1 className="page-title">Monitorar</h1>
+          <div className="mon-head-left">
+            <span className="mon-kicker">Monitorar a operação</span>
+            <h1 className="page-title">Monitorar</h1>
+            <span className="mon-rule" aria-hidden />
+          </div>
         </div>
         <div className="flash err">
           Não consegui carregar os números ({err}). A API está rodando em{" "}
@@ -234,8 +247,10 @@ export default function MonitorarPage() {
     return (
       <div>
         <div className="page-head">
-          <div>
+          <div className="mon-head-left">
+            <span className="mon-kicker">Monitorar a operação</span>
             <h1 className="page-title">Monitorar</h1>
+            <span className="mon-rule" aria-hidden />
             <div className="page-sub">reunindo os números da operação…</div>
           </div>
           <span className="refresh-note">atualiza a cada 30s</span>
@@ -265,9 +280,9 @@ export default function MonitorarPage() {
   const followUpPendentes = met?.follow_up_pendentes ?? 0;
   const temMetricas = !!(mTaxa || mLoops || mTempo || mTemas.length > 0 || followUpPendentes > 0);
 
-  // Os 4 números-herói, sobre a BASE TOTAL. "Cancelaram" é um recorte da base
-  // (segmento churn) → mostra o denominador no rótulo de apoio.
-  const HERO: {
+  // Os 4 números SATÉLITES, sobre a BASE TOTAL. "Cancelaram" é um recorte da
+  // base (segmento churn) → mostra o denominador no rótulo de apoio.
+  const SATS: {
     label: string;
     n: number;
     sub: string;
@@ -319,8 +334,10 @@ export default function MonitorarPage() {
   return (
     <div>
       <div className="page-head">
-        <div>
+        <div className="mon-head-left">
+          <span className="mon-kicker">Monitorar a operação</span>
           <h1 className="page-title">Monitorar</h1>
+          <span className="mon-rule" aria-hidden />
           <div className="page-sub">
             De relance: quantos clientes a gente abordou, quantos responderam, quantos
             ainda não e quantos cancelaram — e o que eles disseram.
@@ -329,151 +346,104 @@ export default function MonitorarPage() {
         <span className="refresh-note">atualiza a cada 30s</span>
       </div>
 
-      {/* 0) DESTAQUES — "o que fazer agora", computado client-side dos números
-         que já chegam. Pills pequenas; cor por severidade. Some se vazio. */}
-      {destaques.length > 0 && (
-        <Reveal
-          aria-label="Destaques: o que fazer agora"
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            gap: 8,
-            margin: "0 0 18px",
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: 1,
-              textTransform: "uppercase",
-              color: "var(--text-faint)",
-              marginRight: 2,
-            }}
-          >
-            O que fazer agora
-          </span>
-          {destaques.map((d) => {
-            const isAlert = d.sev === "alert";
-            return (
-              <span
-                key={d.id}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "5px 11px",
-                  borderRadius: 999,
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  lineHeight: 1.25,
-                  color: isAlert ? "var(--detractor)" : "var(--indigo-light)",
-                  background: isAlert ? "var(--detractor-soft)" : "var(--promoter-soft)",
-                  border: `1px solid ${isAlert ? "var(--detractor-line)" : "var(--promoter-line)"}`,
-                }}
-              >
-                <span
-                  aria-hidden
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    flexShrink: 0,
-                    background: isAlert ? "var(--detractor)" : "var(--indigo)",
-                  }}
-                />
-                {d.text}
-              </span>
-            );
-          })}
-        </Reveal>
-      )}
-
-      {/* 1) OS 4 NÚMEROS — grandes, honestos, sobre a base total */}
-      <Stagger className="mon-hero" stagger={0.06}>
-        {HERO.map((h) => (
-          <StaggerItem key={h.label} className="card mon-num">
-            <span className="mon-num-accent" style={{ background: h.accent }} aria-hidden />
-            <div className="mon-num-label">{h.label}</div>
-            <div className={`mon-num-value ${h.cls ?? ""}`}>{h.n}</div>
-            <div className="mon-num-sub">{h.sub}</div>
-          </StaggerItem>
-        ))}
-      </Stagger>
-
-      {/* 2) NPS — média + promotores/neutros/detratores (buckets em inglês) */}
-      <Reveal className="card mon-nps">
-        <div className="mon-nps-score">
-          <div className="mon-nps-eyebrow">NPS médio</div>
-          <div className={`mon-nps-value ${npsClass(nps.media)}`}>{nps.media ?? "—"}</div>
-          <div className="mon-nps-cap">
+      {/* 1) FOCO + SATÉLITES — o NPS é o herói (gold, gigante); os 4 números
+         sobre a base total recuam ao redor, ~2,3× menores. */}
+      <div className="mon-top">
+        {/* HERÓI: NPS — média + distribuição/buckets dentro do próprio card */}
+        <Reveal className="card mon-hero-nps">
+          <div className="mon-hero-eyebrow">NPS da operação</div>
+          <div className={`mon-hero-value ${npsClass(nps.media)}`}>
+            {nps.media ?? "—"}
+            <span className="mon-hero-unit">/10</span>
+          </div>
+          <div className="mon-hero-cap">
             {nps.deram} de {base} deram nota
           </div>
-        </div>
 
-        <div className="mon-nps-dist">
           {npsTotal > 0 ? (
-            <>
+            <div className="mon-hero-dist">
               <div className="dist-bar">
                 <span style={{ width: `${pct(nps.promotores, npsTotal)}%`, background: "var(--promoter)" }} />
                 <span style={{ width: `${pct(nps.neutros, npsTotal)}%`, background: "var(--passive)" }} />
                 <span style={{ width: `${pct(nps.detratores, npsTotal)}%`, background: "var(--detractor)" }} />
               </div>
-              <div className="mon-nps-legend">
-                <div className="mon-nps-leg">
+              <div className="mon-hero-legend">
+                <div className="mon-hero-leg">
                   <span className="dot" style={{ background: "var(--promoter)" }} />
-                  <span className="mon-nps-leg-n mono">{nps.promotores}</span>
-                  <span className="mon-nps-leg-l">Promotores</span>
+                  <span className="mon-hero-leg-n mono">{nps.promotores}</span>
+                  <span className="mon-hero-leg-l">Promotores</span>
                 </div>
-                <div className="mon-nps-leg">
+                <div className="mon-hero-leg">
                   <span className="dot" style={{ background: "var(--passive)" }} />
-                  <span className="mon-nps-leg-n mono">{nps.neutros}</span>
-                  <span className="mon-nps-leg-l">Neutros</span>
+                  <span className="mon-hero-leg-n mono">{nps.neutros}</span>
+                  <span className="mon-hero-leg-l">Neutros</span>
                 </div>
-                <div className="mon-nps-leg">
+                <div className="mon-hero-leg">
                   <span className="dot" style={{ background: "var(--detractor)" }} />
-                  <span className="mon-nps-leg-n mono">{nps.detratores}</span>
-                  <span className="mon-nps-leg-l">Detratores</span>
+                  <span className="mon-hero-leg-n mono">{nps.detratores}</span>
+                  <span className="mon-hero-leg-l">Detratores</span>
                 </div>
               </div>
-            </>
+            </div>
           ) : (
             <p className="mon-empty-inline">Ainda sem notas de NPS para distribuir.</p>
           )}
-        </div>
-      </Reveal>
+        </Reveal>
 
-      {/* 2.5) MÉTRICAS DA OPERAÇÃO — taxa de resolução, loops fechados e tempo
+        {/* SATÉLITES: os 4 números sobre a base total, em grade 2×2 */}
+        <Stagger className="mon-sats" stagger={0.06}>
+          {SATS.map((h) => (
+            <StaggerItem key={h.label} className="card mon-sat">
+              <span className="mon-sat-accent" style={{ background: h.accent }} aria-hidden />
+              <div className="mon-sat-label">{h.label}</div>
+              <div className={`mon-sat-value ${h.cls ?? ""}`}>{h.n}</div>
+              <div className="mon-sat-sub">{h.sub}</div>
+            </StaggerItem>
+          ))}
+        </Stagger>
+      </div>
+
+      {/* 2) FAIXA "O QUE FAZER AGORA" — ponte de ação, computada client-side dos
+         números que já chegam. Pills pequenas; cor por severidade. Some se vazia. */}
+      {destaques.length > 0 && (
+        <Reveal className="mon-act" aria-label="Destaques: o que fazer agora">
+          <span className="mon-act-bar" aria-hidden />
+          <span className="mon-act-label">O que fazer agora</span>
+          <div className="mon-act-pills">
+            {destaques.map((d) => {
+              const isAlert = d.sev === "alert";
+              return (
+                <span key={d.id} className={`mon-act-pill ${isAlert ? "alert" : "watch"}`}>
+                  <span className="mon-act-dot" aria-hidden />
+                  {d.text}
+                </span>
+              );
+            })}
+          </div>
+        </Reveal>
+      )}
+
+      {/* 3) MÉTRICAS DA OPERAÇÃO — taxa de resolução, loops fechados e tempo
          até a 1ª abordagem (+ NPS por tema). Vêm do bloco novo `metricas` do
          overview. Toda a seção some se o backend ainda não mandar nada. */}
       {temMetricas && (
-        <Reveal style={{ margin: "0 0 var(--rhythm, 28px)" }}>
-          <div className="card-head" style={{ marginBottom: 14 }}>
-            <div>
-              <div className="section-title">Métricas da operação</div>
-              <div className="card-head-sub">
-                o quanto a gente resolve, fecha o ciclo e quão rápido aborda
-              </div>
+        <Reveal className="mon-section">
+          <div className="mon-section-head">
+            <div className="section-title">Métricas da operação</div>
+            <span className="mon-rule sm" aria-hidden />
+            <div className="card-head-sub">
+              o quanto a gente resolve, fecha o ciclo e quão rápido aborda
             </div>
           </div>
 
-          <Stagger
-            className="mon-met-grid"
-            stagger={0.06}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: "var(--s-4, 16px)",
-            }}
-          >
+          <Stagger className="mon-met-grid" stagger={0.06}>
             {/* Taxa de resolução */}
             {mTaxa && (
-              <StaggerItem className="card mon-num" style={{ padding: "26px 24px 22px" }}>
-                <span className="mon-num-accent" style={{ background: "var(--indigo)" }} aria-hidden />
-                <div className="mon-num-label">Taxa de resolução</div>
+              <StaggerItem className="card mon-sat mon-met">
+                <span className="mon-sat-accent" style={{ background: "var(--indigo)" }} aria-hidden />
+                <div className="mon-sat-label">Taxa de resolução</div>
                 <div
-                  className={`mon-num-value ${
+                  className={`mon-sat-value ${
                     mTaxa.percentual === null
                       ? "nps-none"
                       : mTaxa.percentual >= 60
@@ -482,11 +452,10 @@ export default function MonitorarPage() {
                       ? "nps-mid"
                       : "nps-bad"
                   }`}
-                  style={{ fontSize: "clamp(38px, 4vw, 48px)" }}
                 >
                   {mTaxa.percentual === null ? "—" : `${fmtNum(mTaxa.percentual)}%`}
                 </div>
-                <div className="mon-num-sub">
+                <div className="mon-sat-sub">
                   {mTaxa.total > 0
                     ? `${mTaxa.fechados} de ${mTaxa.total} feedbacks fechados`
                     : "ainda sem feedbacks para fechar"}
@@ -496,13 +465,11 @@ export default function MonitorarPage() {
 
             {/* Loops fechados */}
             {mLoops && (
-              <StaggerItem className="card mon-num" style={{ padding: "26px 24px 22px" }}>
-                <span className="mon-num-accent" style={{ background: "var(--promoter)" }} aria-hidden />
-                <div className="mon-num-label">Loops fechados</div>
-                <div className="mon-num-value nps-good" style={{ fontSize: "clamp(38px, 4vw, 48px)" }}>
-                  {fmtNum(mLoops.melhorias_avisadas)}
-                </div>
-                <div className="mon-num-sub">
+              <StaggerItem className="card mon-sat mon-met">
+                <span className="mon-sat-accent" style={{ background: "var(--promoter)" }} aria-hidden />
+                <div className="mon-sat-label">Loops fechados</div>
+                <div className="mon-sat-value nps-good">{fmtNum(mLoops.melhorias_avisadas)}</div>
+                <div className="mon-sat-sub">
                   {mLoops.melhorias_avisadas === 1 ? "melhoria avisada" : "melhorias avisadas"}
                   {" · "}
                   {mLoops.clientes_avisados}{" "}
@@ -513,25 +480,20 @@ export default function MonitorarPage() {
 
             {/* Tempo até a 1ª abordagem */}
             {mTempo && (
-              <StaggerItem className="card mon-num" style={{ padding: "26px 24px 22px" }}>
-                <span className="mon-num-accent" style={{ background: "var(--indigo-light)" }} aria-hidden />
-                <div className="mon-num-label">Tempo até 1ª abordagem</div>
-                <div
-                  className={`mon-num-value ${mTempo.media_dias === null ? "nps-none" : ""}`}
-                  style={{ fontSize: "clamp(38px, 4vw, 48px)" }}
-                >
+              <StaggerItem className="card mon-sat mon-met">
+                <span className="mon-sat-accent" style={{ background: "var(--indigo-light)" }} aria-hidden />
+                <div className="mon-sat-label">Tempo até 1ª abordagem</div>
+                <div className={`mon-sat-value ${mTempo.media_dias === null ? "nps-none" : ""}`}>
                   {mTempo.media_dias === null ? (
                     "—"
                   ) : (
                     <>
                       {fmtNum(mTempo.media_dias)}
-                      <span style={{ fontSize: 18, fontWeight: 500, marginLeft: 4, color: "var(--text-faint)" }}>
-                        {mTempo.media_dias === 1 ? "dia" : "dias"}
-                      </span>
+                      <span className="mon-sat-unit">{mTempo.media_dias === 1 ? "dia" : "dias"}</span>
                     </>
                   )}
                 </div>
-                <div className="mon-num-sub">
+                <div className="mon-sat-sub">
                   {mTempo.amostra > 0
                     ? `mediana ${fmtNum(mTempo.mediana_dias)} · ${mTempo.amostra} ${
                         mTempo.amostra === 1 ? "abordagem" : "abordagens"
@@ -544,13 +506,11 @@ export default function MonitorarPage() {
             {/* Follow-ups para hoje (vencidos) — atalho para a fila na tela
                Feedbacks. Só aparece quando há pendência. */}
             {followUpPendentes > 0 && (
-              <StaggerItem className="card mon-num" style={{ padding: "26px 24px 22px" }}>
-                <span className="mon-num-accent" style={{ background: "var(--detractor)" }} aria-hidden />
-                <div className="mon-num-label">Follow-ups para hoje</div>
-                <div className="mon-num-value nps-bad" style={{ fontSize: "clamp(38px, 4vw, 48px)" }}>
-                  {fmtNum(followUpPendentes)}
-                </div>
-                <div className="mon-num-sub">
+              <StaggerItem className="card mon-sat mon-met">
+                <span className="mon-sat-accent" style={{ background: "var(--detractor)" }} aria-hidden />
+                <div className="mon-sat-label">Follow-ups para hoje</div>
+                <div className="mon-sat-value nps-bad">{fmtNum(followUpPendentes)}</div>
+                <div className="mon-sat-sub">
                   <a href="/feedbacks" className="mon-followup-link">
                     {followUpPendentes === 1 ? "feedback a reabordar" : "feedbacks a reabordar"} — abrir a fila →
                   </a>
@@ -561,31 +521,22 @@ export default function MonitorarPage() {
 
           {/* NPS por tema — mini-lista (só temas com nota). */}
           {mTemas.length > 0 && (
-            <div className="card mon-resp" style={{ marginTop: "var(--s-4, 16px)" }}>
+            <div className="card mon-resp mon-temas">
               <div className="card-head">
                 <div>
                   <div className="section-title">NPS por tema</div>
                   <div className="card-head-sub">a nota média de quem tocou em cada assunto</div>
                 </div>
               </div>
-              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              <ul className="mon-temas-list">
                 {mTemas.map((t) => (
-                  <li
-                    key={t.cluster_id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 14,
-                      padding: "12px 2px",
-                      borderTop: "1px solid var(--charcoal)",
-                    }}
-                  >
+                  <li key={t.cluster_id} className="mon-temas-item">
                     <span className={`score-pill ${sentPill(t.sentimento)}`}>{fmtNum(t.media)}</span>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14.5, color: "var(--text)" }}>
+                    <div className="mon-temas-txt">
+                      <div className="mon-temas-name">
                         {t.tema || <span className="faint">sem rótulo</span>}
                       </div>
-                      <div style={{ fontSize: 12.5, color: "var(--text-faint)", marginTop: 2 }}>
+                      <div className="mon-temas-meta">
                         {t.com_nota} de {t.volume} {t.volume === 1 ? "menção" : "menções"} com nota
                       </div>
                     </div>
@@ -597,61 +548,60 @@ export default function MonitorarPage() {
         </Reveal>
       )}
 
-      {/* 3) AS RESPOSTAS — nome, nota, texto, data. Limpo. */}
-      <Reveal className="card mon-resp">
-        <div className="card-head">
-          <div>
-            <div className="section-title">Respostas dos clientes</div>
-            <div className="card-head-sub">o que cada pessoa disse, com a nota e quando</div>
-          </div>
-          <span className="exit-counter">
-            média{" "}
-            <span className={`mono ${npsClass(npsList.media)}`} style={{ marginLeft: 4 }}>
-              {npsList.media ?? "—"}
-            </span>
-          </span>
+      {/* 4) AS RESPOSTAS — badge em coluna fixa, fala, nota mono à direita. */}
+      <Reveal className="mon-section">
+        <div className="mon-section-head">
+          <div className="section-title">Respostas dos clientes</div>
+          <span className="mon-rule sm" aria-hidden />
+          <div className="card-head-sub">o que cada pessoa disse, com a nota e quando</div>
         </div>
 
-        {npsList.items.length === 0 ? (
-          <div className="empty">
-            <div className="empty-illu">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                <path d="M8 9h8M8 12h5" />
-              </svg>
+        <div className="card mon-resp">
+          {npsList.items.length === 0 ? (
+            <div className="empty">
+              <div className="empty-illu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  <path d="M8 9h8M8 12h5" />
+                </svg>
+              </div>
+              <div className="empty-title">Ninguém respondeu ainda</div>
+              <p className="empty-sub">
+                Assim que os clientes responderem, as falas aparecem aqui com nota e data.
+              </p>
             </div>
-            <div className="empty-title">Ninguém respondeu ainda</div>
-            <p className="empty-sub">
-              Assim que os clientes responderem, as falas aparecem aqui com nota e data.
-            </p>
-          </div>
-        ) : (
-          <ul className="mon-resp-list reveal-stagger">
-            {npsList.items.map((it: CentralNpsItem, i) => (
-              <li
-                key={`${it.contact_id}-${it.em}-${i}`}
-                className="mon-resp-item reveal"
-                style={{ ["--i" as string]: i } as React.CSSProperties}
-              >
-                <span className={`score-pill ${pillClass(it.bucket)}`}>{it.score}</span>
-                <div className="mon-resp-body">
-                  <div className="mon-resp-top">
-                    <span className="mon-resp-who">
-                      {it.nome || <span className="faint">sem nome</span>}
-                    </span>
-                    {bucketBadge(it.bucket)}
-                    <span className="mon-resp-when">{fmtDate(it.em)}</span>
+          ) : (
+            <ul className="mon-resp-list reveal-stagger">
+              {npsList.items.map((it: CentralNpsItem, i) => (
+                <li
+                  key={`${it.contact_id}-${it.em}-${i}`}
+                  className="mon-resp-item reveal"
+                  style={{ ["--i" as string]: i } as React.CSSProperties}
+                >
+                  <span className={`score-pill ${pillClass(it.bucket)}`}>{it.score}</span>
+                  <div className="mon-resp-body">
+                    <div className="mon-resp-top">
+                      <span className="mon-resp-who">
+                        {it.nome || <span className="faint">sem nome</span>}
+                      </span>
+                      {bucketBadge(it.bucket)}
+                      <span className="mon-resp-when">{fmtDate(it.em)}</span>
+                    </div>
+                    {it.motivo ? (
+                      <p className="mon-resp-text">“{it.motivo}”</p>
+                    ) : (
+                      <p className="mon-resp-text empty-text">sem comentário</p>
+                    )}
                   </div>
-                  {it.motivo ? (
-                    <p className="mon-resp-text">“{it.motivo}”</p>
-                  ) : (
-                    <p className="mon-resp-text empty-text">sem comentário</p>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+                  <div className="mon-resp-nota">
+                    <span className="mon-resp-nota-lbl">nota</span>
+                    <span className={`mon-resp-nota-n ${pillClass(it.bucket)}`}>{it.score}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </Reveal>
 
       <p className="count-line">
