@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Reveal, Stagger, StaggerItem } from "@/components/Motion";
 import {
   central as centralApi,
   type CentralOverview,
   type CentralNpsResponse,
   type CentralNpsItem,
+  type CentralFilaResponse,
 } from "@/lib/api";
 
 /* ============================================================================
@@ -200,6 +202,97 @@ function MonitorarSkeleton() {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   FILA "QUEM ABORDAR PRIMEIRO" — monitoramento inteligente (P2-I).
+   Bloco AUTÔNOMO: faz seu próprio fetch de /api/central/fila (read-only, deriva de
+   dados que já existem) e ordena contatos por risco (Health Score) × silêncio. Some
+   sem ruído quando vazio ou se o backend ainda não tem o endpoint (fallback gracioso).
+   --------------------------------------------------------------------------- */
+function FilaAbordar() {
+  const [data, setData] = useState<CentralFilaResponse | null>(null);
+  const [erro, setErro] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    centralApi
+      .fila(8)
+      .then((d) => alive && setData(d))
+      .catch(() => alive && setErro(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Degrada em silêncio: erro/endpoint ausente ou fila vazia não renderiza o bloco.
+  if (erro || !data || data.itens.length === 0) return null;
+
+  return (
+    <Reveal className="mon-section" aria-label="Quem abordar primeiro">
+      <div className="mon-section-head">
+        <div className="section-title">Quem abordar primeiro</div>
+        <span className="mon-rule sm" aria-hidden />
+        <div className="card-head-sub">
+          contas em risco e em silêncio que ainda ninguém abordou — por prioridade
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {data.itens.map((it) => {
+          const cor = it.banda === "at_risk" ? "var(--detractor)" : "var(--gold)";
+          return (
+            <Link
+              key={it.contato_id}
+              href={`/contatos/${it.contato_id}`}
+              className="card"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "11px 14px",
+                textDecoration: "none",
+                borderLeft: `3px solid ${cor}`,
+              }}
+            >
+              <span
+                style={{
+                  fontWeight: 600,
+                  color: "var(--text)",
+                  flex: "0 0 auto",
+                  maxWidth: "34%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {it.nome || it.phone || "Contato"}
+              </span>
+              <span
+                style={{
+                  color: "var(--text-dim)",
+                  fontSize: 13,
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {it.motivo}
+              </span>
+              <span
+                className="mono"
+                style={{ color: cor, fontWeight: 700, flex: "0 0 auto", fontSize: 13 }}
+                title="Health Score"
+              >
+                {it.health}
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+    </Reveal>
   );
 }
 
@@ -422,6 +515,10 @@ export default function MonitorarPage() {
           </div>
         </Reveal>
       )}
+
+      {/* 2.5) FILA "QUEM ABORDAR PRIMEIRO" — risco × silêncio, não-abordados.
+         Bloco autônomo (fetch próprio); some sem ruído quando vazio. */}
+      <FilaAbordar />
 
       {/* 3) MÉTRICAS DA OPERAÇÃO — taxa de resolução, loops fechados e tempo
          até a 1ª abordagem (+ NPS por tema). Vêm do bloco novo `metricas` do

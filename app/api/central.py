@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import _get_org
+from app.api.admin import _get_org, _partner_fields
 from app.api.campanha import (
     SELO_CONTATADO,
     SELO_RESPONDEU,
@@ -476,3 +476,119 @@ async def central_feedbacks(
     # Mais recentes primeiro (consistente com /central/nps).
     items.sort(key=lambda x: x["em"] or "", reverse=True)
     return {"total": len(items), "items": items}
+
+
+def _days_since(dt: datetime | None, now: datetime) -> int | None:
+    """Dias inteiros desde `dt` (naive é tratado como UTC). None se `dt` for None."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0, (now - dt).days)
+
+
+@router.get("/central/fila")
+async def central_fila(
+    limit: int = 20,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Fila "quem abordar primeiro": contatos que PRECISAM de atenção e ainda NÃO foram
+    abordados, ordenados por risco (Health Score baixo) × silêncio (dias sem sinal).
+
+    SÓ LEITURA — deriva de dados que já existem (Fase 1 `compute_health` + recência +
+    a MESMA regra de "abordado" do overview); sem migration, sem cron. Quem já foi
+    abordado (selo 'contatado', abordagem registrada ou algum FeedbackItem.abordado)
+    sai da fila do dia. Entra quem está em risco/atenção OU em silêncio há >= 30 dias.
+
+    Prioridade = (100 - health) + min(dias_silencio, 60): o risco domina e o silêncio
+    desempata — fórmula explícita e auditável (mesma filosofia do Health Score).
+
+    Retorno: {"itens": [top N], "total": N, "por_banda": {at_risk, watch}, "limit": N}.
+    """
+    # Import local: evita qualquer ciclo de import no load do módulo (central <- tasks).
+    from app.api.tasks import _health_for, _last_feedback_by_contact
+
+    org = await _get_org(session)
+    limit = max(1, min(int(limit), 100))
+    now = datetime.now(timezone.utc)
+
+    contacts = (
+        await session.execute(select(Contact).where(Contact.organization_id == org.id))
+    ).scalars().all()
+
+    # Contatos JÁ abordados via algum FeedbackItem.abordado (parte da regra de "abordado").
+    abordados_fb: set[uuid.UUID] = set(
+        (
+            await session.execute(
+                select(FeedbackItem.contact_id).where(
+                    FeedbackItem.organization_id == org.id,
+                    FeedbackItem.abordado.is_(True),
+                    FeedbackItem.contact_id.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    def _abordado(c: Contact) -> bool:
+        return (
+            SELO_CONTATADO in set(_selos_do_contato(c))
+            or bool(_abordagens_do_contato(c))
+            or c.id in abordados_fb
+        )
+
+    last_by_contact = await _last_feedback_by_contact(session, org.id)
+
+    itens: list[dict[str, Any]] = []
+    for c in contacts:
+        if _abordado(c):
+            continue  # já tratado — não é "quem abordar primeiro"
+        last_at = last_by_contact.get(c.id)
+        health, banda = _health_for(c, last_at, now)
+        if health is None:
+            continue
+        # Silêncio: dias desde o último sinal; se nunca houve, desde o cadastro.
+        dias_silencio = _days_since(last_at or getattr(c, "created_at", None), now)
+        # Entra quem PRECISA de atenção: em risco/atenção OU silêncio longo (>= 30 dias).
+        if banda == "healthy" and (dias_silencio is None or dias_silencio < 30):
+            continue
+        pf = _partner_fields(c, now)
+        nps = pf.get("nps_score")
+        perfil = pf.get("perfil")
+        # Motivo legível (frase curta) p/ o operador bater o olho e agir.
+        partes: list[str] = []
+        if banda == "at_risk":
+            partes.append(f"em risco ({health})")
+        elif banda == "watch":
+            partes.append(f"atenção ({health})")
+        if nps is not None and nps < 7:
+            partes.append(f"detrator (nota {nps})")
+        if dias_silencio is None:
+            partes.append("nunca deu sinal")
+        elif dias_silencio >= 30:
+            partes.append(f"sem contato há {dias_silencio} dias")
+        motivo = " · ".join(partes) or "precisa de atenção"
+        prioridade = (100 - health) + min(dias_silencio or 0, 60)
+        itens.append(
+            {
+                "contato_id": str(c.id),
+                "nome": c.name,
+                "phone": c.phone,
+                "opt_in": c.opt_in,
+                "health": health,
+                "banda": banda,
+                "nps": nps,
+                "perfil": perfil,
+                "dias_silencio": dias_silencio,
+                "motivo": motivo,
+                "prioridade": prioridade,
+            }
+        )
+
+    itens.sort(key=lambda x: x["prioridade"], reverse=True)
+    por_banda = {
+        "at_risk": sum(1 for x in itens if x["banda"] == "at_risk"),
+        "watch": sum(1 for x in itens if x["banda"] == "watch"),
+    }
+    return {"itens": itens[:limit], "total": len(itens), "por_banda": por_banda, "limit": limit}

@@ -1652,12 +1652,45 @@ export interface CentralFeedbackFiltro {
   abordado?: boolean;
 }
 
+/** Item da fila "quem abordar primeiro" (GET /api/central/fila). */
+export interface CentralFilaItem {
+  contato_id: string;
+  nome: string | null;
+  phone: string | null;
+  opt_in: boolean | null;
+  /** Health Score 0-100 (Fase 1). */
+  health: number;
+  /** Banda do Health Score: 'at_risk' | 'watch' | 'healthy'. */
+  banda: string;
+  nps: number | null;
+  perfil: string | null;
+  /** Dias desde o último sinal (ou cadastro); null se desconhecido. */
+  dias_silencio: number | null;
+  /** Frase curta do porquê (ex.: "em risco (24) · sem contato há 40 dias"). */
+  motivo: string;
+  /** Score de prioridade (maior = abordar antes). */
+  prioridade: number;
+}
+
+/** Resposta de GET /api/central/fila — top N + total + contagem por banda. */
+export interface CentralFilaResponse {
+  itens: CentralFilaItem[];
+  total: number;
+  por_banda: { at_risk: number; watch: number };
+  limit: number;
+}
+
 /** Helpers tipados da CENTRAL DE FEEDBACKS (visão consolidada). */
 export const central = {
   /** Números-herói: NPS + feedbacks + abordagem + segmentos (churn/ativos). */
   overview: () => api.get<CentralOverview>("/api/central/overview"),
   /** Lista detalhada de quem deu NPS (nome, nota, bucket, motivo). */
   nps: () => api.get<CentralNpsResponse>("/api/central/nps"),
+  /** Fila "quem abordar primeiro": contatos em risco × silêncio, não-abordados. */
+  fila: (limit?: number) =>
+    api.get<CentralFilaResponse>(
+      `/api/central/fila${buildQuery(limit != null ? { limit } : undefined)}`,
+    ),
   /** Feedbacks por sentimento + fonte. Filtros opcionais viram query string. */
   feedbacks: (filtro?: CentralFeedbackFiltro) =>
     api.get<CentralFeedbacksResponse>(`/api/central/feedbacks${buildQuery(filtro)}`),

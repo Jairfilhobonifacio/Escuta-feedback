@@ -589,5 +589,89 @@ async def test_metricas_nps_por_tema(client, orgs, session):
     assert temas[1]["media"] == 9.0 and temas[1]["sentimento"] == "positivo"
 
 
+# --- /central/fila (quem abordar primeiro) -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fila_entrada_exclusao_e_isolamento(client, orgs, session):
+    """Entra quem precisa de atenção e NÃO foi abordado; sai abordado e saudável.
+    Org B não vaza para a fila de A."""
+    a, b = orgs
+    agora = datetime.now(timezone.utc)
+    # Em risco (churn_rapido => health baixo), sem feedback, NÃO abordado -> ENTRA.
+    risco = Contact(
+        organization_id=a.id, phone="5531900000001", name="Risco", opt_in=True,
+        profile_data={"partner": {"profile": "churn_rapido", "subscription": {"state": "cancelled"}}},
+    )
+    # Mesmo perfil de risco, mas JÁ abordado (selo 'contatado') -> SAI.
+    abordado = Contact(
+        organization_id=a.id, phone="5531900000002", name="Abordado", opt_in=True,
+        profile_data={
+            "partner": {"profile": "churn_rapido", "subscription": {"state": "cancelled"}},
+            "selos": ["contatado"],
+        },
+    )
+    # Saudável (ativo_promotor + assinatura ativa) com feedback recente -> SAI.
+    saudavel = Contact(
+        organization_id=a.id, phone="5531900000003", name="Saudavel", opt_in=True,
+        profile_data={"partner": {"profile": "ativo_promotor", "subscription": {"state": "active_paying"}}},
+    )
+    session.add_all([risco, abordado, saudavel])
+    await session.flush()
+    session.add(
+        FeedbackItem(
+            organization_id=a.id, contact_id=saudavel.id, source="whatsapp", type="elogio",
+            external_id="s1", text="otimo", occurred_at=agora,
+        )
+    )
+    # Org B: contato em risco que NÃO pode aparecer na fila de A.
+    rb = Contact(
+        organization_id=b.id, phone="5531911111111", name="Rival", opt_in=True,
+        profile_data={"partner": {"profile": "churn_rapido", "subscription": {"state": "cancelled"}}},
+    )
+    session.add(rb)
+    await session.commit()
+
+    data = (await client.get("/api/central/fila")).json()
+    assert set(data.keys()) == {"itens", "total", "por_banda", "limit"}
+    assert [i["nome"] for i in data["itens"]] == ["Risco"]  # só o risco não-abordado
+    assert data["total"] == 1
+    assert data["por_banda"]["at_risk"] == 1
+    item = data["itens"][0]
+    assert set(item.keys()) == {
+        "contato_id", "nome", "phone", "opt_in", "health", "banda",
+        "nps", "perfil", "dias_silencio", "motivo", "prioridade",
+    }
+    assert item["banda"] == "at_risk"
+    assert "em risco" in item["motivo"]
+
+
+@pytest.mark.asyncio
+async def test_fila_ordena_por_prioridade(client, orgs, session):
+    """Risco maior (Health Score menor) vem primeiro na fila."""
+    a, _b = orgs
+    # churn_rapido (health ~0) vs vai_expirar (health ~24): ambos at_risk, sem feedback.
+    pior = Contact(
+        organization_id=a.id, phone="5531900000001", name="Pior", opt_in=True,
+        profile_data={"partner": {"profile": "churn_rapido", "subscription": {"state": "cancelled"}}},
+    )
+    menos = Contact(
+        organization_id=a.id, phone="5531900000002", name="Menos", opt_in=True,
+        profile_data={"partner": {"profile": "vai_expirar", "subscription": {"state": "past_due"}}},
+    )
+    session.add_all([pior, menos])
+    await session.commit()
+
+    itens = (await client.get("/api/central/fila")).json()["itens"]
+    assert [i["nome"] for i in itens] == ["Pior", "Menos"]
+    assert itens[0]["prioridade"] >= itens[1]["prioridade"]
+
+
+@pytest.mark.asyncio
+async def test_fila_vazia(client, orgs, session):
+    data = (await client.get("/api/central/fila")).json()
+    assert data == {"itens": [], "total": 0, "por_banda": {"at_risk": 0, "watch": 0}, "limit": 20}
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
