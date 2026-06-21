@@ -21,7 +21,7 @@
 
 ---
 
-## ✅ O que foi construído (4 commits, todos pushed)
+## ✅ O que foi construído (5 commits, todos pushed)
 
 | Commit | Entrega |
 |--------|---------|
@@ -29,6 +29,7 @@
 | `2b43d49` | **P1-F** — ficha mostra **"Assinou em"** (`startedAt`) e **"Total pago"** (`totalPaidCentavos`). `sync_partner_customers.py::_build_partner_profile` passou a gravar `startedAt`/`planName`/`totalPaidCentavos` no snapshot (a API de Clientes já expunha, eram ignorados). Helper `fmtMoney` (BRL). tsc + `test_partner_profiles` 40/40. |
 | `045a6e8` | **P2-I** — fila **"Quem abordar primeiro"** no Monitorar. Backend `GET /api/central/fila` (READ-ONLY; reusa `compute_health` da Fase 1 + a MESMA regra de "abordado" do overview; prioridade = `(100 - health) + min(silêncio, 60)`; **sem migration, sem cron**). Front: componente `FilaAbordar` (fetch próprio, degrada quando vazio) + `central.fila()` tipado. tsc + 3 testes novos (`test_central.py` 18/18). |
 | `a117914` | **H** (excluir contato na **lista** `/clientes`: `ConfirmDialog` + `contacts.remove` + remoção local; o backend `DELETE /api/contacts/{id}` já existia, org-scoped + cascata) **+ G.3-A** (rota `/temas` → `/mapeamento`; `/temas` virou redirect p/ não quebrar bookmarks; Sidebar + link em Melhorias atualizados). tsc verde. |
+| `cf0909b` | **G.3-B** — mapa de dores **2D** no `/mapeamento` (aba "Por significado", toggle **Cards / Mapa**). Componente `ScatterMap` (SVG inline, zero lib): Volume × Impacto com **quadrantes de ação** (ATACAR AGORA / VIGIAR / PLANEJAR / MONITORAR) + lista rankeada sincronizada no hover; fallback gracioso (sem `priority_index` cai em `pain_score`); clique → `/feedbacks?cluster_id`. **Projetado por workflow** (3 designs + judge) + **revisado adversarialmente** (4 lentes → 3 fixes: barra×número no fallback, Escape no scatter, foco visível WCAG). tsc verde. |
 
 (+ os 3 commits locais do dono que também subiram nesta sessão: `609e818` login-operador, `4e335b7` sentimento-PT-v2, `5a86b1b` skills.)
 
@@ -48,26 +49,28 @@ A auditoria (3 agentes) revelou que **o backlog estava muito desatualizado** —
 | J benchmark de CS (P2) | ✅ feito (`docs/BENCHMARK_CS_2026-06-20.md`) |
 | H apagar dados (P2) | ✅ feito (ficha já tinha; **lista** agora em `a117914`) |
 | I monitoramento inteligente (P2) | ✅ feito (fila em `045a6e8`) |
-| **C** Board reordenar intra-coluna (P1) | 🟡 **PENDENTE** |
-| **G.3-B** mapa de dores 2D (P2) | 🟡 **PENDENTE** |
+| **G.3-B** mapa de dores 2D (P2) | ✅ feito (`cf0909b`) |
+| **C** Board reordenar intra-coluna (P1) | 🟡 **PENDENTE** (único item ainda aberto) |
 
 ---
 
 ## 🟡 Onde paramos / próximos passos
 
-**Pendências técnicas (planejadas, NÃO empurradas às cegas pra prod):**
-1. **C — Board: reordenação DENTRO da coluna + drag handle.** Esforço **médio-alto**: exige **migration**
-   (campo `position`/ordem no JSONB dos boards em `Organization.settings["boards"]`) + endpoint novo
-   `PATCH /boards/{id}/reorder` + detecção de drop-position no `frontend/app/board/page.tsx` (~300 linhas).
-   **Precisa validação visual.** (Não há tabela `board_cards`; boards vivem em `Organization.settings`.)
-2. **G.3-B — Mapa de dores 2D (scatter SVG).** Os dados já existem nos clusters (`priority_index`,
-   `distinct_customers`, `paying_customers`, `priority_band`). Falta o componente `ScatterMap` (SVG inline,
-   sem lib nova) na tela `frontend/app/mapeamento/page.tsx`. ~3-4h, **precisa validação visual**.
+**Pendência técnica — ÚNICO item do backlog ainda aberto (planejada, NÃO empurrar às cegas pra prod):**
+1. **C — Board: reordenação DENTRO da coluna + drag handle.** Plano técnico VERIFICADO por workflow:
+   NÃO há tabela `board_cards` — os boards vivem em `Organization.settings["boards"]` (JSONB) e os cards são
+   derivados a cada GET. Caminho mínimo = mapa `board["card_order"] = {"<col_valor>": ["<id>", ...]}`
+   (**sem migration de schema**; exige `flag_modified(org, "settings")`) + estender `BoardMoveIn` com
+   `position`/`board_id` em `app/api/boards.py` (`board_move` ~`:1560`, GET `_items_action_status` ~`:833`)
+   + drop-position no `frontend/app/board/page.tsx` (`overIndex`, mesma-coluna vs cross, reorder otimista,
+   handle `GripVertical`). **Riscos REAIS:** truncamento em 30 (`BOARD_ITEMS_PER_COLUMN` — reorder só vale no
+   top-30 visível); **conflito ordem-manual × urgência = decisão de PRODUTO**; concorrência last-write-wins.
+   ~7-9h + **validação visual obrigatória** (DnD não tem teste de unidade).
 
 **Operacional (depende do usuário):**
-3. **Validação visual** dos 4 commits desta sessão — não subi a stack (só `tsc` + `pytest`). Subir 8000/3001
+3. **Validação visual** dos 5 commits desta sessão — não subi a stack (só `tsc` + `pytest`). Subir 8000/3001
    (skill `escuta-stack`) e conferir: selos em Feedbacks, ficha com assinatura, fila no Monitorar, excluir
-   na lista, `/mapeamento` (e `/temas` redirecionando).
+   na lista, `/mapeamento` (toggle Cards / **Mapa** 2D; e `/temas` redirecionando).
 4. **Re-sync** `scripts/sync_partner_customers.py` p/ popular `startedAt`/`totalPaidCentavos` nos contatos
    já existentes (a ficha só mostra os campos novos depois do sync). Precisa `BIZZU_PARTNER_API_KEY` e
    **toca o piloto** — rodar com OK explícito.

@@ -11,10 +11,10 @@
 > conflito. Docs irmãos: `CONTEXTO_BIZZU.md` (ecossistema), `INTEGRACAO_BIZZU.md` (integração),
 > `analise-bizzu/*.md` (por repo), `corpus_bizzu/*.md` (RAG), `SESSAO_HANDOFF_*.md` (estado).
 >
-> **Última atualização:** 2026-06-21 (commit `a117914`: bugs residuais de selos/Board + P1-F assinatura na
-> ficha + P2-I fila "quem abordar primeiro" + excluir-na-lista + rota `/temas`→`/mapeamento`; **pushed**).
-> O repo AGORA TEM remote `github.com/Jairfilhobonifacio/Escuta-feedback` e está EM PROD (Modal API +
-> Vercel painel). Diário: `SESSAO_HANDOFF_2026-06-21.md`. Pendentes: Board reorder (C) + mapa 2D (G.3-B).
+> **Última atualização:** 2026-06-21 (commit `cf0909b`: bugs residuais de selos/Board + P1-F assinatura na
+> ficha + P2-I fila "quem abordar primeiro" + excluir-na-lista + rota `/temas`→`/mapeamento` + **mapa de
+> dores 2D**; **pushed**). O repo TEM remote `github.com/Jairfilhobonifacio/Escuta-feedback` e está EM PROD
+> (Modal API + Vercel painel). Diário: `SESSAO_HANDOFF_2026-06-21.md`. **Único pendente: Board reorder (C).**
 
 ---
 
@@ -204,7 +204,7 @@ ativamente, não derivado).
 eventos de ciclo de vida de clientes (piloto: Bizzu), dispara *surveys* via WhatsApp, interpreta a
 resposta com IA, classifica e entrega insight ao dono.
 
-- **Local:** `C:\Users\jboni\Documents\Projetos\escuta`. Git no commit `a117914` (branch `master`), **COM
+- **Local:** `C:\Users\jboni\Documents\Projetos\escuta`. Git no commit `cf0909b` (branch `master`), **COM
   remote** `github.com/Jairfilhobonifacio/Escuta-feedback` e **EM PROD** (Modal API app `escuta-api` +
   Vercel painel projeto `escuta-feedback`).
 - **Stack:** FastAPI (Python) + Supabase Postgres (pgvector) + WAHA (WhatsApp não-oficial) + painel
