@@ -23,6 +23,7 @@ import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import AbordarModal, { waIcon } from "@/components/AbordarModal";
+import SeloPopover from "@/components/SeloPopover";
 import { Stagger, StaggerItem } from "@/components/Motion";
 import { Button } from "@/components/ui/button";
 import { feedbackText, maskPhone } from "@/lib/format";
@@ -929,16 +930,6 @@ function SeloControl({
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
 
   // Sem contato não há onde aplicar selo.
   if (!fb.contato_id) return null;
@@ -978,7 +969,7 @@ function SeloControl({
   }
 
   return (
-    <div className="fb-selos" ref={boxRef}>
+    <div className="fb-selos">
       {selosFb.map((nome) => (
         <span key={nome} className="selo-chip">
           <span className="selo-dot" style={{ background: "var(--indigo)" }} />
@@ -994,38 +985,44 @@ function SeloControl({
           </button>
         </span>
       ))}
-      <button
-        type="button"
-        className="selo-add"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-label="Marcar selo de campanha"
-        disabled={busy}
+      <SeloPopover
+        open={open}
+        onOpenChange={setOpen}
+        trigger={({ open: isOpen, toggle }) => (
+          <button
+            type="button"
+            className="selo-add"
+            onClick={toggle}
+            aria-expanded={isOpen}
+            aria-label="Marcar selo de campanha"
+            disabled={busy}
+          >
+            {"\u{FF0B}"} selo
+          </button>
+        )}
       >
-        {"\u{FF0B}"} selo
-      </button>
-      {open && (
-        <div className="selo-pop fb-selo-pop">
-          {disponiveis.length === 0 ? (
-            <div className="picker-empty">Todos os selos de campanha já aplicados.</div>
-          ) : (
-            <div className="selo-pop-list">
-              {disponiveis.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className="selo-pop-item"
-                  onClick={() => aplicar(s)}
-                  disabled={busy}
-                >
-                  <span className="selo-dot" style={{ background: "var(--indigo)" }} />
-                  {s}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        {disponiveis.length === 0 ? (
+          <div className="picker-empty">Todos os selos de campanha já aplicados.</div>
+        ) : (
+          <div
+            className="selo-pop-list"
+            style={{ marginBottom: 0, paddingBottom: 0, borderBottom: "none" }}
+          >
+            {disponiveis.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className="selo-pop-item"
+                onClick={() => aplicar(s)}
+                disabled={busy}
+              >
+                <span className="selo-dot" style={{ background: "var(--indigo)" }} />
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+      </SeloPopover>
     </div>
   );
 }

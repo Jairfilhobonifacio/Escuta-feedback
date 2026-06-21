@@ -55,7 +55,8 @@ export function SeloPopover({
   const toggle = () => onOpenChange(!open);
 
   // Calcula a posição fixa a partir do retângulo do gatilho. Abre por baixo;
-  // alinha à esquerda ou à direita; mantém dentro da viewport (clamp lateral).
+  // alinha à esquerda ou à direita; mantém dentro da viewport (clamp lateral +
+  // flip vertical: vira pra cima quando não cabe embaixo — ex.: card no rodapé).
   useLayoutEffect(() => {
     if (!open) return;
     function place() {
@@ -63,18 +64,33 @@ export function SeloPopover({
       if (!el) return;
       const r = el.getBoundingClientRect();
       const vw = document.documentElement.clientWidth;
+      const vh = document.documentElement.clientHeight;
       const margin = 8;
+      const gap = 6;
       const width = Math.max(minWidth, panelRef.current?.offsetWidth ?? minWidth);
       let left = align === "right" ? r.right - width : r.left;
-      // Não deixar vazar pelas bordas da viewport.
+      // Não deixar vazar pelas bordas laterais da viewport.
       left = Math.min(Math.max(margin, left), Math.max(margin, vw - width - margin));
-      setPos({ top: r.bottom + 6, left });
+      // Vertical: por baixo por padrão; se a altura real não couber, vira pra cima.
+      // Em último caso (nem em cima cabe) cola na borda inferior com a margem.
+      const h = panelRef.current?.offsetHeight ?? 0;
+      const below = r.bottom + gap;
+      let top = below;
+      if (h && below + h > vh - margin) {
+        const above = r.top - gap - h;
+        top = above >= margin ? above : Math.max(margin, vh - margin - h);
+      }
+      setPos({ top, left });
     }
     place();
+    // Re-mede após o painel montar: offsetHeight só existe no 2º paint, então o
+    // flip vertical depende deste reposicionamento (sem ele a altura seria 0).
+    const raf = requestAnimationFrame(place);
     window.addEventListener("resize", place);
     // captura o scroll de QUALQUER ancestral (tabela com overflow, etc.)
     window.addEventListener("scroll", place, true);
     return () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };

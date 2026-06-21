@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { feedbackText, maskPhone } from "@/lib/format";
 import {
   boards as boardsApi,
+  config as configApi,
   feedbacks as feedbacksApi,
   melhorias as melhoriasApi,
   BOARD_CAMPOS_POR_ENTIDADE,
@@ -187,12 +188,17 @@ const EFFORT_OPCOES: { value: ImprovementEffort; label: string }[] = [
 /** Sugestões de coluna por (entidade, campo) — preenche o formulário. */
 const SUGESTOES: Record<BoardEntidade, Partial<Record<BoardCampo, BoardColuna[]>>> = {
   feedback: {
+    // Espelha os defaults de ACOMPANHAMENTO do backend (ACTION_STATUSES em
+    // app/api/admin.py). Antes sugeria "novo/em_analise/planejado" — valores que o
+    // backend NÃO reconhece, então arrastar um feedback para essas colunas gravava um
+    // action_status inválido. (Status CUSTOM da org ainda não entram aqui — ver TODO.)
     action_status: [
-      { id: "novo", nome: "Novo", valor: "novo", cor: "#6c5ce7" },
-      { id: "em_analise", nome: "Em análise", valor: "em_analise", cor: "#6c5ce7" },
-      { id: "planejado", nome: "Planejado", valor: "planejado", cor: "#6c5ce7" },
-      { id: "resolvido", nome: "Resolvido", valor: "resolvido", cor: "#6c5ce7" },
-      { id: "descartado", nome: "Descartado", valor: "descartado", cor: "#6c5ce7" },
+      { id: "a_abordar", nome: "A abordar", valor: "a_abordar", cor: "#6366f1" },
+      { id: "aguardando_retorno", nome: "Aguardando retorno", valor: "aguardando_retorno", cor: "#f59e0b" },
+      { id: "em_acompanhamento", nome: "Em acompanhamento", valor: "em_acompanhamento", cor: "#3b82f6" },
+      { id: "resolvido", nome: "Resolvido", valor: "resolvido", cor: "#10b981" },
+      { id: "sem_retorno", nome: "Sem retorno", valor: "sem_retorno", cor: "#94a3b8" },
+      { id: "descartado", nome: "Descartado", valor: "descartado", cor: "#64748b" },
     ],
     selo: [
       { id: "contatado", nome: "Contatado", valor: "contatado", cor: "#6c5ce7" },
@@ -1102,6 +1108,49 @@ function BoardFormModal({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Vocabulário EFETIVO de status (defaults + custom da org), do GET /api/config, p/
+  // sugerir as colunas de um board de feedback/action_status. Antes as colunas eram
+  // chumbadas e divergiam do backend; agora refletem os status reais da organização.
+  const [statusCfg, setStatusCfg] = useState<BoardColuna[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    configApi
+      .get()
+      .then((cfg) => {
+        if (!alive) return;
+        const cols = (cfg.action_statuses ?? []).map((s) => ({
+          id: s.key,
+          nome: s.label,
+          valor: s.key,
+          cor: s.cor || "#6c5ce7",
+        }));
+        if (cols.length) setStatusCfg(cols);
+      })
+      .catch(() => {
+        /* sem config → mantém as sugestões default (já alinhadas ao backend) */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Sugestão de colunas: vocabulário da org p/ feedback/action_status; senão defaults.
+  const sugerir = useCallback(
+    (ent: BoardEntidade, cmp: BoardCampo): BoardColuna[] =>
+      ent === "feedback" && cmp === "action_status" && statusCfg
+        ? statusCfg
+        : sugestaoColunas(ent, cmp),
+    [statusCfg],
+  );
+
+  // Se a config chega DEPOIS de abrir o modal de CRIAÇÃO já em feedback/action_status,
+  // adota o vocabulário da org. Depende só de `statusCfg` de propósito (trocas de
+  // campo/entidade são cobertas por `sugerir`); assim não descarta edição manual.
+  useEffect(() => {
+    if (!statusCfg || editing) return;
+    if (entidade === "feedback" && campo === "action_status") setColunas(statusCfg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusCfg]);
 
   // Ao trocar o TIPO de board (só na criação): reseta o campo p/ o 1º válido da
   // nova entidade e recarrega as colunas sugeridas coerentes.
@@ -1109,13 +1158,13 @@ function BoardFormModal({
     setEntidade(next);
     const novoCampo = campoDefault(next);
     setCampo(novoCampo);
-    setColunas(sugestaoColunas(next, novoCampo));
+    setColunas(sugerir(next, novoCampo));
   }
 
   // Ao trocar o campo (só na criação): recarrega as colunas sugeridas.
   function onCampoChange(next: BoardCampo) {
     setCampo(next);
-    setColunas(sugestaoColunas(entidade, next));
+    setColunas(sugerir(entidade, next));
   }
 
   function setCol(i: number, patch: Partial<BoardColuna>) {
@@ -2177,6 +2226,35 @@ export default function BoardPage() {
             col.valor === "planejado";
           // Cor da lista (fallback p/ a marca quando a coluna não traz cor).
           const cor = col.cor || "var(--indigo)";
+          // Board de feedback (≠ cliente/tarefa/melhoria): calcula UMA vez os cards
+          // realmente exibidos (busca + "só urgentes" + ordenação + dedupe por contato
+          // do Follow-up). O chip, o estado-vazio e o render usam ESTE resultado para
+          // não divergirem do que se vê — antes o chip mostrava `col.count` cru
+          // (ex.: "8" no cabeçalho com 3 cards na tela, por causa do dedupe).
+          const isFeedbackBoard = !isCliente && !isTarefa && !isMelhoria;
+          const fbCards = isFeedbackBoard
+            ? dedupeFeedbackCards(
+                (col.items as Feedback[])
+                  .filter((fb) => {
+                    if (!isFollowup || !busca.trim()) return true;
+                    const q = busca.trim().toLowerCase();
+                    return (
+                      (fb.contato_nome || "").toLowerCase().includes(q) ||
+                      (fb.text || "").toLowerCase().includes(q)
+                    );
+                  })
+                  .filter((fb) => (soUrgentes ? fb.urgencia >= 60 : true))
+                  .slice()
+                  .sort((a, b) => {
+                    if (!ordUrg) return 0;
+                    if (b.urgencia !== a.urgencia) return b.urgencia - a.urgencia;
+                    const ta = new Date(a.occurred_em ?? a.created_em ?? 0).getTime();
+                    const tb = new Date(b.occurred_em ?? b.created_em ?? 0).getTime();
+                    return tb - ta;
+                  }),
+                isFollowup,
+              )
+            : null;
           return (
             <section
               key={col.id}
@@ -2232,7 +2310,7 @@ export default function BoardPage() {
                   />
                   {col.nome}
                 </span>
-                <span style={countChipStyle(cor)}>{col.count}</span>
+                <span style={countChipStyle(cor)}>{fbCards ? fbCards.length : col.count}</span>
               </header>
 
               {/* "+ feedback" da coluna (board Follow-up): cria um feedback já com o
@@ -2290,31 +2368,7 @@ export default function BoardPage() {
                     />
                   ))
                 ) : (
-                  dedupeFeedbackCards(
-                    (col.items as Feedback[])
-                      .filter((fb) => {
-                        // Busca client-side só no board Follow-up (barra recolhida).
-                        if (!isFollowup || !busca.trim()) return true;
-                        const q = busca.trim().toLowerCase();
-                        return (
-                          (fb.contato_nome || "").toLowerCase().includes(q) ||
-                          (fb.text || "").toLowerCase().includes(q)
-                        );
-                      })
-                      // Filtro "só urgentes": esconde o que a IA marcou < 60 de urgência.
-                      .filter((fb) => (soUrgentes ? fb.urgencia >= 60 : true))
-                      // Ordenação por urgência (priority_index da IA) DESC, recência como
-                      // desempate estável (mais novo primeiro). Cópia p/ não mutar o estado.
-                      .slice()
-                      .sort((a, b) => {
-                        if (!ordUrg) return 0;
-                        if (b.urgencia !== a.urgencia) return b.urgencia - a.urgencia;
-                        const ta = new Date(a.occurred_em ?? a.created_em ?? 0).getTime();
-                        const tb = new Date(b.occurred_em ?? b.created_em ?? 0).getTime();
-                        return tb - ta;
-                      }),
-                    isFollowup,
-                  ).map(({ fb, extraCount }) => (
+                  (fbCards ?? []).map(({ fb, extraCount }) => (
                     <BoardCard
                       key={fb.id}
                       fb={fb}
@@ -2334,7 +2388,7 @@ export default function BoardPage() {
                   ))
                 )}
 
-                {col.count === 0 && !loading && (
+                {(fbCards ? fbCards.length === 0 : col.count === 0) && !loading && (
                   <div className="board-col-empty">
                     <svg
                       viewBox="0 0 24 24"

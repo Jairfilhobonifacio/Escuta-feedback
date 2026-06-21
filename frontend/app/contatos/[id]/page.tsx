@@ -1310,12 +1310,12 @@ function TimelineRow({
         <div className="tl-actions">
           <span className="act-label">Status</span>
           <select
-            value={t.action_status ?? "novo"}
+            value={t.action_status ?? "a_abordar"}
             onChange={(e) => run({ action_status: e.target.value as FeedbackStatus })}
             disabled={busy}
             aria-label="Status da ação"
           >
-            {withCurrentStatus(statusOptions, t.action_status ?? "novo").map((s) => (
+            {withCurrentStatus(statusOptions, t.action_status ?? "a_abordar").map((s) => (
               <option key={s.key} value={s.key}>{s.label}</option>
             ))}
           </select>
