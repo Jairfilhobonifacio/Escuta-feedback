@@ -21,7 +21,7 @@
 
 ---
 
-## ✅ O que foi construído (5 commits, todos pushed)
+## ✅ O que foi construído (6 commits, todos pushed)
 
 | Commit | Entrega |
 |--------|---------|
@@ -30,6 +30,7 @@
 | `045a6e8` | **P2-I** — fila **"Quem abordar primeiro"** no Monitorar. Backend `GET /api/central/fila` (READ-ONLY; reusa `compute_health` da Fase 1 + a MESMA regra de "abordado" do overview; prioridade = `(100 - health) + min(silêncio, 60)`; **sem migration, sem cron**). Front: componente `FilaAbordar` (fetch próprio, degrada quando vazio) + `central.fila()` tipado. tsc + 3 testes novos (`test_central.py` 18/18). |
 | `a117914` | **H** (excluir contato na **lista** `/clientes`: `ConfirmDialog` + `contacts.remove` + remoção local; o backend `DELETE /api/contacts/{id}` já existia, org-scoped + cascata) **+ G.3-A** (rota `/temas` → `/mapeamento`; `/temas` virou redirect p/ não quebrar bookmarks; Sidebar + link em Melhorias atualizados). tsc verde. |
 | `cf0909b` | **G.3-B** — mapa de dores **2D** no `/mapeamento` (aba "Por significado", toggle **Cards / Mapa**). Componente `ScatterMap` (SVG inline, zero lib): Volume × Impacto com **quadrantes de ação** (ATACAR AGORA / VIGIAR / PLANEJAR / MONITORAR) + lista rankeada sincronizada no hover; fallback gracioso (sem `priority_index` cai em `pain_score`); clique → `/feedbacks?cluster_id`. **Projetado por workflow** (3 designs + judge) + **revisado adversarialmente** (4 lentes → 3 fixes: barra×número no fallback, Escape no scatter, foco visível WCAG). tsc verde. |
+| `f3e962e` | **C (BACKEND)** — Board reordenar DENTRO da coluna. `board-move` aceita `position`/`board_id` OPCIONAIS; a ordem manual persiste em `Organization.settings["board_card_order"]` (**sem migration**); `_ordena_coluna` no GET (cards novos por **urgência no topo**, manuais abaixo na ordem salva); **fallback gracioso = nada regride**. **6 testes** (`test_board_reorder.py`) + 69 verdes sem regressão. **FRONT do DnD NÃO incluso** → spec de 10 passos em `docs/SPEC_BOARD_REORDER_FRONT.md` (exige QA visual). Projetado por workflow (corrigi bug do gerador: status `"novo"` inválido). |
 
 (+ os 3 commits locais do dono que também subiram nesta sessão: `609e818` login-operador, `4e335b7` sentimento-PT-v2, `5a86b1b` skills.)
 
@@ -50,22 +51,23 @@ A auditoria (3 agentes) revelou que **o backlog estava muito desatualizado** —
 | H apagar dados (P2) | ✅ feito (ficha já tinha; **lista** agora em `a117914`) |
 | I monitoramento inteligente (P2) | ✅ feito (fila em `045a6e8`) |
 | **G.3-B** mapa de dores 2D (P2) | ✅ feito (`cf0909b`) |
-| **C** Board reordenar intra-coluna (P1) | 🟡 **PENDENTE** (único item ainda aberto) |
+| **C** Board reordenar intra-coluna (P1) | 🟡 **backend feito** (`f3e962e`, testado); **front DnD pendente** (`docs/SPEC_BOARD_REORDER_FRONT.md`, exige QA visual) |
 
 ---
 
 ## 🟡 Onde paramos / próximos passos
 
-**Pendência técnica — ÚNICO item do backlog ainda aberto (planejada, NÃO empurrar às cegas pra prod):**
-1. **C — Board: reordenação DENTRO da coluna + drag handle.** Plano técnico VERIFICADO por workflow:
-   NÃO há tabela `board_cards` — os boards vivem em `Organization.settings["boards"]` (JSONB) e os cards são
-   derivados a cada GET. Caminho mínimo = mapa `board["card_order"] = {"<col_valor>": ["<id>", ...]}`
-   (**sem migration de schema**; exige `flag_modified(org, "settings")`) + estender `BoardMoveIn` com
-   `position`/`board_id` em `app/api/boards.py` (`board_move` ~`:1560`, GET `_items_action_status` ~`:833`)
-   + drop-position no `frontend/app/board/page.tsx` (`overIndex`, mesma-coluna vs cross, reorder otimista,
-   handle `GripVertical`). **Riscos REAIS:** truncamento em 30 (`BOARD_ITEMS_PER_COLUMN` — reorder só vale no
-   top-30 visível); **conflito ordem-manual × urgência = decisão de PRODUTO**; concorrência last-write-wins.
-   ~7-9h + **validação visual obrigatória** (DnD não tem teste de unidade).
+**Pendência técnica — ÚNICO item do backlog ainda aberto (front exige QA visual):**
+1. **C — Board reorder. BACKEND FEITO E TESTADO** (`f3e962e`): `card_order` em `Organization.settings`
+   (sem migration), `board-move` aceita `position`/`board_id`, `_ordena_coluna` no GET (novos por urgência no
+   topo; manuais abaixo), fallback gracioso (nada regride até alguém arrastar). 6 testes + 69 verdes.
+   **FALTA SÓ O FRONT (DnD)** — spec cirúrgica de 10 passos pronta em **`docs/SPEC_BOARD_REORDER_FRONT.md`**
+   (`overIndex` por midpoint do `clientY`, linha divisória, splice otimista mesma-coluna vs cross, drag handle
+   `GripVertical`, payload `position`/`board_id`). **Exige QA visual** (5 pontos: cálculo de midpoint, piscar
+   otimista×refetch, no-op de mesma posição) — subir `/escuta-stack` e arrastar cards de verdade ANTES de
+   considerar pronto/deployar. **Riscos de PRODUTO** já fixados no backend: truncamento em 30
+   (`BOARD_ITEMS_PER_COLUMN` — reorder só no top-30 visível); ordem-manual sobrepõe urgência só nos cards
+   tocados (novos urgentes ainda no topo); concorrência last-write-wins. Front ~3-4h com a stack no ar.
 
 **Operacional (depende do usuário):**
 3. **Validação visual** dos 5 commits desta sessão — não subi a stack (só `tsc` + `pytest`). Subir 8000/3001
