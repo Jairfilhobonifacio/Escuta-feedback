@@ -794,6 +794,25 @@ async def _enrich_feedback_cards(
     return extras
 
 
+def _ordena_coluna(
+    bucket: list[dict[str, Any]], ordem_manual: list[str] | None
+) -> list[dict[str, Any]]:
+    """Aplica a ordem manual de uma coluna sobre os cards já ordenados por urgência.
+
+    DECISÃO DE PRODUTO (fixa): cards SEM ordem manual (novos) vêm por URGÊNCIA no TOPO;
+    cards COM ordem manual vêm ABAIXO, na ordem salva. Fallback: ordem_manual None/vazia
+    => devolve o bucket por urgência intacto. Ids da ordem que sumiram do bucket são
+    ignorados (card resolvido/movido)."""
+    if not ordem_manual:
+        return bucket
+    por_id = {it["id"]: it for it in bucket}
+    ordem_pos = {fid: i for i, fid in enumerate(ordem_manual)}
+    manuais = [por_id[fid] for fid in ordem_manual if fid in por_id]
+    # Novos (sem ordem manual) por urgência no topo; depois os manuais na ordem salva.
+    novos = [it for it in bucket if it["id"] not in ordem_pos]
+    return novos + manuais
+
+
 async def _items_action_status(
     session: AsyncSession, org: Organization, board: dict[str, Any],
     filters: BoardItemFilters,
@@ -830,10 +849,14 @@ async def _items_action_status(
         card.update(extras[f.id])
         by_status.setdefault(f.action_status, []).append(card)
 
+    # Ordem manual por coluna (Item C). Fallback: coluna sem entrada = só urgência.
+    card_order = _card_order(org)
     colunas_out: list[dict[str, Any]] = []
     for col in board["colunas"]:
         bucket = by_status.get(col["valor"], [])
+        # Sempre ordena por urgência primeiro (estável p/ os cards SEM ordem manual).
         bucket.sort(key=lambda it: it["urgencia"], reverse=True)
+        ordenado = _ordena_coluna(bucket, card_order.get(col["valor"]))
         colunas_out.append(
             {
                 "id": col["id"],
@@ -841,7 +864,7 @@ async def _items_action_status(
                 "valor": col["valor"],
                 "cor": col.get("cor", _COR_DEFAULT),
                 "count": len(bucket),
-                "items": bucket[:BOARD_ITEMS_PER_COLUMN],
+                "items": ordenado[:BOARD_ITEMS_PER_COLUMN],
             }
         )
     return {
@@ -1500,16 +1523,69 @@ def _aplicar_selo(contact: Contact, valor: str) -> None:
         _set_selos_do_contato(contact, [*selos, valor])
 
 
+# --- Ordem manual de cards DENTRO da coluna (Item C) ---------------------------
+# Persistido em Organization.settings["board_card_order"] = {"<col_valor>": [fid, ...]}.
+# A ordem é POR VALOR DE COLUNA (action_status), não por board: a mesma coluna tem UMA
+# ordem manual, compartilhada por qualquer board que a exiba. Sem migration: vive no
+# JSONB settings, mesma técnica de mutação dos demais (copia-edita-reatribui).
+_CARD_ORDER_KEY = "board_card_order"
+
+
+def _card_order(org: Organization) -> dict[str, list[str]]:
+    """Mapa {col_valor: [feedback_id, ...]} salvo (tolerante a None/sujeira)."""
+    raw = (org.settings or {}).get(_CARD_ORDER_KEY)
+    out: dict[str, list[str]] = {}
+    if isinstance(raw, dict):
+        for col, ids in raw.items():
+            if isinstance(col, str) and isinstance(ids, list):
+                out[col] = [str(x) for x in ids if isinstance(x, str) and x]
+    return out
+
+
+def _set_card_order(org: Organization, mapa: dict[str, list[str]]) -> None:
+    """Reatribui o mapa de ordem no settings (marca o JSONB como sujo)."""
+    s = dict(org.settings or {})
+    s[_CARD_ORDER_KEY] = mapa
+    org.settings = s
+
+
+def _aplicar_card_order(
+    org: Organization, col_valor: str, feedback_id: str, position: int
+) -> None:
+    """Insere `feedback_id` na posição `position` da coluna `col_valor` (idempotente).
+
+    Remove-then-insert: tira o id de QUALQUER coluna onde estava (um card só pertence a
+    uma coluna) e reinsere na coluna destino, com a posição clampada em [0, len]. Mover
+    2x para a mesma posição produz exatamente o mesmo array. Marca o JSONB sujo."""
+    mapa = _card_order(org)
+    for col in list(mapa.keys()):
+        if feedback_id in mapa[col]:
+            mapa[col] = [x for x in mapa[col] if x != feedback_id]
+    destino = mapa.get(col_valor, [])
+    pos = max(0, min(int(position), len(destino)))
+    destino.insert(pos, feedback_id)
+    mapa[col_valor] = destino
+    _set_card_order(org, mapa)
+
+
 class BoardMoveIn(BaseModel):
     """Move um feedback no board: aplica o `campo` com o `valor` da coluna destino.
 
     - campo='action_status': seta FeedbackItem.action_status = valor.
     - campo='selo': aplica o selo `valor` ao CONTATO do feedback (reusa a lógica de
       selos do campanha.py: garante o selo no catálogo + idempotente na lista do contato).
+
+    Reordenação manual DENTRO da coluna (Item C — só campo='action_status'):
+    - position: índice 0-based onde o card fica na coluna destino. None = sem reordenação
+      (comportamento antigo: o card entra por URGÊNCIA). OPCIONAL p/ retrocompat.
+    - board_id: aceito p/ retrocompat com o front; ignorado na persistência (a ordem é
+      por COLUNA/valor, não por board).
     """
 
     campo: str = Field(min_length=1, max_length=40)
     valor: str = Field(min_length=1, max_length=80)
+    position: int | None = Field(default=None, ge=0)
+    board_id: str | None = Field(default=None, max_length=80)
 
 
 @router.post("/feedbacks/{feedback_id}/board-move")
@@ -1564,6 +1640,10 @@ async def board_move(
                 detail=f"action_status inválido: '{valor}' (use {', '.join(ACTION_STATUSES)})",
             )
         feedback.action_status = valor
+        # Item C — reordenação manual DENTRO da coluna destino. Só quando o front manda
+        # `position`; sem position = comportamento antigo (card entra por urgência).
+        if body.position is not None:
+            _aplicar_card_order(org, valor, str(feedback.id), body.position)
     else:  # campo == "selo"
         if contact is None:
             raise HTTPException(
