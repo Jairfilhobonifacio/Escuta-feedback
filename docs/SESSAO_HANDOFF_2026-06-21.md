@@ -1,0 +1,105 @@
+# 🗓️ Sessão 2026-06-21 — Bugs residuais + P1-F + P2-I + polish do backlog
+
+> **Projeto:** Escuta (Central de Voz do Cliente no WhatsApp) · `C:\Users\jboni\Documents\Projetos\escuta`
+> **Continuação de:** `SESSAO_HANDOFF_2026-06-20_FEEDBACK_JORNADA.md`
+> **Foco:** auditar o backlog do dono (`FEEDBACK_DONO_2026-06-20.md`), corrigir bugs residuais e
+> implementar os itens de baixo risco. Tudo commitado **E pushed** para o GitHub.
+
+---
+
+## 🟢 Estado atual
+
+| Serviço | Porta | Estado nesta sessão |
+|---------|-------|---------------------|
+| API FastAPI | 8000 | desligada (trabalho foi código + testes, não runtime) |
+| Painel Next | 3001 | desligado |
+| WAHA | 3000 | desligado |
+
+- **Git:** branch `master` no commit **`a117914`**, **sincronizado com `origin/master`** (pushed).
+  Remote: `github.com/Jairfilhobonifacio/Escuta-feedback`.
+- **Worktrees:** limpos (4 criados e removidos nesta sessão; tudo já estava em `origin/master`).
+
+---
+
+## ✅ O que foi construído (4 commits, todos pushed)
+
+| Commit | Entrega |
+|--------|---------|
+| `974c89a` | **5 bugs residuais** que o `f53d399` deixou passar: selos na tela **Feedbacks** migrados pro `SeloPopover` (portal — fim do "+selo fantasma" nesta tela); **Board lê `/api/config`** (status reais da org, não mais `novo/em_analise/planejado` que o backend não reconhece); **contagem do Board Follow-up** sincronizada com os cards dedupados; **status fantasma "novo"** na ficha → `a_abordar`; **flip vertical** do `SeloPopover`. tsc verde. |
+| `2b43d49` | **P1-F** — ficha mostra **"Assinou em"** (`startedAt`) e **"Total pago"** (`totalPaidCentavos`). `sync_partner_customers.py::_build_partner_profile` passou a gravar `startedAt`/`planName`/`totalPaidCentavos` no snapshot (a API de Clientes já expunha, eram ignorados). Helper `fmtMoney` (BRL). tsc + `test_partner_profiles` 40/40. |
+| `045a6e8` | **P2-I** — fila **"Quem abordar primeiro"** no Monitorar. Backend `GET /api/central/fila` (READ-ONLY; reusa `compute_health` da Fase 1 + a MESMA regra de "abordado" do overview; prioridade = `(100 - health) + min(silêncio, 60)`; **sem migration, sem cron**). Front: componente `FilaAbordar` (fetch próprio, degrada quando vazio) + `central.fila()` tipado. tsc + 3 testes novos (`test_central.py` 18/18). |
+| `a117914` | **H** (excluir contato na **lista** `/clientes`: `ConfirmDialog` + `contacts.remove` + remoção local; o backend `DELETE /api/contacts/{id}` já existia, org-scoped + cascata) **+ G.3-A** (rota `/temas` → `/mapeamento`; `/temas` virou redirect p/ não quebrar bookmarks; Sidebar + link em Melhorias atualizados). tsc verde. |
+
+(+ os 3 commits locais do dono que também subiram nesta sessão: `609e818` login-operador, `4e335b7` sentimento-PT-v2, `5a86b1b` skills.)
+
+---
+
+## 📊 Backlog do dono (`FEEDBACK_DONO_2026-06-20.md`) — real vs. feito
+
+A auditoria (3 agentes) revelou que **o backlog estava muito desatualizado** — quase tudo já tinha sido entregue:
+
+| Item | Estado real |
+|------|-------------|
+| B selos (P0) · D ficha (P0) | ✅ feito (`f53d399` + `974c89a`) |
+| A Clientes: chips de canal (P1) | ✅ feito (`f53d399`) |
+| E Pesquisas redesign (P1) | ✅ feito (nunca foi bug de styled-jsx) |
+| F assinatura + status custom (P1) | ✅ feito (`2b43d49` + `974c89a`) |
+| G.1/G.2 tipos/origem custom (P2) | ✅ feito (`/api/config` + tela `/config`) |
+| J benchmark de CS (P2) | ✅ feito (`docs/BENCHMARK_CS_2026-06-20.md`) |
+| H apagar dados (P2) | ✅ feito (ficha já tinha; **lista** agora em `a117914`) |
+| I monitoramento inteligente (P2) | ✅ feito (fila em `045a6e8`) |
+| **C** Board reordenar intra-coluna (P1) | 🟡 **PENDENTE** |
+| **G.3-B** mapa de dores 2D (P2) | 🟡 **PENDENTE** |
+
+---
+
+## 🟡 Onde paramos / próximos passos
+
+**Pendências técnicas (planejadas, NÃO empurradas às cegas pra prod):**
+1. **C — Board: reordenação DENTRO da coluna + drag handle.** Esforço **médio-alto**: exige **migration**
+   (campo `position`/ordem no JSONB dos boards em `Organization.settings["boards"]`) + endpoint novo
+   `PATCH /boards/{id}/reorder` + detecção de drop-position no `frontend/app/board/page.tsx` (~300 linhas).
+   **Precisa validação visual.** (Não há tabela `board_cards`; boards vivem em `Organization.settings`.)
+2. **G.3-B — Mapa de dores 2D (scatter SVG).** Os dados já existem nos clusters (`priority_index`,
+   `distinct_customers`, `paying_customers`, `priority_band`). Falta o componente `ScatterMap` (SVG inline,
+   sem lib nova) na tela `frontend/app/mapeamento/page.tsx`. ~3-4h, **precisa validação visual**.
+
+**Operacional (depende do usuário):**
+3. **Validação visual** dos 4 commits desta sessão — não subi a stack (só `tsc` + `pytest`). Subir 8000/3001
+   (skill `escuta-stack`) e conferir: selos em Feedbacks, ficha com assinatura, fila no Monitorar, excluir
+   na lista, `/mapeamento` (e `/temas` redirecionando).
+4. **Re-sync** `scripts/sync_partner_customers.py` p/ popular `startedAt`/`totalPaidCentavos` nos contatos
+   já existentes (a ficha só mostra os campos novos depois do sync). Precisa `BIZZU_PARTNER_API_KEY` e
+   **toca o piloto** — rodar com OK explícito.
+5. **Deploy** dos novos commits p/ prod (Modal API + Vercel painel) — não foi feito (skill `escuta-deploy`).
+
+---
+
+## 🔧 Como religar a stack
+Use a skill **`escuta-stack`** (sobe 8000 / 3001 / 3000 + containers Podman). Não duplicar comandos aqui.
+
+---
+
+## ⚠️ Pegadinhas (novas desta sessão)
+- **Worktree em background-job parte de `origin/master`** (baseRef "fresh"), não do `master` local — se houver
+  commits locais não-pushed, fazer `git merge --ff-only master` no worktree ANTES de editar (senão regride no
+  merge). Depois do 1º push, os worktrees seguintes já nasceram corretos.
+- **`node_modules` não existe no worktree** (gitignored). Para rodar `tsc`, criar junction
+  `New-Item -ItemType Junction` apontando pro `node_modules` do checkout principal — e **removê-lo com
+  `[System.IO.Directory]::Delete($link, $false)`** (NUNCA `Remove-Item -Recurse`, que seguiria o junction e
+  apagaria o `node_modules` REAL do checkout principal).
+- **Backlog do dono estava muito desatualizado:** vários itens "abertos" já estavam implementados — **sempre
+  verificar no código antes de implementar**. Os agentes de planejamento erraram 2× afirmando que algo não
+  existia (o `DeleteContactModal` da ficha e a migração de selos) quando existia; a leitura direta corrigiu.
+
+---
+
+## 🔑 Refs rápidas (sem valores de segredo)
+| Item | Valor / Caminho |
+|------|-----------------|
+| Repo | `github.com/Jairfilhobonifacio/Escuta-feedback` (branch `master` = `origin/master`) |
+| Prod API | Modal (app `escuta-api`, secret `escuta-prod`) |
+| Prod painel | Vercel (projeto `escuta-feedback`) |
+| Endpoint novo | `GET /api/central/fila` — fila "quem abordar primeiro" (risco × silêncio) |
+| Rota renomeada | `/temas` → `/mapeamento` (a antiga redireciona) |
+| Re-sync assinatura | `scripts/sync_partner_customers.py` (precisa `BIZZU_PARTNER_API_KEY`) |

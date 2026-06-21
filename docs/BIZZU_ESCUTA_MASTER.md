@@ -11,9 +11,10 @@
 > conflito. Docs irmãos: `CONTEXTO_BIZZU.md` (ecossistema), `INTEGRACAO_BIZZU.md` (integração),
 > `analise-bizzu/*.md` (por repo), `corpus_bizzu/*.md` (RAG), `SESSAO_HANDOFF_*.md` (estado).
 >
-> **Última atualização:** 2026-06-18 (commit `577a84e`: agente VoC atrás de flag + retrieval multilíngue/
-> híbrido + hardening multi-tenant + auth de painel/webhook; **555 testes**. Migrations `20260618*` commitadas
-> mas **ainda não aplicadas no piloto**).
+> **Última atualização:** 2026-06-21 (commit `a117914`: bugs residuais de selos/Board + P1-F assinatura na
+> ficha + P2-I fila "quem abordar primeiro" + excluir-na-lista + rota `/temas`→`/mapeamento`; **pushed**).
+> O repo AGORA TEM remote `github.com/Jairfilhobonifacio/Escuta-feedback` e está EM PROD (Modal API +
+> Vercel painel). Diário: `SESSAO_HANDOFF_2026-06-21.md`. Pendentes: Board reorder (C) + mapa 2D (G.3-B).
 
 ---
 
@@ -203,7 +204,9 @@ ativamente, não derivado).
 eventos de ciclo de vida de clientes (piloto: Bizzu), dispara *surveys* via WhatsApp, interpreta a
 resposta com IA, classifica e entrega insight ao dono.
 
-- **Local:** `C:\Users\jboni\Documents\Projetos\escuta`. Git no commit `577a84e` (branch `master`, sem remote).
+- **Local:** `C:\Users\jboni\Documents\Projetos\escuta`. Git no commit `a117914` (branch `master`), **COM
+  remote** `github.com/Jairfilhobonifacio/Escuta-feedback` e **EM PROD** (Modal API app `escuta-api` +
+  Vercel painel projeto `escuta-feedback`).
 - **Stack:** FastAPI (Python) + Supabase Postgres (pgvector) + WAHA (WhatsApp não-oficial) + painel
   Next.js. LLM via **Groq** (`llama-3.3-70b-versatile`). Embeddings **MiniLM offline** (384 dim) —
   trocáveis por modelo **multilíngue** via `EMBEDDING_MODEL_NAME` (vazio = MiniLM; ver §5.1).
