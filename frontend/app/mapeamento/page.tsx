@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { Stagger, StaggerItem } from "@/components/Motion";
 import { Button } from "@/components/ui/button";
+import ScatterMap from "@/components/ScatterMap";
 
 // ===== abas (por tag × por significado) =====================================
 
@@ -492,6 +493,8 @@ export default function TemasPage() {
   const [clusterLoading, setClusterLoading] = useState(true);
   // Default = prioridade (volume × receita × gravidade): a leitura que o mockup pede.
   const [clusterSort, setClusterSort] = useState<ClustersSort>("prioridade");
+  // Sub-visão da aba "Por significado": cartões × mapa de dores 2D (scatter).
+  const [clusterView, setClusterView] = useState<"cards" | "mapa">("cards");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -743,13 +746,47 @@ export default function TemasPage() {
               </div>
             </div>
           ) : (
-            <Stagger className="tema-grid">
-              {clusters.map((c, i) => (
-                <StaggerItem key={c.id}>
-                  <ClusterCard cluster={c} rank={i + 1} />
-                </StaggerItem>
-              ))}
-            </Stagger>
+            <>
+              {/* Toggle Cards / Mapa (só com >=2 dores p/ desenhar o scatter). */}
+              {clusters.length >= 2 && (
+                <div
+                  className="status-tabs map2d-toggle"
+                  role="tablist"
+                  aria-label="Visualização das dores"
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={clusterView === "cards"}
+                    className={`status-tab ${clusterView === "cards" ? "active" : ""}`}
+                    onClick={() => setClusterView("cards")}
+                  >
+                    Cards
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={clusterView === "mapa"}
+                    className={`status-tab ${clusterView === "mapa" ? "active" : ""}`}
+                    onClick={() => setClusterView("mapa")}
+                  >
+                    Mapa
+                  </button>
+                </div>
+              )}
+
+              {clusterView === "mapa" && clusters.length >= 2 ? (
+                <ScatterMap clusters={clusters} />
+              ) : (
+                <Stagger className="tema-grid">
+                  {clusters.map((c, i) => (
+                    <StaggerItem key={c.id}>
+                      <ClusterCard cluster={c} rank={i + 1} />
+                    </StaggerItem>
+                  ))}
+                </Stagger>
+              )}
+            </>
           )}
         </>
       )}
