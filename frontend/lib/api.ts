@@ -206,6 +206,9 @@ export interface Timeline360Item {
   action_note?: string | null;
   /** Já abordamos o cliente sobre este feedback? (só kind='feedback_item'). */
   abordado?: boolean;
+  /** "Reabordar este feedback em" (ISO/UTC) ou null — follow-up agendado
+      (só kind='feedback_item'). Vencido = `follow_up_at <= agora`. */
+  follow_up_at?: string | null;
   // --- Campos só de kind='selo' (histórico de selos) -------------------------
   /** Nome do selo aplicado/removido (só kind='selo'). */
   selo?: string;
@@ -415,6 +418,9 @@ export interface FeedbackFiltro {
   abordado?: boolean;
   /** 'hoje' | '7d' | '30d' — recorte de `abordado_em`. */
   abordado_periodo?: string;
+  /** Fila de follow-up: true = só os VENCIDOS (`follow_up_at <= agora`);
+      false = só os sem follow-up ou agendados no futuro. Ausente = não filtra. */
+  follow_up_vencido?: boolean;
   /** Filtros "por tipo de cliente" (sobre o contato juntado). */
   estado?: EstadoAssinatura;
   perfil?: string;
@@ -469,6 +475,9 @@ export interface Feedback {
   abordado: boolean;
   /** Quando foi marcado como abordado (ISO) ou null. */
   abordado_em: string | null;
+  /** "Reabordar este feedback em" (ISO, UTC) — follow-up agendado, ou null.
+      Vencido = `follow_up_at <= agora`. Ausente na API antiga (fallback gracioso). */
+  follow_up_at?: string | null;
   occurred_em: string | null;
   created_em: string | null;
   /** Score de urgência 0-100 (sentimento + perfil + recência) — ordena o inbox. */
@@ -520,6 +529,9 @@ export interface FeedbackPatch {
   score?: number | null;
   sentiment?: string | null;
   themes?: string[] | null;
+  /** "Reabordar em" (ISO-8601 UTC) — agenda o follow-up; `null` LIMPA o agendamento.
+      AUSENTE do corpo = não mexe no follow-up atual. */
+  follow_up_at?: string | null;
   /** Roteamento do Board (Camada 2). */
   assignee?: string | null;
   team_tag?: string | null;

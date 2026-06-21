@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +32,7 @@ from app.domain.survey.resolver import (
     SurveyContextResolver,
 )
 from app.models.core import Contact, Organization
+from app.models.feedback import FeedbackItem
 from app.models.survey import Message
 from app.services.embeddings import EmbeddingService, get_embedder
 from app.services.llm import GroqLLM
@@ -336,6 +337,51 @@ def _aplicar_selos_inbound(contact: Contact, org: Organization) -> None:
         logger.warning("WAHA webhook: falha ao aplicar selos de inbound", exc_info=True)
 
 
+# Status a partir dos quais o INBOUND reabre o acompanhamento: os terminais
+# (resolvido/sem_retorno/descartado) + 'aguardando_retorno' (a bola estava com o
+# cliente; ele respondeu → volta pra nossa mão). Os demais ('a_abordar',
+# 'em_acompanhamento') já estão ativos e não são tocados (UPDATE no-op neles).
+_REABRIR_DE_STATUSES = (
+    "resolvido",
+    "sem_retorno",
+    "descartado",
+    "aguardando_retorno",
+)
+
+
+async def _reabrir_follow_ups_inbound(
+    session: AsyncSession, contact: Contact, org: Organization
+) -> None:
+    """INBOUND real de cliente → reabre feedbacks deste contato.
+
+    FeedbackItems do contato em status TERMINAL (resolvido/sem_retorno/descartado)
+    OU 'aguardando_retorno' voltam para 'a_abordar' e têm o follow_up_at zerado — o
+    cliente respondeu, a bola voltou pra nós. Idempotente (roda a cada inbound; o
+    UPDATE só afeta linhas que casam os critérios, então re-rodar não muda nada
+    depois da 1ª vez). Best-effort: NUNCA levanta — o webhook do WAHA não pode cair.
+    NÃO faz commit (o caller é dono da transação). Gated pelo MESMO flag do selo
+    automático (`selo_auto_inbound`), por ser a contraparte de relacionamento do
+    'respondeu'.
+    """
+    if not _selo_auto_inbound_ligado(org):
+        return
+    try:
+        await session.execute(
+            update(FeedbackItem)
+            .where(
+                FeedbackItem.organization_id == org.id,
+                FeedbackItem.contact_id == contact.id,
+                FeedbackItem.action_status.in_(_REABRIR_DE_STATUSES),
+            )
+            .values(action_status="a_abordar", follow_up_at=None)
+        )
+    except Exception:  # noqa: BLE001 — reabrir é best-effort; não derruba o webhook.
+        logger.warning(
+            "WAHA webhook: falha ao reabrir follow-ups para contato %s", contact.id,
+            exc_info=True,
+        )
+
+
 # A captura na Mega Central da inbound SEM pesquisa pendente (antes inline aqui como
 # `_capturar_resposta_central` + `_contato_eh_churn`) mora agora em
 # app/domain/survey/message_handler.py (InboundMessageHandler) — funil próprio,
@@ -545,6 +591,13 @@ async def waha_webhook(
         # gated por org.settings["selo_auto_inbound"] (default ON). Best-effort: roda
         # ANTES dos branches de áudio-falho/hand-off/pesquisa para valer em TODOS eles.
         _aplicar_selos_inbound(contact, org)
+
+        # --- auto-reabrir follow-ups (níveis 1-2) ---------------------------
+        # O cliente respondeu: feedbacks dele em status terminal ou
+        # 'aguardando_retorno' voltam para 'a_abordar' + follow_up_at=NULL
+        # (idempotente, best-effort, mesmo gate do selo). Roda ANTES dos branches
+        # de áudio-falho/hand-off/pesquisa para valer em todos eles.
+        await _reabrir_follow_ups_inbound(session, contact, org)
 
         # Áudio que não transcreveu: acolhe e encerra (não joga marcador no resolver).
         if audio_failed:

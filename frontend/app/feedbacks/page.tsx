@@ -9,7 +9,16 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
-import { ListChecks, MoreHorizontal, Pencil, Trash2, Check } from "lucide-react";
+import {
+  ListChecks,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  Check,
+  CalendarClock,
+  CalendarPlus,
+  CalendarX,
+} from "lucide-react";
 import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -234,6 +243,189 @@ function bucketFor(score: number | null | undefined): string {
 function parseThemes(raw: string): string[] | null {
   const arr = raw.split(",").map((t) => t.trim()).filter(Boolean);
   return arr.length ? arr : null;
+}
+
+// ===== Follow-up ("Reabordar em...") ========================================
+// Agenda quando reabordar um feedback (`follow_up_at`, ISO/UTC). Vencido =
+// follow_up_at <= agora → DESTACADO em vermelho. PATCH /api/feedbacks/{id}
+// {follow_up_at}; null limpa.
+
+/** Só data (DD/MM) do follow-up, no fuso local. */
+function fmtFollowUp(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+}
+
+/** ISO (UTC) daqui a N dias inteiros (à meia-noite local do dia-alvo). */
+function isoEmDias(dias: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dias);
+  d.setHours(9, 0, 0, 0); // 9h local — horário comercial, não meia-noite.
+  return d.toISOString();
+}
+
+/** Info derivada do follow-up de um feedback: tem? está vencido? rótulo curto. */
+function followUpInfo(iso: string | null | undefined): {
+  agendado: boolean;
+  vencido: boolean;
+  label: string;
+} {
+  if (!iso) return { agendado: false, vencido: false, label: "" };
+  const t = new Date(iso).getTime();
+  const vencido = t <= Date.now();
+  return { agendado: true, vencido, label: fmtFollowUp(iso) };
+}
+
+/** datetime-local (sem 'Z') a partir de um Date, no fuso local. */
+function toDateInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Pílula que mostra "reabordar em DD/MM" — vermelha quando vencida. Clicável
+    para abrir o menu (passada como trigger). */
+function FollowUpPill({
+  iso,
+  onClick,
+}: {
+  iso: string | null | undefined;
+  onClick?: () => void;
+}) {
+  const info = followUpInfo(iso);
+  if (!info.agendado) return null;
+  const cls = info.vencido ? "fb-followup-pill is-overdue" : "fb-followup-pill";
+  const title = info.vencido
+    ? `Follow-up vencido (era ${info.label}) — reabordar agora`
+    : `Reabordar em ${info.label}`;
+  return (
+    <button type="button" className={cls} onClick={onClick} title={title}>
+      <CalendarClock size={12} aria-hidden />
+      {info.vencido ? `venceu ${info.label}` : `reabordar ${info.label}`}
+    </button>
+  );
+}
+
+/** Menu "Reabordar em…" (3 dias / 7 dias / escolher data / limpar). Seta
+    follow_up_at via callback. Fecha no clique fora e no Esc. */
+function ReabordarMenu({
+  current,
+  onSchedule,
+  onClear,
+  busy,
+  triggerClassName,
+  triggerLabel,
+}: {
+  current: string | null | undefined;
+  onSchedule: (iso: string) => void;
+  onClear: () => void;
+  busy?: boolean;
+  triggerClassName?: string;
+  triggerLabel?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [dateVal, setDateVal] = useState(() => toDateInputValue(new Date()));
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function close() {
+    setOpen(false);
+    setPicking(false);
+  }
+
+  function agendarDias(dias: number) {
+    onSchedule(isoEmDias(dias));
+    close();
+  }
+
+  function confirmarData() {
+    if (!dateVal) return;
+    // datetime-local sem fuso → meia-feira local às 9h, depois UTC.
+    const d = new Date(`${dateVal}T09:00`);
+    onSchedule(d.toISOString());
+    close();
+  }
+
+  return (
+    <div className="fb-reabordar" ref={boxRef}>
+      <button
+        type="button"
+        className={triggerClassName ?? "fb-reabordar-btn"}
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={busy}
+        title="Agendar quando reabordar este feedback"
+      >
+        <CalendarClock size={14} aria-hidden />
+        {triggerLabel ?? "Reabordar em…"}
+      </button>
+      {open && (
+        <div className="fb-reabordar-pop" role="menu">
+          {!picking ? (
+            <>
+              <button type="button" role="menuitem" className="fb-reabordar-item" onClick={() => agendarDias(3)}>
+                <CalendarPlus size={14} aria-hidden /> Em 3 dias
+              </button>
+              <button type="button" role="menuitem" className="fb-reabordar-item" onClick={() => agendarDias(7)}>
+                <CalendarPlus size={14} aria-hidden /> Em 7 dias
+              </button>
+              <button type="button" role="menuitem" className="fb-reabordar-item" onClick={() => setPicking(true)}>
+                <CalendarClock size={14} aria-hidden /> Escolher data…
+              </button>
+              {current && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="fb-reabordar-item danger"
+                  onClick={() => {
+                    onClear();
+                    close();
+                  }}
+                >
+                  <CalendarX size={14} aria-hidden /> Limpar follow-up
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="fb-reabordar-pick">
+              <label className="fb-reabordar-pick-lbl">Reabordar em</label>
+              <input
+                type="date"
+                value={dateVal}
+                min={toDateInputValue(new Date())}
+                onChange={(e) => setDateVal(e.target.value)}
+                className="fb-reabordar-date"
+              />
+              <div className="fb-reabordar-pick-actions">
+                <button type="button" className="btn ghost sm" onClick={() => setPicking(false)}>
+                  Voltar
+                </button>
+                <button type="button" className="btn sm" onClick={confirmarData} disabled={!dateVal}>
+                  Agendar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ===== Modal de edição (PATCH de text/type/score/sentiment/themes) ==========
@@ -1001,7 +1193,16 @@ function FeedbackCard({
     patch({ action_note: trimmed });
   }
 
+  // Follow-up ("reabordar em…"): grava follow_up_at via PATCH (null limpa).
+  function agendarFollowUp(iso: string) {
+    patch({ follow_up_at: iso });
+  }
+  function limparFollowUp() {
+    patch({ follow_up_at: null });
+  }
+
   const isChurn = fb.type === "churn" || fb.type === "exit";
+  const followUp = followUpInfo(fb.follow_up_at);
 
   // Ações secundárias recolhidas no menu "⋯": tirar tarefa, alternar abordado,
   // editar e excluir — saem da frente para o card respirar.
@@ -1091,6 +1292,7 @@ function FeedbackCard({
         <span className="fb-meta-sep" aria-hidden>·</span>
         <span className="fb-meta-src">{(typeLabels[fb.type] ?? TYPE_LABEL[fb.type] ?? fb.type)} · via {SOURCE_LABEL[fb.source] ?? fb.source}</span>
         {isChurn && <span className="badge detractor fb-chip-sm">Churn</span>}
+        {followUp.agendado && <FollowUpPill iso={fb.follow_up_at} />}
         {themeChips(fb.themes)}
         <SeloControl fb={fb} onSelosChanged={(selos) => onSelosChanged(fb.id, selos)} />
       </div>
@@ -1130,6 +1332,20 @@ function FeedbackCard({
               <Check size={14} aria-hidden /> Marcar abordado
             </button>
           )}
+          <ReabordarMenu
+            current={fb.follow_up_at}
+            onSchedule={agendarFollowUp}
+            onClear={limparFollowUp}
+            busy={saving}
+            triggerClassName={`fb-reabordar-btn${followUp.vencido ? " is-overdue" : ""}`}
+            triggerLabel={
+              followUp.agendado
+                ? followUp.vencido
+                  ? `Venceu ${followUp.label}`
+                  : `Reabordar ${followUp.label}`
+                : "Reabordar em…"
+            }
+          />
           <button
             type="button"
             className="btn-wa-sm"
@@ -1417,6 +1633,8 @@ export default function FeedbacksPage() {
   >("");
   // Filtro por selo de campanha do contato (status win-back no inbox).
   const [selo, setSelo] = useState("");
+  // Fila de follow-up: aba "para hoje" mostra só os VENCIDOS (follow_up_at <= agora).
+  const [followUpVencido, setFollowUpVencido] = useState(false);
   // Filtros "por tipo de cliente" do AUTOR do feedback (snapshot partner do contato):
   // estado da assinatura, plano (mensal/anual), perfil de segmentação, alcance no
   // WhatsApp e faixa de NPS. Todos viram query params em /api/feedbacks.
@@ -1462,6 +1680,8 @@ export default function FeedbacksPage() {
         qs.set("abordado_periodo", abordado);
       }
       if (selo) qs.set("selo", selo);
+      // Fila de follow-up: só os vencidos (follow_up_at <= agora).
+      if (followUpVencido) qs.set("follow_up_vencido", "true");
       // Filtros "por tipo de cliente" do autor (sobre o contato juntado).
       if (estado) qs.set("estado", estado);
       if (planType) qs.set("plan_type", planType);
@@ -1478,7 +1698,7 @@ export default function FeedbacksPage() {
       return qs.toString();
     },
     [
-      status, type, sentiment, source, search, abordado, selo,
+      status, type, sentiment, source, search, abordado, selo, followUpVencido,
       estado, planType, perfil, temWhatsapp, npsBucket,
       clusterId, theme, sort,
     ],
@@ -1601,7 +1821,7 @@ export default function FeedbacksPage() {
   const visible = status ? items.filter((it) => it.action_status === status) : items;
   const hasMore = visible.length < total;
   const hasFilters = !!(
-    type || sentiment || source || search || abordado || selo ||
+    type || sentiment || source || search || abordado || selo || followUpVencido ||
     estado || planType || perfil || temWhatsapp || npsBucket ||
     clusterId || theme
   );
@@ -1648,25 +1868,43 @@ export default function FeedbacksPage() {
          ficam apagadas (não competem); a ativa é bem destacada. Todas clicáveis. */}
       <div className="status-tabs">
         <button
-          className={`status-tab ${status === "" ? "active" : ""}`}
-          onClick={() => setStatus("")}
+          className={`status-tab ${status === "" && !followUpVencido ? "active" : ""}`}
+          onClick={() => {
+            setStatus("");
+            setFollowUpVencido(false);
+          }}
         >
           Todos
         </button>
         {statusOptions.map((s) => {
           const n = (counts as unknown as Record<string, number>)[s.key] ?? 0;
-          const isActive = status === s.key;
+          const isActive = status === s.key && !followUpVencido;
           return (
             <button
               key={s.key}
               className={`status-tab ${isActive ? "active" : ""} ${n === 0 && !isActive ? "is-empty" : ""}`}
-              onClick={() => setStatus(s.key)}
+              onClick={() => {
+                setFollowUpVencido(false);
+                setStatus(s.key);
+              }}
             >
               {s.label}
               <span className="tab-count">{n}</span>
             </button>
           );
         })}
+        {/* Fila de follow-up: mostra só os feedbacks com reabordagem VENCIDA. */}
+        <button
+          className={`status-tab fb-followup-tab ${followUpVencido ? "active" : ""}`}
+          onClick={() => {
+            setStatus("");
+            setFollowUpVencido(true);
+          }}
+          title="Feedbacks com follow-up agendado para hoje ou antes"
+        >
+          <CalendarClock size={13} aria-hidden style={{ verticalAlign: "-2px", marginRight: 5 }} />
+          Follow-up (para hoje)
+        </button>
       </div>
 
       {/* Barra enxuta: só BUSCA + botão "Filtros" (os avançados ficam no painel).
@@ -1762,14 +2000,18 @@ export default function FeedbacksPage() {
               </svg>
             </div>
             <div className="empty-title">
-              {status
+              {followUpVencido
+                ? "Nenhum follow-up para hoje"
+                : status
                 ? `Nada em "${statusLabels[status] ?? status}"`
                 : hasFilters
                 ? "Nenhum feedback bate com os filtros"
                 : "Nenhum feedback ainda"}
             </div>
             <p className="empty-sub">
-              {status
+              {followUpVencido
+                ? "Tudo em dia! Nenhum feedback tem reabordagem vencida. Agende um follow-up pelo menu “Reabordar em…” de um card."
+                : status
                 ? "Mude de aba ou ajuste os filtros para ver outros feedbacks."
                 : hasFilters
                 ? "Tente afrouxar os filtros ou limpar a busca."

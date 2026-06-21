@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import Integer, case, func, or_, select, update
+from sqlalchemy import Integer, and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import logging
@@ -1534,6 +1534,7 @@ def _feedback_out(
         "improvement_id": str(f.improvement_id) if f.improvement_id else None,
         "abordado": f.abordado,
         "abordado_em": f.abordado_em.isoformat() if f.abordado_em else None,
+        "follow_up_at": f.follow_up_at.isoformat() if f.follow_up_at else None,
         "occurred_em": when.isoformat() if when else None,
         "created_em": f.created_at.isoformat() if f.created_at else None,
     }
@@ -1601,6 +1602,23 @@ def _apply_contact_filters(stmt, dialect, *, estado, perfil, plan_type, tem_what
     return stmt
 
 
+def _follow_up_vencido_clause(vencido: bool, agora: datetime):
+    """Predicado SQL "follow-up VENCIDO" (follow_up_at <= agora) / inverso.
+
+    vencido=True  → follow_up_at NÃO nulo E <= agora (a fila de reabordagens).
+    vencido=False → sem follow-up OU agendado para o futuro (follow_up_at > agora).
+    """
+    if vencido:
+        return and_(
+            FeedbackItem.follow_up_at.is_not(None),
+            FeedbackItem.follow_up_at <= agora,
+        )
+    return or_(
+        FeedbackItem.follow_up_at.is_(None),
+        FeedbackItem.follow_up_at > agora,
+    )
+
+
 @router.get("/feedbacks")
 async def list_feedbacks(
     status: str | None = None,
@@ -1614,6 +1632,7 @@ async def list_feedbacks(
     team_tag: str | None = None,
     abordado: bool | None = None,
     abordado_periodo: str | None = None,
+    follow_up_vencido: bool | None = None,
     estado: str | None = None,
     perfil: str | None = None,
     plan_type: str | None = None,
@@ -1698,6 +1717,10 @@ async def list_feedbacks(
                 FeedbackItem.abordado.is_(True),
                 FeedbackItem.abordado_em >= inicio,
             )
+    if follow_up_vencido is not None:
+        base = base.where(
+            _follow_up_vencido_clause(follow_up_vencido, datetime.now(timezone.utc))
+        )
     if search:
         term = f"%{search.strip().lower()}%"
         base = base.where(
@@ -1766,6 +1789,10 @@ async def list_feedbacks(
                 FeedbackItem.abordado.is_(True),
                 FeedbackItem.abordado_em >= inicio,
             )
+    if follow_up_vencido is not None:
+        counts_stmt = counts_stmt.where(
+            _follow_up_vencido_clause(follow_up_vencido, datetime.now(timezone.utc))
+        )
     if search:
         term = f"%{search.strip().lower()}%"
         counts_stmt = counts_stmt.where(
@@ -1943,6 +1970,9 @@ class FeedbackActionIn(BaseModel):
     assignee: str | None = Field(default=None, max_length=120)
     team_tag: str | None = Field(default=None, max_length=60)
     improvement_id: str | None = None
+    # Follow-up (automação níveis 1-2): agenda quando reabordar (ISO-8601, UTC) ou
+    # `null` para limpar. `model_fields_set` distingue ausente (mantém) de null (limpa).
+    follow_up_at: datetime | None = None
 
 
 @router.patch("/feedbacks/{feedback_id}")
@@ -2030,6 +2060,9 @@ async def update_feedback_action(
     if "improvement_id" in sent:
         # imp_to_link já validado acima; None quando body.improvement_id é null (desvincula).
         feedback.improvement_id = imp_to_link.id if imp_to_link is not None else None
+    if "follow_up_at" in sent:
+        # ISO-8601 (aware/UTC via _coerce_dt) quando setado; null limpa o agendamento.
+        feedback.follow_up_at = _coerce_dt(body.follow_up_at) if body.follow_up_at else None
 
     # Revalida o bucket se type ou score mudaram (ou se algum foi enviado).
     if ("score" in sent) or ("type" in sent):

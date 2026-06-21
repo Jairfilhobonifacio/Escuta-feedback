@@ -144,7 +144,8 @@ async def test_overview_estrutura_e_isolamento(client, orgs, session):
     # Estrutura top-level (metricas é ADITIVO — não quebra os 4 blocos originais).
     assert set(data.keys()) == {"nps", "feedbacks", "abordagem", "segmentos", "metricas"}
     assert set(data["metricas"].keys()) == {
-        "taxa_resolucao", "loops_fechados", "tempo_1a_abordagem", "nps_por_tema"
+        "taxa_resolucao", "loops_fechados", "tempo_1a_abordagem", "nps_por_tema",
+        "follow_up_pendentes",
     }
     assert set(data["nps"].keys()) == {
         "deram", "media", "promotores", "neutros", "detratores", "sem_resposta"
@@ -456,6 +457,7 @@ async def test_metricas_vazio(client, orgs, session):
     assert m["loops_fechados"] == {"melhorias_avisadas": 0, "clientes_avisados": 0}
     assert m["tempo_1a_abordagem"] == {"amostra": 0, "media_dias": None, "mediana_dias": None}
     assert m["nps_por_tema"] == []
+    assert m["follow_up_pendentes"] == 0
 
 
 @pytest.mark.asyncio

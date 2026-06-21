@@ -89,3 +89,9 @@ class FeedbackItem(Base):
     # que é o estágio do tratamento interno). abordado_em registra o instante (preenchido na API).
     abordado: Mapped[bool] = mapped_column(Boolean, server_default=false(), default=False)
     abordado_em: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # Follow-up (automação níveis 1-2): instante em que este feedback deve ser
+    # REABORDADO. NULL = sem follow-up agendado. "Vencido" = follow_up_at <= agora
+    # (a fila do operador filtra por isso). Setado/limpo via PATCH /feedbacks/{id};
+    # o auto-reabrir do webhook (cliente respondeu) zera junto com a volta p/ 'a_abordar'.
+    follow_up_at: Mapped[datetime | None] = mapped_column(nullable=True)

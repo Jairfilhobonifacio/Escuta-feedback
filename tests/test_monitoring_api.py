@@ -55,7 +55,7 @@ _ITEM_KEYS = {
     "id", "contato_id", "contato_nome", "contato_whatsapp", "selos", "source", "type",
     "score", "nps_bucket", "sentiment", "themes", "text", "urgencia",
     "action_status", "action_note", "assignee", "team_tag", "improvement_id",
-    "abordado", "abordado_em", "occurred_em", "created_em",
+    "abordado", "abordado_em", "follow_up_at", "occurred_em", "created_em",
 }
 
 

@@ -64,6 +64,8 @@ interface CentralMetricas {
   loops_fechados?: MetLoopsFechados | null;
   tempo_1a_abordagem?: MetTempo1aAbordagem | null;
   nps_por_tema?: MetNpsPorTema[] | null;
+  /** Follow-ups VENCIDOS (feedbacks com `follow_up_at <= agora`) — fila p/ hoje. */
+  follow_up_pendentes?: number | null;
 }
 /** Overview + o bloco novo, sem alterar o tipo compartilhado. */
 type OverviewComMetricas = CentralOverview & { metricas?: CentralMetricas | null };
@@ -258,7 +260,10 @@ export default function MonitorarPage() {
   const mTemas = (met?.nps_por_tema ?? [])
     .filter((t) => t && t.com_nota > 0 && t.media !== null)
     .slice(0, 6);
-  const temMetricas = !!(mTaxa || mLoops || mTempo || mTemas.length > 0);
+  // Fila de follow-up: feedbacks com reabordagem vencida (para hoje). Indicador
+  // honesto — só aparece quando o backend manda o número E há pendência.
+  const followUpPendentes = met?.follow_up_pendentes ?? 0;
+  const temMetricas = !!(mTaxa || mLoops || mTempo || mTemas.length > 0 || followUpPendentes > 0);
 
   // Os 4 números-herói, sobre a BASE TOTAL. "Cancelaram" é um recorte da base
   // (segmento churn) → mostra o denominador no rótulo de apoio.
@@ -301,7 +306,15 @@ export default function MonitorarPage() {
   ];
 
   // Faixa "o que fazer agora" — pills acionáveis a partir dos números acima.
+  // Follow-ups vencidos entram PRIMEIRO (são "para hoje", a ação mais imediata).
   const destaques = buildDestaques(overview);
+  if (followUpPendentes > 0) {
+    destaques.unshift({
+      id: "follow-up-pendentes",
+      sev: "alert",
+      text: `${followUpPendentes} follow-up${followUpPendentes === 1 ? "" : "s"} para reabordar hoje`,
+    });
+  }
 
   return (
     <div>
@@ -524,6 +537,23 @@ export default function MonitorarPage() {
                         mTempo.amostra === 1 ? "abordagem" : "abordagens"
                       }`
                     : "ainda sem abordagens medidas"}
+                </div>
+              </StaggerItem>
+            )}
+
+            {/* Follow-ups para hoje (vencidos) — atalho para a fila na tela
+               Feedbacks. Só aparece quando há pendência. */}
+            {followUpPendentes > 0 && (
+              <StaggerItem className="card mon-num" style={{ padding: "26px 24px 22px" }}>
+                <span className="mon-num-accent" style={{ background: "var(--detractor)" }} aria-hidden />
+                <div className="mon-num-label">Follow-ups para hoje</div>
+                <div className="mon-num-value nps-bad" style={{ fontSize: "clamp(38px, 4vw, 48px)" }}>
+                  {fmtNum(followUpPendentes)}
+                </div>
+                <div className="mon-num-sub">
+                  <a href="/feedbacks" className="mon-followup-link">
+                    {followUpPendentes === 1 ? "feedback a reabordar" : "feedbacks a reabordar"} — abrir a fila →
+                  </a>
                 </div>
               </StaggerItem>
             )}

@@ -21,6 +21,7 @@ Definições canônicas (reaproveitadas da campanha win-back, p/ os números bat
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -371,6 +372,20 @@ async def central_overview(session: AsyncSession = Depends(get_session)) -> dict
     # Mais volumosos primeiro (desempate estável pelo tema p/ saída determinística).
     nps_por_tema.sort(key=lambda x: (-(x["volume"] or 0), x["tema"] or ""))
 
+    # follow_up_pendentes: feedbacks com follow_up_at VENCIDO (<= agora) — a fila de
+    # reabordagens que o operador precisa tocar. Não nulo + no passado. Normaliza para
+    # aware/UTC antes de comparar (SQLite devolve naive; Postgres devolve aware).
+    agora = datetime.now(timezone.utc)
+    follow_up_pendentes = 0
+    for f in feedbacks:
+        fu = f.follow_up_at
+        if fu is None:
+            continue
+        if fu.tzinfo is None:
+            fu = fu.replace(tzinfo=timezone.utc)
+        if fu <= agora:
+            follow_up_pendentes += 1
+
     return {
         "nps": nps_block,
         "feedbacks": feedbacks_block,
@@ -385,6 +400,7 @@ async def central_overview(session: AsyncSession = Depends(get_session)) -> dict
             "loops_fechados": loops_fechados_block,
             "tempo_1a_abordagem": tempo_1a_abordagem_block,
             "nps_por_tema": nps_por_tema,
+            "follow_up_pendentes": follow_up_pendentes,
         },
     }
 

@@ -6,6 +6,9 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Bug,
+  CalendarClock,
+  CalendarPlus,
+  CalendarX,
   Check,
   ChevronDown,
   FileText,
@@ -283,6 +286,159 @@ function fmtDate(iso: string | null): string {
   return new Date(iso).toLocaleString("pt-BR", {
     day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit",
   });
+}
+
+// ===== Follow-up ("Reabordar em...") ========================================
+// Agenda quando reabordar um feedback (`follow_up_at`, ISO/UTC) direto na
+// timeline. Vencido = follow_up_at <= agora → DESTACADO. PATCH /api/feedbacks/
+// {id} {follow_up_at}; null limpa. Espelha o controle da tela Feedbacks.
+
+/** Info do follow-up: tem? vencido? rótulo curto (DD/MM, fuso local). */
+function followUpInfo(iso: string | null | undefined): {
+  agendado: boolean;
+  vencido: boolean;
+  label: string;
+} {
+  if (!iso) return { agendado: false, vencido: false, label: "" };
+  const label = new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  return { agendado: true, vencido: new Date(iso).getTime() <= Date.now(), label };
+}
+
+/** ISO (UTC) daqui a N dias, às 9h local (horário comercial). */
+function isoEmDias(dias: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dias);
+  d.setHours(9, 0, 0, 0);
+  return d.toISOString();
+}
+
+/** Date → valor de <input type="date"> no fuso local. */
+function toDateInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Menu "Reabordar em…" (3 dias / 7 dias / escolher data / limpar) da timeline.
+    Seta follow_up_at via callback; fecha no clique fora e no Esc. */
+function ReabordarMenu({
+  current,
+  onSchedule,
+  onClear,
+  busy,
+}: {
+  current: string | null | undefined;
+  onSchedule: (iso: string) => void;
+  onClear: () => void;
+  busy?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [dateVal, setDateVal] = useState(() => toDateInputValue(new Date()));
+  const boxRef = useRef<HTMLDivElement>(null);
+  const info = followUpInfo(current);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function close() {
+    setOpen(false);
+    setPicking(false);
+  }
+  function agendarDias(dias: number) {
+    onSchedule(isoEmDias(dias));
+    close();
+  }
+  function confirmarData() {
+    if (!dateVal) return;
+    onSchedule(new Date(`${dateVal}T09:00`).toISOString());
+    close();
+  }
+
+  const triggerCls = `fb-reabordar-btn${info.vencido ? " is-overdue" : ""}`;
+  const triggerLabel = info.agendado
+    ? info.vencido
+      ? `Venceu ${info.label}`
+      : `Reabordar ${info.label}`
+    : "Reabordar em…";
+
+  return (
+    <div className="fb-reabordar" ref={boxRef}>
+      <button
+        type="button"
+        className={triggerCls}
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={busy}
+        title="Agendar quando reabordar este feedback"
+      >
+        <CalendarClock size={14} aria-hidden />
+        {triggerLabel}
+      </button>
+      {open && (
+        <div className="fb-reabordar-pop" role="menu">
+          {!picking ? (
+            <>
+              <button type="button" role="menuitem" className="fb-reabordar-item" onClick={() => agendarDias(3)}>
+                <CalendarPlus size={14} aria-hidden /> Em 3 dias
+              </button>
+              <button type="button" role="menuitem" className="fb-reabordar-item" onClick={() => agendarDias(7)}>
+                <CalendarPlus size={14} aria-hidden /> Em 7 dias
+              </button>
+              <button type="button" role="menuitem" className="fb-reabordar-item" onClick={() => setPicking(true)}>
+                <CalendarClock size={14} aria-hidden /> Escolher data…
+              </button>
+              {current && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="fb-reabordar-item danger"
+                  onClick={() => {
+                    onClear();
+                    close();
+                  }}
+                >
+                  <CalendarX size={14} aria-hidden /> Limpar follow-up
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="fb-reabordar-pick">
+              <label className="fb-reabordar-pick-lbl">Reabordar em</label>
+              <input
+                type="date"
+                value={dateVal}
+                min={toDateInputValue(new Date())}
+                onChange={(e) => setDateVal(e.target.value)}
+                className="fb-reabordar-date"
+              />
+              <div className="fb-reabordar-pick-actions">
+                <button type="button" className="btn ghost sm" onClick={() => setPicking(false)}>
+                  Voltar
+                </button>
+                <button type="button" className="btn sm" onClick={confirmarData} disabled={!dateVal}>
+                  Agendar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function field(label: string, value: unknown) {
@@ -1067,6 +1223,7 @@ function TimelineRow({
     ? {}
     : { background: v.accent, boxShadow: `0 0 0 2px ${v.line}` };
   const editable = t.kind === "feedback_item" && !!t.id;
+  const fu = followUpInfo(t.follow_up_at);
 
   async function run(patch: FeedbackPatch) {
     if (!t.id) return;
@@ -1095,6 +1252,15 @@ function TimelineRow({
           <Badge variant="positive">
             <Check size={11} strokeWidth={2.6} aria-hidden /> abordado
           </Badge>
+        )}
+        {editable && fu.agendado && (
+          <span
+            className={`fb-followup-pill${fu.vencido ? " is-overdue" : ""}`}
+            title={fu.vencido ? `Follow-up vencido (era ${fu.label})` : `Reabordar em ${fu.label}`}
+          >
+            <CalendarClock size={12} aria-hidden />
+            {fu.vencido ? `venceu ${fu.label}` : `reabordar ${fu.label}`}
+          </span>
         )}
         {t.status === "ingested" && <Badge variant="neutral">do app</Badge>}
         <span className="tl-when" style={{ fontWeight: 500 }}>{fmtDate(t.at)}</span>
@@ -1149,6 +1315,12 @@ function TimelineRow({
               "Marcar abordado"
             )}
           </button>
+          <ReabordarMenu
+            current={t.follow_up_at}
+            onSchedule={(iso) => run({ follow_up_at: iso })}
+            onClear={() => run({ follow_up_at: null })}
+            busy={busy}
+          />
           <button
             type="button"
             className="icon-btn"
@@ -1685,6 +1857,7 @@ export default function Contact360Page() {
                 themes: updated.themes,
                 score: updated.score,
                 bucket: updated.nps_bucket,
+                follow_up_at: updated.follow_up_at,
               }
             : t,
         ),
