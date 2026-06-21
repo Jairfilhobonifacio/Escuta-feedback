@@ -26,7 +26,9 @@ from app.api.admin import get_messaging  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.core import Contact, Organization  # noqa: E402
+from app.models.cluster import FeedbackCluster  # noqa: E402
 from app.models.feedback import FeedbackItem  # noqa: E402
+from app.models.improvement import Improvement  # noqa: E402
 from app.models.survey import Survey, SurveyResponse, SurveyRun  # noqa: E402
 from tests.fakes import FakeMessagingService  # noqa: E402
 
@@ -139,8 +141,11 @@ async def test_overview_estrutura_e_isolamento(client, orgs, session):
 
     data = (await client.get("/api/central/overview")).json()
 
-    # Estrutura top-level.
-    assert set(data.keys()) == {"nps", "feedbacks", "abordagem", "segmentos"}
+    # Estrutura top-level (metricas é ADITIVO — não quebra os 4 blocos originais).
+    assert set(data.keys()) == {"nps", "feedbacks", "abordagem", "segmentos", "metricas"}
+    assert set(data["metricas"].keys()) == {
+        "taxa_resolucao", "loops_fechados", "tempo_1a_abordagem", "nps_por_tema"
+    }
     assert set(data["nps"].keys()) == {
         "deram", "media", "promotores", "neutros", "detratores", "sem_resposta"
     }
@@ -434,6 +439,152 @@ async def test_feedbacks_so_escritos_e_filtros(client, orgs, session):
 async def test_feedbacks_vazio(client, orgs, session):
     data = (await client.get("/api/central/feedbacks")).json()
     assert data == {"total": 0, "items": []}
+
+
+# --- /central/overview · metricas (bloco ADITIVO) ----------------------------
+
+
+def _dth(y, m, d, h):
+    return datetime(y, m, d, h, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_metricas_vazio(client, orgs, session):
+    """Org sem dados: métricas zeradas/None, sem quebrar (sem 0/0)."""
+    m = (await client.get("/api/central/overview")).json()["metricas"]
+    assert m["taxa_resolucao"] == {"fechados": 0, "total": 0, "percentual": None}
+    assert m["loops_fechados"] == {"melhorias_avisadas": 0, "clientes_avisados": 0}
+    assert m["tempo_1a_abordagem"] == {"amostra": 0, "media_dias": None, "mediana_dias": None}
+    assert m["nps_por_tema"] == []
+
+
+@pytest.mark.asyncio
+async def test_metricas_taxa_resolucao(client, orgs, session):
+    """taxa_resolucao = feedbacks em status terminal / total (org-scoped)."""
+    a, b = orgs
+    c = Contact(organization_id=a.id, phone="5531900000001", name="C", opt_in=True, profile_data={})
+    session.add(c)
+    await session.flush()
+    # 4 feedbacks de A: 2 terminais (resolvido, descartado) + 2 abertos.
+    session.add_all([
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="whatsapp", type="churn",
+                     external_id="t1", text="x", action_status="resolvido", occurred_at=_dt(2026, 6, 1)),
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="whatsapp", type="churn",
+                     external_id="t2", text="y", action_status="descartado", occurred_at=_dt(2026, 6, 2)),
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="whatsapp", type="churn",
+                     external_id="t3", text="z", action_status="a_abordar", occurred_at=_dt(2026, 6, 3)),
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="whatsapp", type="churn",
+                     external_id="t4", text="w", action_status="em_acompanhamento", occurred_at=_dt(2026, 6, 4)),
+    ])
+    # Ruído de B (todos terminais) NÃO entra.
+    rb = Contact(organization_id=b.id, phone="5531911111111", name="R", opt_in=True, profile_data={})
+    session.add(rb)
+    await session.flush()
+    session.add(FeedbackItem(organization_id=b.id, contact_id=rb.id, source="whatsapp", type="churn",
+                             external_id="rb1", text="r", action_status="resolvido", occurred_at=_dt(2026, 6, 1)))
+    await session.commit()
+
+    tr = (await client.get("/api/central/overview")).json()["metricas"]["taxa_resolucao"]
+    assert tr == {"fechados": 2, "total": 4, "percentual": 50.0}
+
+
+@pytest.mark.asyncio
+async def test_metricas_loops_fechados(client, orgs, session):
+    """loops_fechados conta melhorias com notified_at e clientes distintos avisados."""
+    a, _b = orgs
+    c1 = Contact(organization_id=a.id, phone="5531900000001", name="C1", opt_in=True, profile_data={})
+    c2 = Contact(organization_id=a.id, phone="5531900000002", name="C2", opt_in=True, profile_data={})
+    session.add_all([c1, c2])
+    await session.flush()
+    # Melhoria AVISADA (notified_at set) com 2 feedbacks de contatos distintos.
+    imp_ok = Improvement(organization_id=a.id, title="Avisada", status="entregue",
+                         delivered_at=_dt(2026, 6, 9), notified_at=_dt(2026, 6, 10))
+    # Melhoria entregue mas NÃO avisada (notified_at None) — não conta.
+    imp_sem = Improvement(organization_id=a.id, title="SemAviso", status="entregue", delivered_at=_dt(2026, 6, 9))
+    session.add_all([imp_ok, imp_sem])
+    await session.flush()
+    session.add_all([
+        FeedbackItem(organization_id=a.id, contact_id=c1.id, source="whatsapp", type="churn",
+                     external_id="l1", text="a", improvement_id=imp_ok.id, occurred_at=_dt(2026, 6, 1)),
+        FeedbackItem(organization_id=a.id, contact_id=c2.id, source="whatsapp", type="churn",
+                     external_id="l2", text="b", improvement_id=imp_ok.id, occurred_at=_dt(2026, 6, 2)),
+        # Mesmo contato c1 de novo na mesma melhoria: NÃO duplica cliente.
+        FeedbackItem(organization_id=a.id, contact_id=c1.id, source="whatsapp", type="churn",
+                     external_id="l3", text="c", improvement_id=imp_ok.id, occurred_at=_dt(2026, 6, 3)),
+        # Feedback ligado à melhoria SEM aviso: não conta cliente.
+        FeedbackItem(organization_id=a.id, contact_id=c2.id, source="whatsapp", type="churn",
+                     external_id="l4", text="d", improvement_id=imp_sem.id, occurred_at=_dt(2026, 6, 4)),
+    ])
+    await session.commit()
+
+    lf = (await client.get("/api/central/overview")).json()["metricas"]["loops_fechados"]
+    assert lf == {"melhorias_avisadas": 1, "clientes_avisados": 2}  # c1 e c2, sem duplicar c1
+
+
+@pytest.mark.asyncio
+async def test_metricas_tempo_1a_abordagem(client, orgs, session):
+    """media/mediana de dias created_at->abordado_em dos feedbacks abordados."""
+    a, _b = orgs
+    c = Contact(organization_id=a.id, phone="5531900000001", name="C", opt_in=True, profile_data={})
+    session.add(c)
+    await session.flush()
+    # Abordados: 2 dias, 4 dias, 6 dias -> media 4.0, mediana 4.0.
+    session.add_all([
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="whatsapp", type="churn",
+                     external_id="d1", text="x", abordado=True,
+                     created_at=_dth(2026, 6, 1, 12), abordado_em=_dth(2026, 6, 3, 12), occurred_at=_dt(2026, 6, 1)),
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="whatsapp", type="churn",
+                     external_id="d2", text="y", abordado=True,
+                     created_at=_dth(2026, 6, 1, 12), abordado_em=_dth(2026, 6, 5, 12), occurred_at=_dt(2026, 6, 1)),
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="whatsapp", type="churn",
+                     external_id="d3", text="z", abordado=True,
+                     created_at=_dth(2026, 6, 1, 12), abordado_em=_dth(2026, 6, 7, 12), occurred_at=_dt(2026, 6, 1)),
+        # Abordado SEM abordado_em: ignorado.
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="whatsapp", type="churn",
+                     external_id="d4", text="w", abordado=True,
+                     created_at=_dth(2026, 6, 1, 12), occurred_at=_dt(2026, 6, 1)),
+        # NÃO abordado: ignorado.
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="whatsapp", type="churn",
+                     external_id="d5", text="v", abordado=False,
+                     created_at=_dth(2026, 6, 1, 12), occurred_at=_dt(2026, 6, 1)),
+    ])
+    await session.commit()
+
+    t = (await client.get("/api/central/overview")).json()["metricas"]["tempo_1a_abordagem"]
+    assert t == {"amostra": 3, "media_dias": 4.0, "mediana_dias": 4.0}
+
+
+@pytest.mark.asyncio
+async def test_metricas_nps_por_tema(client, orgs, session):
+    """nps_por_tema: clusters da org com média de nota dos itens + sentimento, por volume."""
+    a, b = orgs
+    c = Contact(organization_id=a.id, phone="5531900000001", name="C", opt_in=True, profile_data={})
+    session.add(c)
+    await session.flush()
+    big = FeedbackCluster(organization_id=a.id, label="Acesso", dominant_sentiment="negativo", item_count=5)
+    small = FeedbackCluster(organization_id=a.id, label="Conteudo", dominant_sentiment="positivo", item_count=2)
+    # Cluster de B: NÃO entra.
+    rcl = FeedbackCluster(organization_id=b.id, label="Rival", dominant_sentiment="neutro", item_count=9)
+    session.add_all([big, small, rcl])
+    await session.flush()
+    session.add_all([
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="bizzu_app", type="nps",
+                     external_id="n1", score=2, cluster_id=big.id, occurred_at=_dt(2026, 6, 1)),
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="bizzu_app", type="nps",
+                     external_id="n2", score=4, cluster_id=big.id, occurred_at=_dt(2026, 6, 2)),
+        FeedbackItem(organization_id=a.id, contact_id=c.id, source="bizzu_app", type="nps",
+                     external_id="n3", score=9, cluster_id=small.id, occurred_at=_dt(2026, 6, 3)),
+    ])
+    await session.commit()
+
+    temas = (await client.get("/api/central/overview")).json()["metricas"]["nps_por_tema"]
+    assert [t["tema"] for t in temas] == ["Acesso", "Conteudo"]  # por volume desc
+    assert set(temas[0].keys()) == {"cluster_id", "tema", "volume", "com_nota", "media", "sentimento"}
+    assert temas[0] == {
+        "cluster_id": str(big.id), "tema": "Acesso", "volume": 5,
+        "com_nota": 2, "media": 3.0, "sentimento": "negativo",  # (2+4)/2
+    }
+    assert temas[1]["media"] == 9.0 and temas[1]["sentimento"] == "positivo"
 
 
 if __name__ == "__main__":

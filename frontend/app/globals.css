@@ -3201,3 +3201,45 @@ tbody tr:hover td { color: var(--text); }
 }
 .imp-drawer-pull .imp-list .survey-item { padding-left: 4px; padding-right: 4px; }
 
+
+/* ===== Ganho rápido: urgência (priority_index da IA) como ordenação/filtro ===== */
+/* Selo de urgência nos cards do Board (compact + meta) e tela Feedbacks. */
+.badge.urg-selo {
+  color: var(--detractor);
+  border-color: color-mix(in srgb, var(--detractor) 32%, transparent);
+  background: color-mix(in srgb, var(--detractor) 12%, transparent);
+}
+/* Linha da barra de urgência do card cheio: barra + número da urgência. */
+.board-urg-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.board-urg-row .board-urg { flex: 1 1 auto; margin-bottom: 0; }
+.urg-tag {
+  flex: 0 0 auto; font-family: var(--mono); font-size: 11px; font-weight: 600;
+  line-height: 1; padding: 2px 6px; border-radius: 999px;
+}
+.urg-tag.u-lo { color: #3f9c66; background: color-mix(in srgb, #3f9c66 14%, transparent); }
+.urg-tag.u-mid { color: var(--gold-fill); background: color-mix(in srgb, var(--gold-fill) 16%, transparent); }
+.urg-tag.u-hi { color: var(--detractor); background: color-mix(in srgb, var(--detractor) 14%, transparent); }
+
+/* Controles de urgência na barra do Board (ordenar + só urgentes). */
+.board-urg-controls { display: inline-flex; align-items: center; gap: 8px; }
+.board-urg-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  color: var(--text);
+  background: var(--ink-800);
+  border: 1px solid var(--charcoal-2);
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.board-urg-toggle:hover { border-color: var(--detractor); color: var(--detractor); }
+.board-urg-toggle.is-on {
+  color: var(--detractor);
+  border-color: color-mix(in srgb, var(--detractor) 45%, transparent);
+  background: color-mix(in srgb, var(--detractor) 12%, transparent);
+}
+
+/* Seletor "Ordenar" na barra da tela Feedbacks. */
+.fb-sort { display: inline-flex; align-items: center; gap: 8px; }
+.fb-sort-label { font-size: 12.5px; color: var(--text-faint); }

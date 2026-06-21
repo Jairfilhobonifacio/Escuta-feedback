@@ -35,8 +35,10 @@ from app.api.campanha import (
     _selos_do_contato,
 )
 from app.db import get_session
+from app.models.cluster import FeedbackCluster
 from app.models.core import Contact
 from app.models.feedback import FeedbackItem
+from app.models.improvement import Improvement
 from app.models.survey import SurveyResponse
 
 router = APIRouter(tags=["central"])
@@ -44,6 +46,25 @@ router = APIRouter(tags=["central"])
 # Estados de assinatura (partner.subscription.state) por segmento de apresentação.
 _STATE_CHURN = "cancelled"
 _STATE_ATIVO = "active_paying"
+
+# Estados TERMINAIS do workflow de acompanhamento (action_status) — feedback "fechado".
+# Espelha o mesmo conjunto canônico de app/api/admin.py e app/api/tasks.py: mudanças
+# aqui exigem atualizar os três (sem fonte única hoje p/ evitar import circular).
+_FEEDBACK_TERMINAL_STATUSES: frozenset[str] = frozenset({"resolvido", "sem_retorno", "descartado"})
+
+
+def _mediana(valores: list[float]) -> float | None:
+    """Mediana (1 casa) de uma lista; None quando vazia. Sem dependência externa."""
+    if not valores:
+        return None
+    ordenados = sorted(valores)
+    n = len(ordenados)
+    meio = n // 2
+    if n % 2:
+        m = ordenados[meio]
+    else:
+        m = (ordenados[meio - 1] + ordenados[meio]) / 2
+    return round(m, 1)
 
 
 def _partner_state(contact: Contact) -> str | None:
@@ -150,6 +171,11 @@ async def central_overview(session: AsyncSession = Depends(get_session)) -> dict
       responderam (cliente devolveu sinal) e nao_responderam (abordados - responderam).
     - segmentos: o MESMO recorte de abordagem filtrado por estado da assinatura:
       churn (state='cancelled') e ativos (state='active_paying').
+    - metricas (ADITIVO): taxa_resolucao (% de feedbacks em status terminal sobre
+      o total), loops_fechados (melhorias avisadas + clientes avisados via
+      Improvement.notified_at), tempo_1a_abordagem (media/mediana de dias
+      created_at->abordado_em dos feedbacks abordados) e nps_por_tema (top
+      clusters/dores com nota média e sentimento dominante).
     """
     org = await _get_org(session)
 
@@ -268,6 +294,83 @@ async def central_overview(session: AsyncSession = Depends(get_session)) -> dict
         "nao_responderam": abordagem_geral["nao_responderam"],
     }
 
+    # --- MÉTRICAS (bloco ADITIVO; sem migration, sobre campos existentes) ----
+    # taxa_resolucao: % de feedbacks em status TERMINAL sobre o total (no escopo
+    # da org). Mesma família de número do "fechamento" do acompanhamento.
+    total_fb = len(feedbacks)
+    fechados = sum(1 for f in feedbacks if f.action_status in _FEEDBACK_TERMINAL_STATUSES)
+    taxa_resolucao_block = {
+        "fechados": fechados,
+        "total": total_fb,
+        # % (1 casa) sobre o total; None quando não há feedback (evita 0/0).
+        "percentual": round(100 * fechados / total_fb, 1) if total_fb else None,
+    }
+
+    # loops_fechados: melhorias do roadmap já COMUNICADAS aos clientes (notified_at
+    # preenchido) e quantos clientes (contatos distintos) foram avisados via os
+    # feedbacks vinculados (FeedbackItem.improvement_id) a essas melhorias.
+    improvements = (
+        (await session.execute(select(Improvement).where(Improvement.organization_id == org.id)))
+        .scalars()
+        .all()
+    )
+    avisadas_ids = {i.id for i in improvements if i.notified_at is not None}
+    clientes_avisados = len(
+        {
+            f.contact_id
+            for f in feedbacks
+            if f.contact_id is not None and f.improvement_id in avisadas_ids
+        }
+    )
+    loops_fechados_block = {
+        "melhorias_avisadas": len(avisadas_ids),
+        "clientes_avisados": clientes_avisados,
+    }
+
+    # tempo_1a_abordagem: dias de created_at -> abordado_em dos feedbacks abordados
+    # (com ambos os timestamps). media e mediana (1 casa). None quando não há amostra.
+    dias_abordagem: list[float] = []
+    for f in feedbacks:
+        if f.abordado and f.abordado_em is not None and f.created_at is not None:
+            delta = (f.abordado_em - f.created_at).total_seconds() / 86400.0
+            if delta >= 0:  # ignora relógios invertidos (abordado antes de existir).
+                dias_abordagem.append(delta)
+    tempo_1a_abordagem_block = {
+        "amostra": len(dias_abordagem),
+        "media_dias": round(sum(dias_abordagem) / len(dias_abordagem), 1) if dias_abordagem else None,
+        "mediana_dias": _mediana(dias_abordagem),
+    }
+
+    # nps_por_tema: top temas/clusters (dores) com nota média NPS e sentimento
+    # dominante. A nota vem dos FeedbackItem do cluster que têm score; o sentimento
+    # é o dominante gravado no cluster (fallback: derivado dos itens). Ordenado por
+    # volume (item_count) desc; só clusters da org. Vazio quando não há clusters.
+    clusters = (
+        (await session.execute(select(FeedbackCluster).where(FeedbackCluster.organization_id == org.id)))
+        .scalars()
+        .all()
+    )
+    fb_por_cluster: dict[uuid.UUID, list[FeedbackItem]] = {}
+    for f in feedbacks:
+        if f.cluster_id is not None:
+            fb_por_cluster.setdefault(f.cluster_id, []).append(f)
+    nps_por_tema: list[dict[str, Any]] = []
+    for cl in clusters:
+        itens = fb_por_cluster.get(cl.id, [])
+        notas = [f.score for f in itens if f.score is not None]
+        nps_por_tema.append(
+            {
+                "cluster_id": str(cl.id),
+                "tema": cl.label,
+                "volume": cl.item_count,
+                "com_nota": len(notas),
+                "media": _media(notas),
+                "sentimento": cl.dominant_sentiment,
+            }
+        )
+    # Mais volumosos primeiro (desempate estável pelo tema p/ saída determinística).
+    nps_por_tema.sort(key=lambda x: (-(x["volume"] or 0), x["tema"] or ""))
+
     return {
         "nps": nps_block,
         "feedbacks": feedbacks_block,
@@ -275,6 +378,13 @@ async def central_overview(session: AsyncSession = Depends(get_session)) -> dict
         "segmentos": {
             "churn": {"rotulo": "Cancelaram", **_recorte(churn_pool)},
             "ativos": {"rotulo": "Ativos", **_recorte(ativos_pool)},
+        },
+        # Bloco ADITIVO de métricas — não altera os 4 blocos acima (contrato preservado).
+        "metricas": {
+            "taxa_resolucao": taxa_resolucao_block,
+            "loops_fechados": loops_fechados_block,
+            "tempo_1a_abordagem": tempo_1a_abordagem_block,
+            "nps_por_tema": nps_por_tema,
         },
     }
 

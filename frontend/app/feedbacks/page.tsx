@@ -1401,6 +1401,9 @@ export default function FeedbacksPage() {
   const typeLabels = useMemo(() => labelMap(typeOptions), [typeOptions]);
   const statusLabels = useMemo(() => labelMap(statusOptions), [statusOptions]);
 
+  // Ordenação do feed. "urgencia" (default) usa o priority_index que a IA calcula
+  // (mais urgente no topo); "recente" volta à ordem cronológica. Vira ?sort=… na API.
+  const [sort, setSort] = useState<"urgencia" | "recente">("urgencia");
   // filtros. `status` é string aberta: além dos fixos, pode ser um status custom.
   const [status, setStatus] = useState<string>("");
   const [type, setType] = useState("");
@@ -1468,6 +1471,8 @@ export default function FeedbacksPage() {
       // Deep-links da tela Temas: cluster de dores e tema exato (filtro JSONB).
       if (clusterId) qs.set("cluster_id", clusterId);
       if (theme) qs.set("theme", theme);
+      // Ordenação (urgência = priority_index da IA; recente = cronológico).
+      qs.set("sort", sort);
       qs.set("limit", String(PAGE_SIZE));
       qs.set("offset", String(offset));
       return qs.toString();
@@ -1475,7 +1480,7 @@ export default function FeedbacksPage() {
     [
       status, type, sentiment, source, search, abordado, selo,
       estado, planType, perfil, temWhatsapp, npsBucket,
-      clusterId, theme,
+      clusterId, theme, sort,
     ],
   );
 
@@ -1674,6 +1679,17 @@ export default function FeedbacksPage() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar no texto, nome ou WhatsApp…"
           />
+        </label>
+        <label className="fb-sort" title="Ordenar o inbox">
+          <span className="fb-sort-label">Ordenar</span>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as "urgencia" | "recente")}
+            aria-label="Ordenar feedbacks"
+          >
+            <option value="urgencia">Mais urgentes</option>
+            <option value="recente">Mais recentes</option>
+          </select>
         </label>
         <Button
           variant="secondary"

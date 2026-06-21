@@ -791,6 +791,11 @@ function BoardCard({
       )}
       <div className="board-card-meta">
         {typeBadge(fb.type)}
+        {fb.urgencia >= 60 && (
+          <span className="badge urg-selo" title={`Urgência ${fb.urgencia}/100`}>
+            <span aria-hidden>{"\u{1F525}"}</span>&nbsp;urgente
+          </span>
+        )}
         {extraCount > 0 && (
           <span
             className="chip"
@@ -815,12 +820,11 @@ function BoardCard({
         <p className="board-card-text empty-text">sem texto {"—"} só a nota</p>
       )}
 
-      <div
-        className={`board-urg ${urgencyClass(fb.urgencia)}`}
-        title={`Urgência ${fb.urgencia}/100`}
-        aria-hidden
-      >
-        <span style={{ width: `${Math.min(100, Math.max(0, fb.urgencia))}%` }} />
+      <div className="board-urg-row" title={`Urgência ${fb.urgencia}/100 (calculada pela IA)`}>
+        <div className={`board-urg ${urgencyClass(fb.urgencia)}`} aria-hidden>
+          <span style={{ width: `${Math.min(100, Math.max(0, fb.urgencia))}%` }} />
+        </div>
+        <span className={`urg-tag ${urgencyClass(fb.urgencia)}`}>{fb.urgencia}</span>
       </div>
 
       {fb.selos.length > 0 && (
@@ -1405,6 +1409,46 @@ function NovoCardModal({
   );
 }
 
+// ===== controles de urgência (ordenar / só urgentes) =======================
+
+/** Liga/desliga a ordenação por urgência (priority_index da IA) e o filtro "só
+    urgentes" (>=60) dos cards de FEEDBACK dentro de cada coluna do board. Reusa as
+    classes de chip/select existentes — sem braço, o operador prioriza pela IA. */
+function UrgenciaControls({
+  ordUrg,
+  setOrdUrg,
+  soUrgentes,
+  setSoUrgentes,
+}: {
+  ordUrg: boolean;
+  setOrdUrg: (v: boolean) => void;
+  soUrgentes: boolean;
+  setSoUrgentes: (v: boolean) => void;
+}) {
+  return (
+    <div className="board-urg-controls">
+      <select
+        value={ordUrg ? "urgencia" : "padrao"}
+        onChange={(e) => setOrdUrg(e.target.value === "urgencia")}
+        aria-label="Ordenar cards por urgência"
+        title="Ordena os cards de cada coluna pela urgência que a IA calcula"
+      >
+        <option value="urgencia">Ordenar: mais urgentes</option>
+        <option value="padrao">Ordenar: padrão</option>
+      </select>
+      <button
+        type="button"
+        className={`board-urg-toggle ${soUrgentes ? "is-on" : ""}`}
+        onClick={() => setSoUrgentes(!soUrgentes)}
+        aria-pressed={soUrgentes}
+        title="Mostra só os feedbacks que a IA marcou como urgentes (urgência ≥ 60)"
+      >
+        <span aria-hidden>{"\u{1F525}"}</span> Só urgentes
+      </button>
+    </div>
+  );
+}
+
 // ===== página ===============================================================
 
 export default function BoardPage() {
@@ -1443,6 +1487,14 @@ export default function BoardPage() {
   const [busca, setBusca] = useState("");
   // Qual coluna está com o modal "+ feedback" aberto (null = nenhum).
   const [novoCardCol, setNovoCardCol] = useState<BoardItemsColuna | null>(null);
+
+  // Ordenação/filtro por URGÊNCIA dos cards de FEEDBACK dentro de cada coluna.
+  // A urgência (priority_index da IA, 0-100) já vem em cada card; o backend ENTREGA
+  // cada coluna ordenada por urgência DESC (top N por coluna), mas aqui o operador
+  // pode reforçar a ordenação no que está carregado e/ou ver SÓ os urgentes (>=60),
+  // sem braço. Vale só para boards de feedback (cliente/tarefa/melhoria não usam).
+  const [ordUrg, setOrdUrg] = useState(true);
+  const [soUrgentes, setSoUrgentes] = useState(false);
 
   const selected = boardList.find((b) => b.id === selectedId) ?? null;
   const isCliente = selected?.entidade === "cliente";
@@ -1902,6 +1954,12 @@ export default function BoardPage() {
               Limpar
             </Button>
           )}
+          <UrgenciaControls
+            ordUrg={ordUrg}
+            setOrdUrg={setOrdUrg}
+            soUrgentes={soUrgentes}
+            setSoUrgentes={setSoUrgentes}
+          />
         </div>
       )}
 
@@ -1983,6 +2041,12 @@ export default function BoardPage() {
                 <option value="sim">Já abordados</option>
                 <option value="nao">Não abordados</option>
               </select>
+              <UrgenciaControls
+                ordUrg={ordUrg}
+                setOrdUrg={setOrdUrg}
+                soUrgentes={soUrgentes}
+                setSoUrgentes={setSoUrgentes}
+              />
             </>
           )}
 
@@ -2227,15 +2291,28 @@ export default function BoardPage() {
                   ))
                 ) : (
                   dedupeFeedbackCards(
-                    (col.items as Feedback[]).filter((fb) => {
-                      // Busca client-side só no board Follow-up (barra recolhida).
-                      if (!isFollowup || !busca.trim()) return true;
-                      const q = busca.trim().toLowerCase();
-                      return (
-                        (fb.contato_nome || "").toLowerCase().includes(q) ||
-                        (fb.text || "").toLowerCase().includes(q)
-                      );
-                    }),
+                    (col.items as Feedback[])
+                      .filter((fb) => {
+                        // Busca client-side só no board Follow-up (barra recolhida).
+                        if (!isFollowup || !busca.trim()) return true;
+                        const q = busca.trim().toLowerCase();
+                        return (
+                          (fb.contato_nome || "").toLowerCase().includes(q) ||
+                          (fb.text || "").toLowerCase().includes(q)
+                        );
+                      })
+                      // Filtro "só urgentes": esconde o que a IA marcou < 60 de urgência.
+                      .filter((fb) => (soUrgentes ? fb.urgencia >= 60 : true))
+                      // Ordenação por urgência (priority_index da IA) DESC, recência como
+                      // desempate estável (mais novo primeiro). Cópia p/ não mutar o estado.
+                      .slice()
+                      .sort((a, b) => {
+                        if (!ordUrg) return 0;
+                        if (b.urgencia !== a.urgencia) return b.urgencia - a.urgencia;
+                        const ta = new Date(a.occurred_em ?? a.created_em ?? 0).getTime();
+                        const tb = new Date(b.occurred_em ?? b.created_em ?? 0).getTime();
+                        return tb - ta;
+                      }),
                     isFollowup,
                   ).map(({ fb, extraCount }) => (
                     <BoardCard

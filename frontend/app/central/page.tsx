@@ -30,6 +30,57 @@ import {
    comparação É FEITA EM INGLÊS — não regredir isso.
    ========================================================================== */
 
+/* ----------------------------------------------------------------------------
+   MÉTRICAS NOVAS (bloco aditivo `metricas` do overview).
+   `CentralOverview` em lib/api.ts ainda NÃO tipa esse bloco e não posso tocar
+   nela — então tipo aqui INLINE e leio defensivamente (tudo opcional). Se o
+   backend ainda não mandar `metricas`, nada disso renderiza (fallback gracioso).
+   --------------------------------------------------------------------------- */
+interface MetTaxaResolucao {
+  fechados: number;
+  total: number;
+  /** % (1 casa) ou null quando total == 0. */
+  percentual: number | null;
+}
+interface MetLoopsFechados {
+  melhorias_avisadas: number;
+  clientes_avisados: number;
+}
+interface MetTempo1aAbordagem {
+  amostra: number;
+  media_dias: number | null;
+  mediana_dias: number | null;
+}
+interface MetNpsPorTema {
+  cluster_id: string;
+  tema: string;
+  volume: number;
+  com_nota: number;
+  media: number | null;
+  sentimento: string | null;
+}
+interface CentralMetricas {
+  taxa_resolucao?: MetTaxaResolucao | null;
+  loops_fechados?: MetLoopsFechados | null;
+  tempo_1a_abordagem?: MetTempo1aAbordagem | null;
+  nps_por_tema?: MetNpsPorTema[] | null;
+}
+/** Overview + o bloco novo, sem alterar o tipo compartilhado. */
+type OverviewComMetricas = CentralOverview & { metricas?: CentralMetricas | null };
+
+/** Formata número curto (sem casas se inteiro, 1 casa se fracionário). */
+function fmtNum(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "—";
+  return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(".", ",");
+}
+
+/** Mapeia sentimento do tema p/ a classe de pílula de score já existente. */
+function sentPill(sent: string | null): string {
+  if (sent === "positivo") return "promoter";
+  if (sent === "negativo") return "detractor";
+  return "passive";
+}
+
 function npsClass(nps: number | null): string {
   if (nps === null) return "nps-none";
   if (nps >= 50) return "nps-good";
@@ -195,6 +246,19 @@ export default function MonitorarPage() {
   const { nps, abordagem, segmentos } = overview;
   const npsTotal = nps.promotores + nps.neutros + nps.detratores;
   const base = abordagem.contatos_total;
+
+  // Bloco novo do backend (aditivo). Leitura defensiva: cada métrica só aparece
+  // se vier com os campos que precisa — senão a seção inteira/ o card somem.
+  const met = (overview as OverviewComMetricas).metricas ?? null;
+  const mTaxa = met?.taxa_resolucao ?? null;
+  const mLoops = met?.loops_fechados ?? null;
+  const mTempo = met?.tempo_1a_abordagem ?? null;
+  // Só temas que têm nota (sem nota não dá NPS); o backend já ordena por volume.
+  // Limito a poucos para manter a leitura "bato o olho e entendo".
+  const mTemas = (met?.nps_por_tema ?? [])
+    .filter((t) => t && t.com_nota > 0 && t.media !== null)
+    .slice(0, 6);
+  const temMetricas = !!(mTaxa || mLoops || mTempo || mTemas.length > 0);
 
   // Os 4 números-herói, sobre a BASE TOTAL. "Cancelaram" é um recorte da base
   // (segmento churn) → mostra o denominador no rótulo de apoio.
@@ -366,6 +430,142 @@ export default function MonitorarPage() {
           )}
         </div>
       </Reveal>
+
+      {/* 2.5) MÉTRICAS DA OPERAÇÃO — taxa de resolução, loops fechados e tempo
+         até a 1ª abordagem (+ NPS por tema). Vêm do bloco novo `metricas` do
+         overview. Toda a seção some se o backend ainda não mandar nada. */}
+      {temMetricas && (
+        <Reveal style={{ margin: "0 0 var(--rhythm, 28px)" }}>
+          <div className="card-head" style={{ marginBottom: 14 }}>
+            <div>
+              <div className="section-title">Métricas da operação</div>
+              <div className="card-head-sub">
+                o quanto a gente resolve, fecha o ciclo e quão rápido aborda
+              </div>
+            </div>
+          </div>
+
+          <Stagger
+            className="mon-met-grid"
+            stagger={0.06}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: "var(--s-4, 16px)",
+            }}
+          >
+            {/* Taxa de resolução */}
+            {mTaxa && (
+              <StaggerItem className="card mon-num" style={{ padding: "26px 24px 22px" }}>
+                <span className="mon-num-accent" style={{ background: "var(--indigo)" }} aria-hidden />
+                <div className="mon-num-label">Taxa de resolução</div>
+                <div
+                  className={`mon-num-value ${
+                    mTaxa.percentual === null
+                      ? "nps-none"
+                      : mTaxa.percentual >= 60
+                      ? "nps-good"
+                      : mTaxa.percentual >= 30
+                      ? "nps-mid"
+                      : "nps-bad"
+                  }`}
+                  style={{ fontSize: "clamp(38px, 4vw, 48px)" }}
+                >
+                  {mTaxa.percentual === null ? "—" : `${fmtNum(mTaxa.percentual)}%`}
+                </div>
+                <div className="mon-num-sub">
+                  {mTaxa.total > 0
+                    ? `${mTaxa.fechados} de ${mTaxa.total} feedbacks fechados`
+                    : "ainda sem feedbacks para fechar"}
+                </div>
+              </StaggerItem>
+            )}
+
+            {/* Loops fechados */}
+            {mLoops && (
+              <StaggerItem className="card mon-num" style={{ padding: "26px 24px 22px" }}>
+                <span className="mon-num-accent" style={{ background: "var(--promoter)" }} aria-hidden />
+                <div className="mon-num-label">Loops fechados</div>
+                <div className="mon-num-value nps-good" style={{ fontSize: "clamp(38px, 4vw, 48px)" }}>
+                  {fmtNum(mLoops.melhorias_avisadas)}
+                </div>
+                <div className="mon-num-sub">
+                  {mLoops.melhorias_avisadas === 1 ? "melhoria avisada" : "melhorias avisadas"}
+                  {" · "}
+                  {mLoops.clientes_avisados}{" "}
+                  {mLoops.clientes_avisados === 1 ? "cliente avisado" : "clientes avisados"}
+                </div>
+              </StaggerItem>
+            )}
+
+            {/* Tempo até a 1ª abordagem */}
+            {mTempo && (
+              <StaggerItem className="card mon-num" style={{ padding: "26px 24px 22px" }}>
+                <span className="mon-num-accent" style={{ background: "var(--indigo-light)" }} aria-hidden />
+                <div className="mon-num-label">Tempo até 1ª abordagem</div>
+                <div
+                  className={`mon-num-value ${mTempo.media_dias === null ? "nps-none" : ""}`}
+                  style={{ fontSize: "clamp(38px, 4vw, 48px)" }}
+                >
+                  {mTempo.media_dias === null ? (
+                    "—"
+                  ) : (
+                    <>
+                      {fmtNum(mTempo.media_dias)}
+                      <span style={{ fontSize: 18, fontWeight: 500, marginLeft: 4, color: "var(--text-faint)" }}>
+                        {mTempo.media_dias === 1 ? "dia" : "dias"}
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div className="mon-num-sub">
+                  {mTempo.amostra > 0
+                    ? `mediana ${fmtNum(mTempo.mediana_dias)} · ${mTempo.amostra} ${
+                        mTempo.amostra === 1 ? "abordagem" : "abordagens"
+                      }`
+                    : "ainda sem abordagens medidas"}
+                </div>
+              </StaggerItem>
+            )}
+          </Stagger>
+
+          {/* NPS por tema — mini-lista (só temas com nota). */}
+          {mTemas.length > 0 && (
+            <div className="card mon-resp" style={{ marginTop: "var(--s-4, 16px)" }}>
+              <div className="card-head">
+                <div>
+                  <div className="section-title">NPS por tema</div>
+                  <div className="card-head-sub">a nota média de quem tocou em cada assunto</div>
+                </div>
+              </div>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {mTemas.map((t) => (
+                  <li
+                    key={t.cluster_id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 14,
+                      padding: "12px 2px",
+                      borderTop: "1px solid var(--charcoal)",
+                    }}
+                  >
+                    <span className={`score-pill ${sentPill(t.sentimento)}`}>{fmtNum(t.media)}</span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14.5, color: "var(--text)" }}>
+                        {t.tema || <span className="faint">sem rótulo</span>}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: "var(--text-faint)", marginTop: 2 }}>
+                        {t.com_nota} de {t.volume} {t.volume === 1 ? "menção" : "menções"} com nota
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Reveal>
+      )}
 
       {/* 3) AS RESPOSTAS — nome, nota, texto, data. Limpo. */}
       <Reveal className="card mon-resp">
