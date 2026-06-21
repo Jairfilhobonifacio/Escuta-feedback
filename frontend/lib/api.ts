@@ -199,6 +199,13 @@ export interface Timeline360Item {
   text: string | null;
   status?: string;
   sentiment?: string | null;
+  /** Grau de confiança da IA (só kind='feedback_item'; de ai_meta). Ausente =
+      sem dado / API antiga → fallback gracioso. */
+  confianca?: "alta" | "media" | "baixa" | null;
+  /** A IA classificou com baixa confiança? (só kind='feedback_item'). */
+  incerto?: boolean;
+  /** Palpite de sentimento preservado quando `incerto` (só kind='feedback_item'). */
+  sentiment_sugerido?: string | null;
   themes?: string[] | null;
   /** Estado de ação do feedback (só kind='feedback_item') — editável na 360. */
   action_status?: FeedbackStatus;
@@ -468,6 +475,15 @@ export interface Feedback {
   nps_bucket: string | null;
   /** 'positivo' | 'neutro' | 'negativo' | null (IA) */
   sentiment: string | null;
+  /** Grau de confiança da classificação de IA (derivado de ai_meta). Ausente
+      na API antiga / quando a flag SENTIMENT_PT_V2 está OFF → fallback gracioso. */
+  confianca?: "alta" | "media" | "baixa" | null;
+  /** A IA classificou com baixa confiança? Quando true, NÃO chutamos o sentimento
+      (fica null) e convidamos o operador a revisar. Default ausente = false. */
+  incerto?: boolean;
+  /** Palpite de sentimento preservado quando `incerto` (a IA não chuta o campo
+      `sentiment`, mas guarda a sugestão aqui para o operador ver). */
+  sentiment_sugerido?: string | null;
   themes: string[] | null;
   text: string | null;
   action_status: FeedbackStatus;
@@ -549,6 +565,28 @@ export interface FeedbackPatch {
   /** Vínculo de melhoria (Camada 3): uuid de Improvement da org, ou null p/ DESVINCULAR.
       AUSENTE do corpo = mantém o vínculo atual; NÃO mexe no action_status (backend). */
   improvement_id?: string | null;
+}
+
+/** Corpo (todos opcionais) do POST /api/feedbacks/{id}/sugerir-resposta — pede um
+    RASCUNHO de resposta à IA. NUNCA envia nada; o operador revisa e envia manual. */
+export interface SugerirRespostaIn {
+  /** Viés de tom; null/ausente = automático pela nota/sentimento. */
+  tom?: "acolhedor" | "resolutivo" | "agradecimento" | null;
+  /** Nota livre do operador (ex.: "ofereça 1 mês grátis"); tratada como DADO
+      (anti-injection) e truncada no backend. */
+  instrucao_extra?: string | null;
+}
+
+/** Resposta do POST /api/feedbacks/{id}/sugerir-resposta. */
+export interface SugerirRespostaResult {
+  /** Texto pronto para o operador revisar (1-4 frases, PT-BR, tom da marca). */
+  rascunho: string;
+  /** Sempre true — sinaliza à UI que é sugestão, não ação (a IA nunca envia). */
+  is_rascunho: boolean;
+  /** "ai" = veio do modelo; "fallback" = LLM indisponível → texto neutro determinístico. */
+  fonte: "ai" | "fallback";
+  /** Modelo usado, ou null no fallback. */
+  modelo: string | null;
 }
 
 /** Contagens por status para as abas do inbox. */
@@ -1444,6 +1482,12 @@ export const feedbacks = {
       feedback_id: string;
     },
   ) => api.post<Tarefa>("/api/tarefas", body),
+  /** SUGERIR RESPOSTA (IA): pede um RASCUNHO de resposta a este feedback. Nunca
+      envia nada — o operador revisa e dispara manual. Pode lançar ApiError(503)
+      quando a feature está desligada/LLM não configurado (a UI esconde o botão);
+      404 se o feedback não for da org; 422 se o uuid for inválido. */
+  sugerirResposta: (id: string, body?: SugerirRespostaIn) =>
+    api.post<SugerirRespostaResult>(`/api/feedbacks/${id}/sugerir-resposta`, body ?? {}),
 };
 
 /** Helpers tipados de TAREFAS de CS (fila priorizada + filtros). */

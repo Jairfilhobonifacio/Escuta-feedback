@@ -172,6 +172,19 @@ async def classify_batch(dry_run: bool, limit: int | None) -> int:
         urgency_dist: dict[str, int] = {"baixa": 0, "media": 0, "alta": 0}
         theme_counter: dict[str, int] = {}
 
+        # Feature 2 (CORRECTION_LOOP_ENABLED): carrega 1× por org os exemplos de
+        # correções humanas e reusa entre os itens (custo amortizado). OFF = sem exemplos.
+        from app.domain.feedback.correction_loop import collect_correction_examples
+
+        examples_cache: dict = {}
+
+        async def _examples_for(org_id) -> list | None:
+            if not settings.correction_loop_enabled:
+                return None
+            if org_id not in examples_cache:
+                examples_cache[org_id] = await collect_correction_examples(session, org_id)
+            return examples_cache[org_id]
+
         for idx, it in enumerate(eligible):
             text = (it.text or "").strip()
             if not text:
@@ -179,7 +192,8 @@ async def classify_batch(dry_run: bool, limit: int | None) -> int:
                 continue
             try:
                 tags = await brain.classify_feedback(
-                    text, it.score, f"{it.source}:{it.type}"
+                    text, it.score, f"{it.source}:{it.type}",
+                    examples=await _examples_for(it.organization_id),
                 )
             except Exception:  # noqa: BLE001 — IA é enriquecedor, nunca derruba o lote.
                 failed += 1

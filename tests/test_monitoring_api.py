@@ -58,6 +58,8 @@ _ITEM_KEYS = {
     "abordado", "abordado_em", "follow_up_at", "occurred_em", "created_em",
     # Auditoria do "quem editou" (hardening) — null quando nunca editado.
     "editado_por", "editado_em",
+    # Feature 1 (IA mais inteligente): confiança/incerteza derivadas de ai_meta.
+    "confianca", "incerto", "sentiment_sugerido",
 }
 
 

@@ -51,9 +51,9 @@ async def _classify(item: FeedbackItem) -> None:
         return
     if tags is None:
         return
-    item.sentiment = tags.sentiment
-    item.themes = tags.themes
-    item.ai_meta = {**(item.ai_meta or {}), "urgency": tags.urgency}
+    from app.domain.feedback.enrich import apply_tags
+
+    apply_tags(item, tags, model=settings.groq_model)
 
 
 async def ingest_feedback_item(

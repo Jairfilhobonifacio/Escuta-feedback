@@ -1383,6 +1383,8 @@ async def _auto_classify_feedback(
     type_: str,
     sentiment: str | None,
     themes: list[str] | None,
+    session: AsyncSession | None = None,
+    organization_id: uuid.UUID | None = None,
 ) -> dict[str, Any] | None:
     """Auto-classifica um feedback manual via IA quando faltam tags — best-effort.
 
@@ -1391,6 +1393,11 @@ async def _auto_classify_feedback(
     campos que vieram vazios + um `ai_meta` registrando a autoria da IA. Retorna None
     quando não há nada a fazer ou a IA está indisponível/falhou (o endpoint segue sem
     tags). NUNCA lança — IA é enriquecedor, jamais ponto de falha (regra de ouro).
+
+    Feature 2 (CORRECTION_LOOP_ENABLED): se `session`+`organization_id` vierem, carrega
+    1× os exemplos de correções humanas e os passa como calibração ao classificador.
+    Feature 1 (regra do incerto): quando a IA marca `incerto`, NÃO preenche `sentiment`
+    (só guarda o palpite em ai_meta.sentiment_sugerido) — não chuta uma classe.
     """
     if brain is None or not text:
         return None
@@ -1399,8 +1406,22 @@ async def _auto_classify_feedback(
     if not needs:
         return None
 
+    examples = None
+    if (
+        settings.correction_loop_enabled
+        and session is not None
+        and organization_id is not None
+    ):
+        try:
+            from app.domain.feedback.correction_loop import collect_correction_examples
+
+            examples = await collect_correction_examples(session, organization_id)
+        except Exception:  # noqa: BLE001 — loop é enriquecedor, nunca derruba.
+            logger.warning("correction loop: coleta falhou — seguindo sem exemplos", exc_info=True)
+            examples = None
+
     try:
-        tags = await brain.classify_feedback(text, None, "feedback manual")
+        tags = await brain.classify_feedback(text, None, "feedback manual", examples=examples)
     except Exception:  # noqa: BLE001 — IA é enriquecedor, nunca ponto de falha.
         logger.warning("auto-classify feedback falhou — seguindo sem tags", exc_info=True)
         return None
@@ -1408,18 +1429,25 @@ async def _auto_classify_feedback(
         return None
 
     out: dict[str, Any] = {}
-    # Preenche só o que o operador NÃO informou (não sobrescreve nada explícito).
-    if sentiment is None and tags.sentiment in SENTIMENTS:
+    incerto = tags.incerto and settings.sentiment_pt_v2_enabled
+    # Preenche só o que o operador NÃO informou (não sobrescreve nada explícito) E só
+    # quando a IA não está incerta (regra do "não chutar"; o palpite vai pro ai_meta).
+    if sentiment is None and not incerto and tags.sentiment in SENTIMENTS:
         out["sentiment"] = tags.sentiment
     if not themes and tags.themes:
         out["themes"] = tags.themes
-    out["ai_meta"] = {
+    ai_meta: dict[str, Any] = {
         "classified_by": "ai",
         "model": settings.groq_model,
         "urgency": tags.urgency,
         "sentiment": tags.sentiment,
         "themes": tags.themes,
+        "confianca": tags.confianca,
+        "incerto": tags.incerto,
     }
+    if incerto:
+        ai_meta["sentiment_sugerido"] = tags.sentiment
+    out["ai_meta"] = ai_meta
     return out
 
 
@@ -1470,7 +1498,13 @@ async def create_feedback(
     themes = body.themes
     ai_meta: dict[str, Any] | None = None
     enriched = await _auto_classify_feedback(
-        brain, text=text, type_=body.type, sentiment=sentiment, themes=themes
+        brain,
+        text=text,
+        type_=body.type,
+        sentiment=sentiment,
+        themes=themes,
+        session=session,
+        organization_id=org.id,
     )
     if enriched is not None:
         sentiment = enriched.get("sentiment", sentiment)
@@ -1577,6 +1611,11 @@ def _feedback_out(
     # Auditoria do "quem editou" (feedback_log no profile_data do contato). Opcional:
     # null quando o item nunca foi editado por um operador (fallback gracioso na UI).
     ultima_edicao = _last_feedback_edit(contact, str(f.id))
+    # Feature 1: grau de confiança/incerteza derivados de ai_meta (read-only, sem migration).
+    _meta = f.ai_meta if isinstance(f.ai_meta, dict) else {}
+    confianca = _meta.get("confianca")
+    incerto = bool(_meta.get("incerto", False))
+    sentiment_sugerido = _meta.get("sentiment_sugerido")
     return {
         "id": str(f.id),
         "contato_id": str(f.contact_id) if f.contact_id else None,
@@ -1591,6 +1630,10 @@ def _feedback_out(
         "themes": f.themes,
         "text": f.text,
         "urgencia": urgencia,
+        # Feature 1 (IA mais inteligente): confiança do classificador, derivada de ai_meta.
+        "confianca": confianca,
+        "incerto": incerto,
+        "sentiment_sugerido": sentiment_sugerido,
         "action_status": f.action_status,
         "action_note": f.action_note,
         "assignee": f.assignee,
@@ -2209,6 +2252,101 @@ async def delete_feedback(
 
     await session.delete(feedback)
     await session.commit()
+
+
+# --- Feature 3: sugestão de resposta ao operador (rascunho, NUNCA envia) -------
+
+# Rascunho determinístico (fonte="fallback") quando o LLM está OFF/falha mas a flag
+# está ON — o operador nunca fica travado. Voz da marca (próximo, curto, cuidadoso).
+def _fallback_rascunho(nome: str | None) -> str:
+    quem = (nome or "").strip().split()[0] if (nome and nome.strip()) else None
+    saudacao = f"Oi {quem}!" if quem else "Oi!"
+    return (
+        f"{saudacao} Vi seu comentário aqui e queria entender melhor — "
+        "pode me contar um pouco mais?"
+    )
+
+
+class SugerirRespostaIn(BaseModel):
+    # Viés de tom; null = automático pela nota/sentimento.
+    tom: Literal["acolhedor", "resolutivo", "agradecimento"] | None = None
+    # Nota livre do operador (ex.: "ofereça 1 mês grátis"); tratada como DADO, máx 300.
+    instrucao_extra: str | None = Field(default=None, max_length=300)
+
+
+class SugerirRespostaOut(BaseModel):
+    rascunho: str
+    is_rascunho: bool = True  # sempre true — sinaliza à UI que é sugestão, não ação
+    fonte: Literal["ai", "fallback"]
+    modelo: str | None = None
+
+
+@router.post("/feedbacks/{feedback_id}/sugerir-resposta", response_model=SugerirRespostaOut)
+async def sugerir_resposta(
+    feedback_id: str,
+    body: SugerirRespostaIn,
+    session: AsyncSession = Depends(get_session),
+    brain: SurveyBrain | None = Depends(get_brain),
+    operator: str = Depends(require_operator),
+) -> SugerirRespostaOut:
+    """Gera um RASCUNHO de resposta ao feedback para o operador revisar — NUNCA envia.
+
+    Read-only sobre o DB (sem commit/mutação). 503 quando a feature está OFF ou o LLM
+    não está configurado (a UI esconde/desabilita o botão). 404 se o feedback não é da
+    org; 422 em uuid inválido. Quando o LLM falha mas a flag está ON, devolve 200 com
+    fonte='fallback' e um rascunho neutro na voz da marca (o operador nunca trava).
+    Guardrail anti-prompt-injection: o texto do cliente entra como DADO delimitado e o
+    endpoint é fisicamente incapaz de agir (não envia, não muta)."""
+    if not settings.response_suggestion_enabled:
+        raise HTTPException(status_code=503, detail="sugestão de resposta desligada")
+    if brain is None:
+        raise HTTPException(status_code=503, detail="LLM não configurado")
+
+    org = await _get_org(session)
+    try:
+        fid = uuid.UUID(feedback_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="id inválido")
+
+    feedback = (
+        await session.execute(
+            select(FeedbackItem).where(
+                FeedbackItem.id == fid, FeedbackItem.organization_id == org.id
+            )
+        )
+    ).scalar_one_or_none()
+    if feedback is None:
+        raise HTTPException(status_code=404, detail="feedback não encontrado")
+
+    contact = None
+    if feedback.contact_id is not None:
+        contact = (
+            await session.execute(
+                select(Contact).where(
+                    Contact.id == feedback.contact_id,
+                    Contact.organization_id == org.id,
+                )
+            )
+        ).scalar_one_or_none()
+    nome = contact.name if contact else None
+
+    rascunho: str | None = None
+    try:
+        rascunho = await brain.suggest_reply(
+            feedback_text=feedback.text or "",
+            score=feedback.score,
+            sentiment=feedback.sentiment,
+            contato_nome=nome,
+            tom=body.tom,
+            instrucao_extra=body.instrucao_extra,
+        )
+    except Exception:  # noqa: BLE001 — IA é enriquecedor, nunca ponto de falha.
+        logger.warning("sugerir-resposta: brain.suggest_reply lançou — caindo no fallback", exc_info=True)
+        rascunho = None
+
+    if rascunho:
+        return SugerirRespostaOut(rascunho=rascunho, fonte="ai", modelo=settings.groq_model)
+    return SugerirRespostaOut(rascunho=_fallback_rascunho(nome), fonte="fallback", modelo=None)
 
 
 # --- Clustering de temas (Fase 2) --------------------------------------------

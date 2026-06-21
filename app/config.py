@@ -144,6 +144,22 @@ class Settings:
     priority_volume_ref: int = int(os.getenv("PRIORITY_VOLUME_REF", "10"))
     # Multiplicador de receita do pagante de plano ALTO (anual) vs. mensal (1.0).
     priority_plano_alto_mult: float = float(os.getenv("PRIORITY_PLANO_ALTO_MULT", "1.5"))
+    # --- 3 features de IA "mais inteligente" (motor = SÓ Groq; sem embeddings) -----
+    # Feature 1 — sentimento PT v2 + grau de confiança. ON = classify_feedback usa o
+    # prompt v2 (PT-BR explícito + few-shot de ironia/negação/gíria + "neutro" como
+    # classe legítima) e lê "confidence" do JSON; quando o modelo diz "baixa", marca
+    # `incerto` em ai_meta e NÃO chuta o campo `sentiment` (fica None + palpite em
+    # ai_meta.sentiment_sugerido). OFF (default) = prompt e gravação atuais BYTE-A-BYTE.
+    sentiment_pt_v2_enabled: bool = os.getenv("SENTIMENT_PT_V2_ENABLED", "0") == "1"
+    # Feature 2 — loop de correção. ON = call-sites de lote/manual carregam exemplos das
+    # edições humanas (Contact.profile_data["feedback_log"]) e os injetam como CALIBRAÇÃO
+    # no prompt do classify (texto do cliente sempre como DADO delimitado, nunca
+    # instrução). OFF (default) = classify ignora `examples` (prompt como hoje).
+    correction_loop_enabled: bool = os.getenv("CORRECTION_LOOP_ENABLED", "0") == "1"
+    # Feature 3 — sugestão de resposta (rascunho ao operador, NUNCA envia). ON = o
+    # endpoint POST /api/feedbacks/{id}/sugerir-resposta gera um rascunho via Groq.
+    # OFF (default) = o endpoint responde 503 (a UI esconde/desabilita o botão).
+    response_suggestion_enabled: bool = os.getenv("RESPONSE_SUGGESTION_ENABLED", "0") == "1"
 
     @property
     def cors_allowed_origins_list(self) -> list[str]:

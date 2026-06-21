@@ -531,11 +531,9 @@ class SurveyContextResolver:
             return
         if tags is None:
             return
-        pending.sentiment = tags.sentiment
-        pending.themes = tags.themes
-        meta = dict(pending.ai_meta or {})
-        meta["urgency"] = tags.urgency
-        pending.ai_meta = meta
+        from app.domain.feedback.enrich import apply_tags
+
+        apply_tags(pending, tags, model=settings.groq_model)
 
     async def _to_central(self, pending: SurveyResponse) -> None:
         """Leva a resposta fechada para a mega central (inbox de monitoramento).

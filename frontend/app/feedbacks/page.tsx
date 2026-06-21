@@ -166,17 +166,52 @@ function sentimentBadge(s: string | null) {
 }
 
 /** Ponto de sentimento (cor) que abre o cabeçalho do card — o realce visual nº 1
-   "de relance". Sem sentimento ainda, fica um ponto neutro discreto. */
-function SentimentDot({ s }: { s: string | null }) {
-  const color = (s && SENT_META[s]?.color) || "var(--charcoal-2)";
-  const label = (s && SENT_META[s]?.label) || "sem sentimento";
+   "de relance". Sem sentimento ainda, fica um ponto neutro discreto. Quando a IA
+   classificou com baixa confiança (`incerto`), o ponto fica neutro (não chutamos)
+   e o título conta o palpite — o selo "incerto" ao lado convida a revisar. */
+function SentimentDot({
+  s,
+  incerto,
+  sugerido,
+}: {
+  s: string | null;
+  incerto?: boolean;
+  sugerido?: string | null;
+}) {
+  const semSentimento = incerto || !s;
+  const color = (!incerto && s && SENT_META[s]?.color) || "var(--charcoal-2)";
+  const label = (!incerto && s && SENT_META[s]?.label) || "sem sentimento";
+  const title = incerto
+    ? `Sentimento incerto — revisar${sugerido ? ` (a IA achou que talvez seja "${SENT_META[sugerido]?.label ?? sugerido}")` : ""}`
+    : `Sentimento: ${label}`;
   return (
     <span
-      className="fb-sent-dot"
+      className={`fb-sent-dot${semSentimento ? " is-empty" : ""}`}
       style={{ background: color }}
-      title={`Sentimento: ${label}`}
-      aria-label={`Sentimento: ${label}`}
+      title={title}
+      aria-label={title}
     />
+  );
+}
+
+/** Selo discreto "incerto — revisar": aparece quando a IA classificou com baixa
+   confiança. Clicável → abre a edição (o operador confirma/corrige o sentimento).
+   Some por completo se a API não trouxer `incerto` (fallback gracioso). */
+function IncertoBadge({ fb, onEdit }: { fb: Feedback; onEdit: (fb: Feedback) => void }) {
+  if (!fb.incerto) return null;
+  const sug = fb.sentiment_sugerido;
+  const title = sug
+    ? `A IA não teve certeza (achou que talvez seja "${SENT_META[sug]?.label ?? sug}"). Clique para revisar.`
+    : "A IA classificou este feedback com baixa confiança. Clique para revisar.";
+  return (
+    <button
+      type="button"
+      className="fb-incerto-chip"
+      onClick={() => onEdit(fb)}
+      title={title}
+    >
+      <Pencil size={11} aria-hidden /> incerto — revisar
+    </button>
   );
 }
 
@@ -1242,7 +1277,7 @@ function FeedbackCard({
       {/* Cabeçalho enxuto: quem + sentimento (cor) + nota, com a data à direita.
          O resto da metainformação desce para a faixa de chips, mais discreta. */}
       <div className="fb-top">
-        <SentimentDot s={fb.sentiment} />
+        <SentimentDot s={fb.sentiment} incerto={fb.incerto} sugerido={fb.sentiment_sugerido} />
         <Avatar name={fb.contato_nome} seed={fb.contato_id ?? fb.contato_whatsapp} size={28} />
         {fb.contato_id ? (
           <Link href={`/contatos/${fb.contato_id}`} className="fb-who">
@@ -1259,6 +1294,7 @@ function FeedbackCard({
         {fb.urgencia >= 70 && (
           <span className="badge detractor fb-chip-sm" title={`Urgência ${fb.urgencia}/100`}>urgente</span>
         )}
+        <IncertoBadge fb={fb} onEdit={onEdit} />
         {/* Estado "abordado" de 1ª classe: chip verde VISÍVEL no cabeçalho quando
            já abordamos o cliente — clicável para desmarcar (mesmo toggle otimista). */}
         {fb.abordado && (
@@ -2116,6 +2152,7 @@ export default function FeedbacksPage() {
       {abordando && (
         <AbordarModal
           target={abordando}
+          feedbackId={abordando.id}
           onClose={() => setAbordando(null)}
           onMarcarAbordado={async () => {
             if (abordando.abordado) return;

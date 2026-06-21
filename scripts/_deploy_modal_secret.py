@@ -90,6 +90,11 @@ def main() -> int:
         "VOC_WHATSAPP_TOOL_ENABLED": env.get("VOC_WHATSAPP_TOOL_ENABLED", "0"),
         "RAG_HYBRID_ENABLED": env.get("RAG_HYBRID_ENABLED", "0"),
         "CLUSTERING_INLINE_ENABLED": env.get("CLUSTERING_INLINE_ENABLED", "0"),
+        # 3 features de IA "mais inteligente" (motor = SÓ Groq; SEM torch/embeddings →
+        # rodam normalmente no endpoint Modal). Default OFF "0"; ligar UMA por vez.
+        "SENTIMENT_PT_V2_ENABLED": env.get("SENTIMENT_PT_V2_ENABLED", "0"),
+        "CORRECTION_LOOP_ENABLED": env.get("CORRECTION_LOOP_ENABLED", "0"),
+        "RESPONSE_SUGGESTION_ENABLED": env.get("RESPONSE_SUGGESTION_ENABLED", "0"),
     }
     obrigatorios = ["DATABASE_URL", "GROQ_API_KEY"]
     if app_env == "production":

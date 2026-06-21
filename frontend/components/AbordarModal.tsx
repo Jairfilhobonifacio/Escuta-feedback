@@ -1,9 +1,10 @@
 "use client";
 
 import { useId, useState } from "react";
+import { Sparkles } from "lucide-react";
 import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
-import { campanha } from "@/lib/api";
+import { ApiError, campanha, feedbacks as feedbacksApi } from "@/lib/api";
 import {
   fillTemplate,
   isCustom,
@@ -49,12 +50,16 @@ export default function AbordarModal({
   target,
   onClose,
   onMarcarAbordado,
+  feedbackId,
 }: {
   target: AbordarTarget;
   onClose: () => void;
   /** Persiste "abordado=true". Chamado ao abrir o WhatsApp se a marcação estiver ligada.
       Se ausente, o modal só compõe/abre a conversa (sem persistir nada). */
   onMarcarAbordado?: () => void | Promise<void>;
+  /** Id do feedback que originou a abordagem. Quando presente E a feature de IA
+      estiver ligada, mostra o botão "Sugerir resposta" (rascunho editável). */
+  feedbackId?: string;
 }) {
   const titleId = useId();
   const [templates, setTemplates] = useState<MsgTemplate[]>(() => loadTemplates());
@@ -72,6 +77,38 @@ export default function AbordarModal({
   );
   const [copied, setCopied] = useState(false);
   const [marcar, setMarcar] = useState(!target.abordado);
+
+  // ----- Sugestão de resposta por IA (rascunho — NUNCA envia) ----------------
+  // sugerindo: requisição em voo. sugestaoOff: a API respondeu 503 (feature
+  // desligada/LLM off) → escondemos o botão de vez. fromAi: o último rascunho
+  // veio do modelo (banner reforça "revise"). sugFlash: erro de rede/transitório.
+  const [sugerindo, setSugerindo] = useState(false);
+  const [sugestaoOff, setSugestaoOff] = useState(false);
+  const [fromAi, setFromAi] = useState(false);
+  const [sugFlash, setSugFlash] = useState<string | null>(null);
+
+  const podeSugerir = !!feedbackId && !sugestaoOff;
+
+  /** Pede um rascunho à IA e PREENCHE o textarea (editável — o operador revisa
+      antes de abrir o WhatsApp). 503 = feature off → esconde o botão. */
+  async function sugerirResposta() {
+    if (!feedbackId || sugerindo) return;
+    setSugerindo(true);
+    setSugFlash(null);
+    try {
+      const out = await feedbacksApi.sugerirResposta(feedbackId, {});
+      setMsg(out.rascunho);
+      setFromAi(true);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 503) {
+        setSugestaoOff(true); // feature desligada — some o botão de forma limpa
+      } else {
+        setSugFlash("Não consegui sugerir agora. Tente de novo em instantes.");
+      }
+    } finally {
+      setSugerindo(false);
+    }
+  }
 
   const podeMarcar = !!onMarcarAbordado && !target.abordado;
   const phoneDigits = (target.contato_whatsapp || "").replace(/\D/g, "");
@@ -225,9 +262,24 @@ export default function AbordarModal({
           <textarea
             id={`${titleId}-msg`}
             value={msg}
-            onChange={(e) => setMsg(e.target.value)}
+            onChange={(e) => {
+              setMsg(e.target.value);
+              // editou à mão → não é mais o rascunho cru da IA
+              if (fromAi) setFromAi(false);
+            }}
             style={{ minHeight: 184 }}
           />
+          {fromAi && (
+            <div className="abordar-ai-banner" role="status">
+              <Sparkles size={13} aria-hidden />
+              Rascunho da IA — revise antes de enviar. O envio é sempre manual.
+            </div>
+          )}
+          {sugFlash && (
+            <div className="flash err" style={{ marginTop: 8, marginBottom: 0 }}>
+              {sugFlash}
+            </div>
+          )}
           <div className="abordar-tpl-actions">
             <button type="button" className="btn ghost sm" onClick={salvarComoTemplate}>
               ＋ Salvar como modelo
@@ -235,6 +287,18 @@ export default function AbordarModal({
             {isCustom(tplId) && (
               <button type="button" className="btn ghost sm" onClick={excluirTemplate}>
                 Excluir modelo
+              </button>
+            )}
+            {podeSugerir && (
+              <button
+                type="button"
+                className="btn ghost sm abordar-ai-btn"
+                onClick={sugerirResposta}
+                disabled={sugerindo}
+                title="Gerar um rascunho de resposta com IA (você revisa antes de enviar)"
+              >
+                <Sparkles size={14} aria-hidden />
+                {sugerindo ? "Sugerindo…" : "Sugerir resposta"}
               </button>
             )}
             <button type="button" className="btn ghost sm" onClick={copiar}>

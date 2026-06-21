@@ -3548,3 +3548,76 @@ tbody tr:hover td { color: var(--text); }
   color: var(--text-faint);
   font-style: italic;
 }
+
+/* ============================================================================
+   IA mais inteligente: confiança/"incerto" + sugestão de resposta (rascunho)
+   ----------------------------------------------------------------------------
+   Tudo discreto, na voz da marca. Aparece só quando a API expõe os campos
+   (incerto/sentiment_sugerido) ou a feature de sugestão está ligada — caso
+   contrário, nada destes seletores chega a renderizar (fallback gracioso).
+   ============================================================================ */
+
+/* Ponto de sentimento "vazio" (sem classificação ou incerto): contorno tracejado
+   discreto, sinalizando "ainda sem leitura confiável" sem competir com o texto. */
+.fb-sent-dot.is-empty {
+  background: transparent !important;
+  border: 1.5px dashed var(--charcoal-2);
+}
+
+/* Selo "incerto — revisar": convite suave a corrigir. Âmbar (não vermelho — não
+   é erro, é dúvida da IA), clicável → abre a edição do feedback. */
+.fb-incerto-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--passive);
+  background: var(--passive-soft);
+  border: 1px solid var(--passive-line);
+  border-radius: 999px;
+  padding: 4px 9px;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, transform .08s ease;
+}
+.fb-incerto-chip:hover {
+  background: color-mix(in srgb, var(--passive) 20%, transparent);
+  border-color: var(--passive);
+}
+.fb-incerto-chip:active { transform: translateY(0.5px); }
+.fb-incerto-chip svg { flex-shrink: 0; }
+
+/* Botão "Sugerir resposta" (IA) na barra de ações do AbordarModal: realce de
+   marca (indigo) para distingui-lo dos ghosts vizinhos, mantendo o tamanho "sm". */
+.abordar-ai-btn {
+  color: var(--indigo-light);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.abordar-ai-btn:hover:not(:disabled) {
+  color: var(--indigo-deep);
+  border-color: var(--promoter-line);
+  background: var(--promoter-soft);
+}
+.abordar-ai-btn:disabled { opacity: .62; cursor: default; }
+.abordar-ai-btn svg { flex-shrink: 0; }
+
+/* Banner "Rascunho da IA — revise antes de enviar": deixa explícito que o texto
+   é sugestão e que o envio é sempre manual (a IA nunca dispara). */
+.abordar-ai-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--indigo-light);
+  background: var(--promoter-soft);
+  border: 1px solid var(--promoter-line);
+  border-radius: var(--radius-xs);
+  padding: 7px 10px;
+}
+.abordar-ai-banner svg { flex-shrink: 0; }

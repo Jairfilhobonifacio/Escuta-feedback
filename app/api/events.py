@@ -115,9 +115,9 @@ async def _classify_response(resp: SurveyResponse, survey_name: str) -> None:
         return
     if tags is None:
         return
-    resp.sentiment = tags.sentiment
-    resp.themes = tags.themes
-    resp.ai_meta = {**(resp.ai_meta or {}), "urgency": tags.urgency}
+    from app.domain.feedback.enrich import apply_tags
+
+    apply_tags(resp, tags, model=settings.groq_model)
 
 
 async def _ingest_response(

@@ -1247,6 +1247,20 @@ function TimelineRow({
           <span className={`score-pill ${t.bucket ?? "none"}`}>{t.score}</span>
         )}
         {sentimentBadge(t.sentiment)}
+        {editable && t.incerto && (
+          <button
+            type="button"
+            className="fb-incerto-chip"
+            onClick={() => onEdit(t)}
+            title={
+              t.sentiment_sugerido
+                ? `A IA não teve certeza (talvez "${t.sentiment_sugerido}"). Clique para revisar.`
+                : "A IA classificou com baixa confiança. Clique para revisar."
+            }
+          >
+            <Pencil size={11} aria-hidden /> incerto — revisar
+          </button>
+        )}
         {editable && statusBadge(t.action_status, statusOptions)}
         {t.abordado && (
           <Badge variant="positive">
