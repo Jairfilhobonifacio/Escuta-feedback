@@ -172,7 +172,7 @@ function ImprovementCard({
           )}
           {imp.cluster_label && (
             <Link
-              href="/temas"
+              href="/mapeamento"
               className="chip imp-chip-link"
               title="Ver a dor de origem em Mapeamento (Por significado)"
             >

@@ -13,17 +13,20 @@ import {
   MessageCircle,
   PhoneOff,
   CheckCircle2,
+  Trash2,
 } from "lucide-react";
 import Avatar from "@/components/Avatar";
 import { healthCell } from "@/components/HealthCell";
 import { Reveal } from "@/components/Motion";
 import SeloPopover from "@/components/SeloPopover";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { maskPhone } from "@/lib/format";
 import {
   clientes as clientesApi,
   campanha as campanhaApi,
+  contacts as contactsApi,
   type Cliente,
   type Selo,
   type SeloVivo,
@@ -455,6 +458,8 @@ export default function ClientesPage() {
   // UI: filtros avançados recolhidos + colunas de detalhe recolhidas (densidade).
   const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [detalhes, setDetalhes] = useState(false);
+  // Alvo de exclusão (abre o ConfirmDialog). null = nenhum diálogo aberto.
+  const [delAlvo, setDelAlvo] = useState<{ id: string; nome: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1003,12 +1008,42 @@ export default function ClientesPage() {
                     </>
                   )}
                   <td>
-                    <SelosCell
-                      cliente={c}
-                      catalogo={catalogo}
-                      onApplied={onSeloApplied}
-                      onRemoved={onSeloRemoved}
-                    />
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 10,
+                      }}
+                    >
+                      <SelosCell
+                        cliente={c}
+                        catalogo={catalogo}
+                        onApplied={onSeloApplied}
+                        onRemoved={onSeloRemoved}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setDelAlvo({ id: c.id, nome: c.nome || "sem nome" })}
+                        title="Excluir contato e todo o histórico"
+                        aria-label={`Excluir ${c.nome || "contato"}`}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 28,
+                          height: 28,
+                          flex: "0 0 auto",
+                          borderRadius: 6,
+                          border: "1px solid transparent",
+                          background: "transparent",
+                          color: "var(--text-faint)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <Trash2 size={14} aria-hidden />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1016,6 +1051,34 @@ export default function ClientesPage() {
           </table>
         </div>
       </Reveal>
+
+      {delAlvo &&
+        (() => {
+          // captura non-null p/ o closure async do onConfirm
+          const alvo = delAlvo;
+          return (
+            <ConfirmDialog
+              title="Excluir contato"
+              message={
+                <>
+                  Tem certeza que quer excluir <b>{alvo.nome}</b>? Isso apaga o contato e{" "}
+                  <b>todo o histórico</b> (feedbacks, conversas, abordagens, selos) —{" "}
+                  <b>não dá para desfazer</b>.
+                </>
+              }
+              quote={alvo.nome}
+              confirmLabel="Excluir definitivamente"
+              confirmingLabel="Excluindo…"
+              onCancel={() => setDelAlvo(null)}
+              onConfirm={async () => {
+                await contactsApi.remove(alvo.id);
+                setClientes((prev) => prev.filter((c) => c.id !== alvo.id));
+                setBase((prev) => prev.filter((c) => c.id !== alvo.id));
+                setDelAlvo(null);
+              }}
+            />
+          );
+        })()}
     </div>
   );
 }

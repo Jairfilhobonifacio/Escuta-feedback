@@ -32,7 +32,7 @@ type NavItem = { href: string; label: string; icon: IconType; feature?: boolean 
    As telas que o dono considerou ruído saíram do MENU mas continuam EXISTINDO e
    acessíveis por URL (nada foi apagado). Reverter = devolver o item a um grupo:
      /dashboard  -> substituído pela Monitorar
-     /temas      -> "Mapeamento": mapa de dores (clustering por significado)
+     /mapeamento -> "Mapeamento": mapa de dores (clustering por significado); /temas redireciona p/ cá
      /campanha   -> win-back ("inútil, dados errôneos")
      /tarefas    -> "deveria estar no board, não separado"
      /playbooks  -> automação ("não faz sentido")
@@ -46,7 +46,7 @@ const groups: { label: string; items: NavItem[] }[] = [
       { href: "/feedbacks", label: "Feedbacks", icon: MessageSquare, feature: true },
       { href: "/chat", label: "Chat", icon: MessageCircle, feature: true },
       { href: "/board", label: "Board", icon: Kanban },
-      { href: "/temas", label: "Mapeamento", icon: Map },
+      { href: "/mapeamento", label: "Mapeamento", icon: Map },
       { href: "/melhorias", label: "Melhorias", icon: Lightbulb },
     ],
   },
