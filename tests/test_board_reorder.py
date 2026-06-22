@@ -274,3 +274,121 @@ async def test_isolamento_por_org(client, org, session):
     # Org B nunca foi tocada: sem mapa, e seu card não aparece na ordem de A.
     assert "board_card_order" not in (ob.settings or {})
     assert str(b1.id) not in oa.settings["board_card_order"]["a_abordar"]
+
+
+# --- snapshot ordem-total: card arrastado FICA onde caiu (sem salto) ----------
+
+
+@pytest.mark.asyncio
+async def test_reorder_primeiro_card_da_coluna_fica_onde_caiu(client, org, session):
+    """Mover UM card numa coluna de cards NÃO-tocados deve deixá-lo onde caiu — não
+    jogá-lo para o fim (regressão do salto otimista→servidor). Card de BAIXA urgência
+    arrastado para o TOPO permanece no topo; a coluna inteira vira ordem manual.
+
+    Com o backend antigo (insere só entre 'manuais', que ficam abaixo dos novos) o card
+    iria para o FIM: [urgente, calmo]. O snapshot ordem-total mantém [calmo, urgente]."""
+    risco = await _contact(
+        session, org, "5531900000001", "Risco",
+        profile_data={"partner": {"profile": "ativo_em_risco", "subscription": {"planType": "anual"}}},
+    )
+    feliz = await _contact(session, org, "5531900000002", "Feliz")
+    urgente = await _fb(session, org, risco, "urgente", type="churn", sentiment="negativo")
+    calmo = await _fb(session, org, feliz, "calmo", type="elogio", sentiment="positivo")
+    await session.commit()
+    bid = await _board_action_status(client)
+
+    # Sanidade: sem ordem manual, urgência manda -> [urgente, calmo].
+    ids0 = _ids_da_coluna((await client.get(f"/api/boards/{bid}/items")).json(), "a_abordar")
+    assert ids0 == [str(urgente.id), str(calmo.id)]
+
+    # Arrasta o card de BAIXA urgência (calmo) para o TOPO (position 0).
+    r = await client.post(
+        f"/api/feedbacks/{calmo.id}/board-move",
+        json={"campo": "action_status", "valor": "a_abordar", "position": 0},
+    )
+    assert r.status_code == 200, r.text
+
+    ids = _ids_da_coluna((await client.get(f"/api/boards/{bid}/items")).json(), "a_abordar")
+    assert ids == [str(calmo.id), str(urgente.id)]  # FICA no topo (não salta pro fim)
+    # A coluna inteira virou ordem manual (snapshot), não só o card tocado.
+    o = (await session.execute(select(Organization).where(Organization.id == org.id))).scalar_one()
+    assert o.settings["board_card_order"]["a_abordar"] == [str(calmo.id), str(urgente.id)]
+
+
+@pytest.mark.asyncio
+async def test_reorder_move_um_card_no_meio_preserva_o_resto(client, org, session):
+    """Numa coluna já ordenada manualmente, mover um único card para o meio reposiciona
+    só ele e preserva os demais — a ordem do GET bate com o splice otimista do front."""
+    ana = await _contact(session, org, "5531900000001", "Ana")
+    a = await _fb(session, org, ana, "a")
+    b = await _fb(session, org, ana, "b")
+    c = await _fb(session, org, ana, "c")
+    d = await _fb(session, org, ana, "d")
+    await session.commit()
+    bid = await _board_action_status(client)
+
+    # Estabelece a ordem [a, b, c, d] (cada move snapshota a coluna inteira).
+    for pos, fb in [(0, a), (1, b), (2, c), (3, d)]:
+        await client.post(
+            f"/api/feedbacks/{fb.id}/board-move",
+            json={"campo": "action_status", "valor": "a_abordar", "position": pos},
+        )
+    base = _ids_da_coluna((await client.get(f"/api/boards/{bid}/items")).json(), "a_abordar")
+    assert base == [str(a.id), str(b.id), str(c.id), str(d.id)]
+
+    # Move 'd' para a position 1 (logo após 'a'): esperado [a, d, b, c].
+    r = await client.post(
+        f"/api/feedbacks/{d.id}/board-move",
+        json={"campo": "action_status", "valor": "a_abordar", "position": 1},
+    )
+    assert r.status_code == 200, r.text
+    ids = _ids_da_coluna((await client.get(f"/api/boards/{bid}/items")).json(), "a_abordar")
+    assert ids == [str(a.id), str(d.id), str(b.id), str(c.id)]
+
+
+async def _coluna_abcd(client, org, session):
+    """Coluna 'a_abordar' com 4 cards do mesmo contato ordenados manualmente [a,b,c,d]."""
+    ana = await _contact(session, org, "5531900000001", "Ana")
+    fbs = {}
+    for ext in ("a", "b", "c", "d"):
+        fbs[ext] = await _fb(session, org, ana, ext)
+    await session.commit()
+    bid = await _board_action_status(client)
+    for pos, ext in [(0, "a"), (1, "b"), (2, "c"), (3, "d")]:
+        await client.post(
+            f"/api/feedbacks/{fbs[ext].id}/board-move",
+            json={"campo": "action_status", "valor": "a_abordar", "position": pos},
+        )
+    base = _ids_da_coluna((await client.get(f"/api/boards/{bid}/items")).json(), "a_abordar")
+    assert base == [str(fbs[e].id) for e in ("a", "b", "c", "d")]
+    return bid, fbs
+
+
+@pytest.mark.asyncio
+async def test_reorder_move_para_frente_sem_off_by_one(client, org, session):
+    """Mover um card para FRENTE (position > índice atual) na mesma coluna cai na posição
+    VISUAL exata — `position` é o índice na lista COM o card, e o backend desliza -1 ao
+    removê-lo, espelhando o splice otimista do front. 'a' (idx 0) p/ position 3 = [b,c,a,d]
+    (com o backend cru, sem o ajuste, daria [b,c,d,a])."""
+    bid, fbs = await _coluna_abcd(client, org, session)
+    r = await client.post(
+        f"/api/feedbacks/{fbs['a'].id}/board-move",
+        json={"campo": "action_status", "valor": "a_abordar", "position": 3},
+    )
+    assert r.status_code == 200, r.text
+    ids = _ids_da_coluna((await client.get(f"/api/boards/{bid}/items")).json(), "a_abordar")
+    assert ids == [str(fbs["b"].id), str(fbs["c"].id), str(fbs["a"].id), str(fbs["d"].id)]
+
+
+@pytest.mark.asyncio
+async def test_reorder_move_para_o_fim(client, org, session):
+    """Arrastar um card NÃO-último para o FIM (position == len) o coloca por último — o
+    slide-antes-do-clamp evita parar 1 antes do fim. 'b' (idx 1) p/ position 4 = [a,c,d,b]."""
+    bid, fbs = await _coluna_abcd(client, org, session)
+    r = await client.post(
+        f"/api/feedbacks/{fbs['b'].id}/board-move",
+        json={"campo": "action_status", "valor": "a_abordar", "position": 4},
+    )
+    assert r.status_code == 200, r.text
+    ids = _ids_da_coluna((await client.get(f"/api/boards/{bid}/items")).json(), "a_abordar")
+    assert ids == [str(fbs["a"].id), str(fbs["c"].id), str(fbs["d"].id), str(fbs["b"].id)]

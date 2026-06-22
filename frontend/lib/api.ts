@@ -803,6 +803,11 @@ export interface BoardItemFiltro {
 export interface BoardMoveInput {
   campo: BoardCampo;
   valor: string;
+  /** Item C — reorder manual dentro da coluna (só campo='action_status').
+      `position` = índice 0-based de destino; `board_id` é retrocompat (ignorado
+      na persistência). Opcionais p/ não quebrar os call-sites que só movem de coluna. */
+  board_id?: string;
+  position?: number;
 }
 
 /** Corpo do POST /api/contacts/{id}/board-move (drag-and-drop de cliente).

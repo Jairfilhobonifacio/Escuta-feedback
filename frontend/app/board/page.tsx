@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useState } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { healthCell } from "@/components/HealthCell";
@@ -848,6 +848,7 @@ function BoardCard({
 
   return (
     <article
+      data-board-card
       className={`card board-card ${compact ? "board-card-compact" : ""} ${dragging ? "is-dragging" : ""}`}
       style={{ ...BOARD_CARD_STYLE, position: "relative" }}
       draggable
@@ -1510,6 +1511,9 @@ export default function BoardPage() {
   // drag-and-drop
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overColumn, setOverColumn] = useState<string | null>(null);
+  // índice de INSERÇÃO 0-based dentro de `overColumn` (reorder de feedback, Item C).
+  // null = sem alvo. Só pareado com overColumn; reseta junto sempre.
+  const [overIndex, setOverIndex] = useState<number | null>(null);
 
   // modais
   const [editingBoard, setEditingBoard] = useState<Board | null>(null);
@@ -1668,7 +1672,7 @@ export default function BoardPage() {
   /** Move otimista de FEEDBACK por drag-and-drop: aplica já, reverte se a API
       falhar. Opera pela IDENTIDADE da coluna (`col.id`). */
   const moveFeedbackByDrop = useCallback(
-    async (feedbackId: string, toColId: string) => {
+    async (feedbackId: string, toColId: string, toIndex: number | null) => {
       if (!items || !selected) return;
       const toCol = items.colunas.find((col) => col.id === toColId);
       if (!toCol) return;
@@ -1687,12 +1691,18 @@ export default function BoardPage() {
       if (!card) return;
 
       const campo = selected.campo;
-      // No-op: para selo, decide pelo ESTADO do contato (já tem o selo destino?);
-      // para action_status, no-op por coluna de origem == destino.
+      // No-op: para selo, decide pelo ESTADO do contato (já tem o selo destino?).
+      // Para action_status na MESMA coluna: sem reorder ativo (toIndex null = drop fora do
+      // modo manual) é no-op (comportamento antigo); com reorder, só é no-op se cair na
+      // mesma posição final (no próprio índice ou no imediatamente seguinte — após o splice
+      // a ordem é idêntica, porque o item sai antes de reentrar).
       if (campo === "selo") {
         if (card.selos.includes(toValor)) return;
       } else if (fromColId === toColId) {
-        return;
+        if (toIndex == null) return;
+        const colItems = toCol.items as Feedback[];
+        const curIdx = colItems.findIndex((it) => it.id === feedbackId);
+        if (toIndex === curIdx || toIndex === curIdx + 1) return;
       }
 
       // 1) otimista
@@ -1700,6 +1710,20 @@ export default function BoardPage() {
         if (!prev) return prev;
         const colunas = prev.colunas.map((col) => {
           const colItems = col.items as Feedback[];
+          // MESMA coluna (reorder): remove e reinsere na posição certa; count igual.
+          if (campo === "action_status" && col.id === fromColId && fromColId === toColId) {
+            const curIdx = colItems.findIndex((it) => it.id === feedbackId);
+            const arr = colItems.filter((it) => it.id !== feedbackId);
+            // toIndex é índice na lista COM o card; após removê-lo, o destino desliza -1 se
+            // vinha DEPOIS da posição atual. Aplica o slide ANTES do clamp p/ não over-clampar
+            // ao arrastar para o fim (toIndex === length) um card que não era o último.
+            const raw = toIndex == null ? arr.length : toIndex;
+            const slid = toIndex != null && toIndex > curIdx ? raw - 1 : raw;
+            const finalAt = Math.min(Math.max(0, slid), arr.length);
+            arr.splice(finalAt, 0, card!);
+            return { ...col, items: arr };
+          }
+          // CROSS-coluna: origem perde o card.
           if (campo === "action_status" && col.id === fromColId) {
             return {
               ...col,
@@ -1707,6 +1731,7 @@ export default function BoardPage() {
               items: colItems.filter((it) => it.id !== feedbackId),
             };
           }
+          // Destino ganha o card (cross-coluna action_status, ou aplicação de selo).
           if (col.id === toColId && !colItems.some((it) => it.id === feedbackId)) {
             const moved: Feedback = {
               ...card!,
@@ -1715,6 +1740,14 @@ export default function BoardPage() {
                   ? [...card!.selos, toValor]
                   : card!.selos,
             };
+            // Posição manual só quando há reorder (toIndex != null); senão o card entra no
+            // topo (comportamento antigo, alinhado ao "novo por urgência no topo" do backend).
+            if (campo === "action_status" && toIndex != null) {
+              const next = [...colItems];
+              const at = Math.min(toIndex, next.length);
+              next.splice(at, 0, moved);
+              return { ...col, count: col.count + 1, items: next };
+            }
             return { ...col, count: col.count + 1, items: [moved, ...colItems] };
           }
           return col;
@@ -1723,7 +1756,14 @@ export default function BoardPage() {
       });
 
       try {
-        await boardsApi.move(feedbackId, { campo, valor: toValor });
+        await boardsApi.move(feedbackId, {
+          campo,
+          valor: toValor,
+          // `position` só para action_status — selo-boards não têm ordem manual.
+          ...(campo === "action_status" && toIndex != null
+            ? { board_id: selected.id, position: toIndex }
+            : {}),
+        });
         setErr(null);
         await loadItems(selected.id);
       } catch (e) {
@@ -1893,8 +1933,11 @@ export default function BoardPage() {
   function onColumnDrop(e: React.DragEvent, colId: string) {
     e.preventDefault();
     const id = e.dataTransfer.getData("text/plain") || draggingId;
+    // Captura o índice de inserção ANTES de resetar; só vale se foi calculado p/ esta coluna.
+    const dropIndex = overColumn === colId ? overIndex : null;
     setOverColumn(null);
     setDraggingId(null);
+    setOverIndex(null);
     if (!id || !selected) return;
     // Campos read-only não recebem drop (o card nem arrasta, mas defende aqui também).
     if (isReadonly) return;
@@ -1905,7 +1948,7 @@ export default function BoardPage() {
     } else if (isMelhoria) {
       void moveMelhoriaByDrop(id, colId);
     } else {
-      void moveFeedbackByDrop(id, colId);
+      void moveFeedbackByDrop(id, colId, dropIndex);
     }
   }
 
@@ -1924,6 +1967,24 @@ export default function BoardPage() {
   const total = columns.reduce((sum, c) => sum + c.count, 0);
   // Colunas read-only nunca devem virar drop-target.
   const dropEnabled = !isReadonly;
+  // Reorder manual (Item C) só é coerente quando a lista EXIBIDA é a coluna canônica e
+  // INTEIRA do backend: board de feedback por action_status, em modo "padrão" (sem re-ordenar
+  // por urgência no front), sem o filtro "só urgentes", fora do Follow-up (dedupe por contato)
+  // e SEM nenhum filtro de servidor ativo (`algumFiltro`) — com filtro, `col.items` é um
+  // SUBCONJUNTO, mas o backend posiciona na coluna COMPLETA, então o índice divergiria.
+  // Nesses casos `fbCards === col.items` e o índice de drop, o splice otimista e a `position`
+  // falam da MESMA lista. Auto-ordenação por urgência e ordem manual são mutuamente
+  // exclusivas: fora dessas condições o drag só move entre colunas (sem drop-line/position).
+  const podeReordenar =
+    !isCliente &&
+    !isTarefa &&
+    !isMelhoria &&
+    selected?.campo === "action_status" &&
+    !isFollowup &&
+    !ordUrg &&
+    !soUrgentes &&
+    !busca.trim() &&
+    !algumFiltro;
 
   return (
     <div>
@@ -2271,6 +2332,24 @@ export default function BoardPage() {
                       e.preventDefault();
                       e.dataTransfer.dropEffect = "move";
                       if (overColumn !== col.id) setOverColumn(col.id);
+                      // Reorder visual só quando a lista exibida é a coluna canônica
+                      // (ver `podeReordenar`): senão o índice do DOM divergiria de col.items.
+                      if (podeReordenar) {
+                        // `currentTarget` é a <section> estável; os cards estão no body.
+                        const cards = Array.from(
+                          e.currentTarget.querySelectorAll<HTMLElement>("[data-board-card]"),
+                        );
+                        const y = e.clientY;
+                        let idx = cards.length;
+                        for (let i = 0; i < cards.length; i++) {
+                          const r = cards[i].getBoundingClientRect();
+                          if (y < r.top + r.height / 2) {
+                            idx = i;
+                            break;
+                          }
+                        }
+                        if (overIndex !== idx) setOverIndex(idx);
+                      }
                     }
                   : undefined
               }
@@ -2279,6 +2358,7 @@ export default function BoardPage() {
                   ? (e) => {
                       if (!e.currentTarget.contains(e.relatedTarget as Node)) {
                         setOverColumn((cur) => (cur === col.id ? null : cur));
+                        setOverIndex(null);
                       }
                     }
                   : undefined
@@ -2368,24 +2448,36 @@ export default function BoardPage() {
                     />
                   ))
                 ) : (
-                  (fbCards ?? []).map(({ fb, extraCount }) => (
-                    <BoardCard
-                      key={fb.id}
-                      fb={fb}
-                      dragging={draggingId === fb.id}
-                      onDragStart={(f) => setDraggingId(f.id)}
-                      onDragEnd={() => {
-                        setDraggingId(null);
-                        setOverColumn(null);
-                      }}
-                      onChanged={() => {
-                        if (selected) void loadItems(selected.id);
-                      }}
-                      colunaPlanejado={colunaPlanejado}
-                      compact={isFollowup}
-                      extraCount={extraCount}
-                    />
-                  ))
+                  <>
+                    {(fbCards ?? []).map(({ fb, extraCount }, i) => (
+                      <Fragment key={fb.id}>
+                        {podeReordenar && overColumn === col.id && overIndex === i && (
+                          <div className="board-drop-line" aria-hidden />
+                        )}
+                        <BoardCard
+                          fb={fb}
+                          dragging={draggingId === fb.id}
+                          onDragStart={(f) => setDraggingId(f.id)}
+                          onDragEnd={() => {
+                            setDraggingId(null);
+                            setOverColumn(null);
+                            setOverIndex(null);
+                          }}
+                          onChanged={() => {
+                            if (selected) void loadItems(selected.id);
+                          }}
+                          colunaPlanejado={colunaPlanejado}
+                          compact={isFollowup}
+                          extraCount={extraCount}
+                        />
+                      </Fragment>
+                    ))}
+                    {podeReordenar &&
+                      overColumn === col.id &&
+                      overIndex === (fbCards?.length ?? 0) && (
+                        <div className="board-drop-line" aria-hidden />
+                      )}
+                  </>
                 )}
 
                 {(fbCards ? fbCards.length === 0 : col.count === 0) && !loading && (

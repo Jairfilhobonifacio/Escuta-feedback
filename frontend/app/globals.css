@@ -1502,6 +1502,12 @@ tbody tr:hover { background: var(--ink-700); }
 }
 
 .board-col-body { display: flex; flex-direction: column; gap: 10px; }
+/* Item C — guia de inserção do reorder: linha fina onde o card vai cair. */
+.board-drop-line {
+  height: 2px; margin: -3px 0; border-radius: 1px;
+  background: var(--indigo);
+  box-shadow: 0 0 0 1px var(--indigo-glow);
+}
 .board-col-empty {
   text-align: center; color: var(--text-ghost);
   font-size: 12.5px; padding: 18px 0; font-style: italic;

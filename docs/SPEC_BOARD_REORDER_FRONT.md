@@ -1,13 +1,41 @@
 # Spec do FRONT — Board reorder (Item C, parte 2/2)
 
-> **Backend pronto e testado** no commit `f3e962e` (`card_order` em JSONB + endpoint
-> `board-move` aceita `position`/`board_id` + `_ordena_coluna`; 6 testes em
-> `tests/test_board_reorder.py`). Falta SÓ o front (DnD) abaixo.
+> ## ✅ IMPLEMENTADO (branch `worktree-board-front-dnd`) — pendente SÓ QA visual do gesto
 >
-> ⚠️ **Exige QA visual** (5 pontos no fim). Implementar com a stack no ar
-> (`/escuta-stack`) e validar arrastando cards de verdade ANTES de qualquer deploy.
-> Decisão de produto já fixada no backend: cards SEM ordem manual entram por
-> URGÊNCIA no topo; os reordenados manualmente ficam abaixo.
+> O front (DnD) foi implementado, e o **backend foi re-arquitetado** durante a implementação
+> porque a spec original tinha premissas falhas que 2 rounds de review adversarial (21 + 8
+> agentes) expuseram. Estado atual:
+>
+> - **Backend:** `position` agora faz **snapshot da ordem visual COMPLETA** da coluna
+>   (`_ordem_visual_coluna` + `_snapshot_card_order`), não mais inserção só-entre-manuais — o
+>   GET devolve exatamente o que o front mostrou no drop (sem salto). Off-by-one unificado
+>   front↔backend (ajuste `-1` só intra-coluna). Ordem determinística (desempate por id).
+> - **Front:** reorder ativa só quando **`podeReordenar`** = board feedback `action_status`,
+>   modo "padrão" (`ordUrg` off), sem "só urgentes", fora do Follow-up e **sem nenhum filtro
+>   de servidor** — aí `fbCards === col.items` por construção, e índice/splice/position falam
+>   da MESMA lista. Fora disso, o drag só move entre colunas (sem drop-line/position).
+> - **Testes:** 10 em `tests/test_board_reorder.py` (off-by-one forward, "pro fim",
+>   snapshot ordem-total, no-op); suíte 738 verde; tsc strict 0.
+> - **Decisão de produto (a confirmar com o dono):** auto-ordenação por urgência e ordem
+>   manual são **modos mutuamente exclusivos** — para reordenar à mão, troca-se o seletor de
+>   "urgência" para "padrão". Reversível.
+>
+> ### ⚠️ Falta: QA VISUAL do gesto (com a stack no ar — `/escuta-stack`)
+> Validar arrastando cards de verdade os 5 pontos no fim deste doc. NÃO deployar antes.
+>
+> ### 🧾 Dívida conhecida (LOW, documentada — não bloqueia)
+> - **Órfãos em `board_card_order`** (#11/#2 do review): `action_status` muda por outras vias
+>   (admin/tasks/webhook) e deletes não limpam o id do mapa JSONB. `_ordena_coluna` ignora
+>   órfãos (não corrompe nada visível); é só crescimento de espaço no `settings`. Pré-existente.
+> - **Cross-coluna em coluna com >30 cards** (#4): o front vê o top-30 e o backend posiciona na
+>   lista completa; só desloca ~1 posição ao soltar abaixo do 30º card numa coluna gigante.
+>   A correção robusta de ambos seria âncora-por-id (`before_id`) em vez de índice absoluto.
+>
+> ---
+>
+> **Histórico (spec original, parcialmente superada pelas correções acima):**
+> Backend inicial no commit `f3e962e`. A spec abaixo descreve a 1ª versão do front; os
+> passos seguem válidos como mapa, mas a lógica final difere (ver correções acima).
 
 ---
 

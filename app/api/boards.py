@@ -854,8 +854,10 @@ async def _items_action_status(
     colunas_out: list[dict[str, Any]] = []
     for col in board["colunas"]:
         bucket = by_status.get(col["valor"], [])
-        # Sempre ordena por urgência primeiro (estável p/ os cards SEM ordem manual).
-        bucket.sort(key=lambda it: it["urgencia"], reverse=True)
+        # Urgência desc + desempate por id (determinístico): sem o id, empates de urgência
+        # ficavam na ordem ARBITRÁRIA do SELECT (sem ORDER BY) e variavam entre GETs, o que
+        # divergiria da ordem que o front exibe/snapshota no reorder.
+        bucket.sort(key=lambda it: (-it["urgencia"], str(it["id"])))
         ordenado = _ordena_coluna(bucket, card_order.get(col["valor"]))
         colunas_out.append(
             {
@@ -1549,22 +1551,48 @@ def _set_card_order(org: Organization, mapa: dict[str, list[str]]) -> None:
     org.settings = s
 
 
-def _aplicar_card_order(
-    org: Organization, col_valor: str, feedback_id: str, position: int
-) -> None:
-    """Insere `feedback_id` na posição `position` da coluna `col_valor` (idempotente).
+async def _ordem_visual_coluna(
+    session: AsyncSession, org: Organization, col_valor: str
+) -> list[str]:
+    """Ids da coluna `col_valor` na ORDEM VISUAL atual — a MESMA que o GET monta: urgência
+    desc com a ordem manual existente aplicada por cima (`_ordena_coluna`). COMPLETA (NÃO
+    trunca em BOARD_ITEMS_PER_COLUMN): o snapshot de reorder precisa de todos os cards, não
+    só o top-N exibido, senão os de baixo sumiriam da ordem ao reordenar."""
+    rows = (
+        await session.execute(
+            select(FeedbackItem, Contact)
+            .outerjoin(Contact, Contact.id == FeedbackItem.contact_id)
+            .where(
+                FeedbackItem.organization_id == org.id,
+                FeedbackItem.action_status == col_valor,
+            )
+        )
+    ).all()
+    now = datetime.now(timezone.utc)
+    bucket = [_feedback_out(f, c, now) for f, c in rows]
+    # Mesmo critério determinístico do GET (_items_action_status): urgência desc + id, p/ a
+    # ordem visual base do snapshot bater com a que o GET devolve ao recarregar.
+    bucket.sort(key=lambda it: (-it["urgencia"], str(it["id"])))
+    ordenado = _ordena_coluna(bucket, _card_order(org).get(col_valor))
+    return [str(it["id"]) for it in ordenado]
 
-    Remove-then-insert: tira o id de QUALQUER coluna onde estava (um card só pertence a
-    uma coluna) e reinsere na coluna destino, com a posição clampada em [0, len]. Mover
-    2x para a mesma posição produz exatamente o mesmo array. Marca o JSONB sujo."""
+
+def _snapshot_card_order(
+    org: Organization, col_valor: str, ordem_ids: list[str]
+) -> None:
+    """Persiste `ordem_ids` (ordem COMPLETA da coluna) como a ordem manual de `col_valor`.
+
+    Modelo "Trello de verdade": ao reordenar, a coluna inteira vira ordem manual com o card
+    na posição VISUAL exata — assim o GET devolve a MESMA ordem que o front mostrou no drop
+    (sem salto otimista→servidor). Feedbacks que chegarem DEPOIS não estão em `ordem_ids` e
+    voltam a entrar por urgência no topo (regra de produto preservada). Remove os ids de
+    qualquer OUTRA coluna (um card vive numa coluna só). Marca o JSONB sujo."""
+    alvo = set(ordem_ids)
     mapa = _card_order(org)
     for col in list(mapa.keys()):
-        if feedback_id in mapa[col]:
-            mapa[col] = [x for x in mapa[col] if x != feedback_id]
-    destino = mapa.get(col_valor, [])
-    pos = max(0, min(int(position), len(destino)))
-    destino.insert(pos, feedback_id)
-    mapa[col_valor] = destino
+        if col != col_valor:
+            mapa[col] = [x for x in mapa[col] if x not in alvo]
+    mapa[col_valor] = list(ordem_ids)
     _set_card_order(org, mapa)
 
 
@@ -1639,11 +1667,30 @@ async def board_move(
                 status_code=422,
                 detail=f"action_status inválido: '{valor}' (use {', '.join(ACTION_STATUSES)})",
             )
+        status_antigo = feedback.action_status  # antes de mover — define intra vs cross
         feedback.action_status = valor
         # Item C — reordenação manual DENTRO da coluna destino. Só quando o front manda
         # `position`; sem position = comportamento antigo (card entra por urgência).
+        # Snapshot da ordem visual COMPLETA com o card na posição pedida (ver
+        # _snapshot_card_order): o GET devolve exatamente o que o front mostrou no drop.
         if body.position is not None:
-            _aplicar_card_order(org, valor, str(feedback.id), body.position)
+            ids = await _ordem_visual_coluna(session, org, valor)
+            fid_str = str(feedback.id)
+            intra = status_antigo == valor  # reorder dentro da mesma coluna
+            # `position` é o índice na lista COM o card (convenção do front). INTRA: ao remover
+            # o card, o destino desliza -1 se vinha DEPOIS da posição atual (espelha o `finalAt`
+            # do splice otimista do front, sem off-by-one). CROSS: no front o card não estava
+            # nesta coluna, então `position` já é índice na lista-sem-o-card — sem ajuste.
+            # (O autoflush do action_status acima pode já tê-lo trazido para `ids`; por isso o
+            # `cur` só é medido quando intra, não pela mera presença em `ids`.)
+            cur = ids.index(fid_str) if (intra and fid_str in ids) else None
+            ids = [x for x in ids if x != fid_str]
+            pos = int(body.position)
+            if cur is not None and pos > cur:
+                pos -= 1
+            pos = max(0, min(pos, len(ids)))
+            ids.insert(pos, fid_str)
+            _snapshot_card_order(org, valor, ids)
     else:  # campo == "selo"
         if contact is None:
             raise HTTPException(
