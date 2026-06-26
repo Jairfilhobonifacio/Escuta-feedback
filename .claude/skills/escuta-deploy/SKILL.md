@@ -25,9 +25,14 @@ Confirme que as chaves novas (`APP_ENV`/`JWT_SECRET`/`ESCUTA_OPERATOR_*`/`CORS_A
 
 ## 3. Deploy API (Modal)
 ```bash
-cd ~/Documents/Projetos/escuta && export PYTHONUTF8=1 PYTHONIOENCODING=utf-8 && py scripts/_modal_tls.py deploy deploy_modal.py
+cd ~/Documents/Projetos/escuta && export PYTHONUTF8=1 PYTHONIOENCODING=utf-8 PYTHONPATH=. && py scripts/_modal_tls.py deploy deploy_modal.py
 ```
-⚠️ Às vezes o 1º deploy **não troca o container** (serve defaults antigos) — validar `/api/config` no Modal **direto**; 2º deploy resolve.
+🔴 **`PYTHONPATH=.` é OBRIGATÓRIO.** Sem ele, `add_local_python_source("app")` resolve um `app/` **STALE** (o `_modal_tls.py` mora em `scripts/`, então o `sys.path[0]` do processo de deploy é `scripts/`, não a raiz) → o Modal sobe **código ANTIGO sem erro nenhum** ("App deployed" 🎉 mentindo). Sintoma: rotas novas dão **404** (ex.: `/api/auth/login`).
+⚠️ **Sempre valide o que subiu** pelo `/openapi.json` (não confie no "App deployed"):
+```bash
+py -c "import truststore;truststore.inject_into_ssl();import httpx;p=set(httpx.get('https://jbonifaciomoreirafilho--escuta-api-fastapi-app.modal.run/openapi.json',timeout=60).json()['paths']);print('auth ok:', '/api/auth/login' in p,'| rotas:',len(p))"
+```
+Se faltar rota, `py scripts/_modal_tls.py app stop escuta-api` e re-deploy com `PYTHONPATH=.`.
 
 ## 4. Deploy painel (Vercel)
 ```bash

@@ -1,6 +1,6 @@
 # Spec do FRONT — Board reorder (Item C, parte 2/2)
 
-> ## ✅ IMPLEMENTADO (branch `worktree-board-front-dnd`) — pendente SÓ QA visual do gesto
+> ## ✅ IMPLEMENTADO E MERGEADO no `master` (`fad3e6c`) + DEPLOYADO (22/06) — pendente SÓ QA visual do gesto
 >
 > O front (DnD) foi implementado, e o **backend foi re-arquitetado** durante a implementação
 > porque a spec original tinha premissas falhas que 2 rounds de review adversarial (21 + 8
