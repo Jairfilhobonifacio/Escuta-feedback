@@ -27,6 +27,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, ValidationError
+
+from app.api._rate_limit import limiter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -263,6 +265,7 @@ async def _ingest_generic_event(
 
 
 @router.post("/events/bizzu", status_code=202)
+@limiter.limit("30/minute")
 async def bizzu_event(
     request: Request,
     session: AsyncSession = Depends(get_session),

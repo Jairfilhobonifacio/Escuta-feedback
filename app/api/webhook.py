@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api._rate_limit import limiter
 from app.api._security import require_waha_webhook_secret
 from app.api.campanha import SELO_RESPONDEU, aplicar_selo, remover_selo
 from app.config import settings
@@ -401,6 +402,7 @@ async def _reabrir_follow_ups_inbound(
 
 
 @router.post("/webhook/waha")
+@limiter.limit("60/minute")
 async def waha_webhook(
     request: Request,
     session: AsyncSession = Depends(get_session),

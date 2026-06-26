@@ -18,7 +18,12 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from app.api._rate_limit import limiter
 
 from app.api._security import require_panel_key
 from app.api.admin import router as admin_router
@@ -55,6 +60,11 @@ if "*" in _cors_origins:
 
 app = FastAPI(title="Escuta")
 
+# Rate limiting (slowapi): registra o limiter no app state, adiciona o middleware
+# de contagem e o handler que devolve 429 legível ao invés de 500.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 # Captura erro NÃO tratado e devolve um 500 JSON que AINDA atravessa o
 # CORSMiddleware na volta — assim o browser recebe `access-control-allow-origin`
@@ -90,6 +100,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiting middleware: registrado DEPOIS do CORS → fica mais INTERNO, logo
+# a resposta 429 do slowapi atravessa o CORS na volta (recebe os headers).
+app.add_middleware(SlowAPIMiddleware)
+
 # Auth do PAINEL em DUAS camadas, aplicada a TODOS os routers do painel:
 #   - require_panel_key (X-Panel-Key): "a chamada veio do nosso BFF" (trust server→server).
 #     Fail-OPEN em dev quando PANEL_API_KEY ausente; fail-CLOSED (503) em produção (C1).
@@ -122,5 +136,6 @@ app.include_router(integration_router, prefix="/api")
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
+@limiter.limit("30/minute")
+async def health(request: Request) -> dict[str, str]:
     return {"status": "ok"}

@@ -12,6 +12,10 @@ from __future__ import annotations
 import os
 import sys
 
+# Desabilita rate limiting (slowapi) na suíte de testes — precisa ser setado ANTES
+# de qualquer import de app (o Limiter lê a env no momento do import do módulo).
+os.environ.setdefault("RATE_LIMIT_ENABLED", "0")
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine

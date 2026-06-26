@@ -23,9 +23,10 @@ from datetime import datetime, timezone
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 
+from app.api._rate_limit import limiter
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,8 @@ def _login_configured() -> bool:
 
 
 @router.post("/auth/login")
-async def login(body: LoginIn) -> dict:
+@limiter.limit("5/minute")
+async def login(request: Request, body: LoginIn) -> dict:
     """Valida user+senha (bcrypt) e devolve o JWT. 401 mesma msg p/ user/senha errados;
     503 se o login não estiver configurado (faltam env). NUNCA loga a senha."""
     if not _login_configured():
