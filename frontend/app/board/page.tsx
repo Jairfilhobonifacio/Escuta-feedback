@@ -1469,11 +1469,16 @@ function UrgenciaControls({
   setOrdUrg,
   soUrgentes,
   setSoUrgentes,
+  mostrarManual = false,
 }: {
   ordUrg: boolean;
   setOrdUrg: (v: boolean) => void;
   soUrgentes: boolean;
   setSoUrgentes: (v: boolean) => void;
+  /** Board é reordenável (feedback action_status elegível): mostra o badge "ordem manual"
+      e o atalho "voltar para urgência" quando o board entrou em modo manual (`!ordUrg`),
+      seja pelo seletor ou pelo auto-switch no 1º drag (abordagem B). */
+  mostrarManual?: boolean;
 }) {
   return (
     <div className="board-urg-controls">
@@ -1495,6 +1500,21 @@ function UrgenciaControls({
       >
         <span aria-hidden>{"\u{1F525}"}</span> Só urgentes
       </button>
+      {mostrarManual && !ordUrg && (
+        <span className="board-ordem-manual" title="Os cards estão na ordem que você definiu arrastando. A ordenação por urgência está pausada.">
+          <span className="board-ordem-manual-badge">
+            <span aria-hidden>{"\u{2630}"}</span> ordem manual
+          </span>
+          <button
+            type="button"
+            className="board-ordem-manual-voltar"
+            onClick={() => setOrdUrg(true)}
+            title="Volta a ordenar os cards por urgência (descarta a ordem manual atual da tela)"
+          >
+            voltar para urgência
+          </button>
+        </span>
+      )}
     </div>
   );
 }
@@ -1975,16 +1995,47 @@ export default function BoardPage() {
   // Nesses casos `fbCards === col.items` e o índice de drop, o splice otimista e a `position`
   // falam da MESMA lista. Auto-ordenação por urgência e ordem manual são mutuamente
   // exclusivas: fora dessas condições o drag só move entre colunas (sem drop-line/position).
-  const podeReordenar =
+  // Elegibilidade de reorder manual EXCETO pelo modo de ordenação (`ordUrg`). Quando isto
+  // é true mas `ordUrg` ainda está ligado, o board é "reordenável em potencial": o 1º drag
+  // de um card auto-troca para o modo manual (abordagem B), em vez de exigir que o operador
+  // mude o seletor antes. Espelha `podeReordenar` sem a cláusula `!ordUrg`.
+  const podeReordenarSemUrg =
     !isCliente &&
     !isTarefa &&
     !isMelhoria &&
     selected?.campo === "action_status" &&
     !isFollowup &&
-    !ordUrg &&
     !soUrgentes &&
     !busca.trim() &&
     !algumFiltro;
+  const podeReordenar = podeReordenarSemUrg && !ordUrg;
+
+  // Auto-switch (abordagem B): no 1º drag em modo urgência, entra em modo manual SEM
+  // reembaralhar a tela. A ordem exibida "por urgência" é derivada por um comparador
+  // aplicado a `col.items`; em modo manual o comparador retorna 0 e a tela segue `col.items`
+  // cru. Por isso CONGELAMOS a ordem: reordenamos `col.items` pela MESMA chave de urgência
+  // (urgência DESC, depois data DESC) e gravamos de volta ANTES de desligar `ordUrg` — assim
+  // nada pula sob o cursor. Reordenar o estado (não ler o DOM) evita depender de timing de
+  // render e cobre exatamente a lista canônica que o reorder usa (sem dedupe/Follow-up aqui,
+  // pois `podeReordenarSemUrg` já exclui esses casos).
+  const freezeUrgencyOrder = useCallback(() => {
+    setItems((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        colunas: prev.colunas.map((col) => {
+          const ordenados = (col.items as Feedback[]).slice().sort((a, b) => {
+            if (b.urgencia !== a.urgencia) return b.urgencia - a.urgencia;
+            const ta = new Date(a.occurred_em ?? a.created_em ?? 0).getTime();
+            const tb = new Date(b.occurred_em ?? b.created_em ?? 0).getTime();
+            return tb - ta;
+          });
+          return { ...col, items: ordenados };
+        }),
+      };
+    });
+    setOrdUrg(false);
+  }, []);
 
   return (
     <div>
@@ -2156,6 +2207,7 @@ export default function BoardPage() {
                 setOrdUrg={setOrdUrg}
                 soUrgentes={soUrgentes}
                 setSoUrgentes={setSoUrgentes}
+                mostrarManual={podeReordenarSemUrg}
               />
             </>
           )}
@@ -2457,7 +2509,12 @@ export default function BoardPage() {
                         <BoardCard
                           fb={fb}
                           dragging={draggingId === fb.id}
-                          onDragStart={(f) => setDraggingId(f.id)}
+                          onDragStart={(f) => {
+                            setDraggingId(f.id);
+                            // Abordagem B: 1º drag em modo urgência num board reordenável
+                            // congela a ordem visual e entra em modo manual.
+                            if (podeReordenarSemUrg && ordUrg) freezeUrgencyOrder();
+                          }}
                           onDragEnd={() => {
                             setDraggingId(null);
                             setOverColumn(null);

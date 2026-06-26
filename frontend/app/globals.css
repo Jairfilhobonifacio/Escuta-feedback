@@ -3296,6 +3296,28 @@ tbody tr:hover td { color: var(--text); }
   background: color-mix(in srgb, var(--detractor) 12%, transparent);
 }
 
+/* Indicador "ordem manual" (abordagem B): aparece quando o board de feedback elegível
+   entra em modo manual (pelo seletor ou pelo auto-switch no 1º drag). O badge usa o
+   mesmo --indigo da drop-line para amarrar visualmente "isto é reordenável à mão". */
+.board-ordem-manual { display: inline-flex; align-items: center; gap: 6px; }
+.board-ordem-manual-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 9px; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600; letter-spacing: .2px;
+  color: var(--indigo);
+  border: 1px solid color-mix(in srgb, var(--indigo) 45%, transparent);
+  background: color-mix(in srgb, var(--indigo) 12%, transparent);
+}
+.board-ordem-manual-voltar {
+  padding: 5px 9px; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 500; cursor: pointer;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--charcoal-2);
+  transition: border-color .12s ease, color .12s ease;
+}
+.board-ordem-manual-voltar:hover { border-color: var(--indigo); color: var(--indigo); }
+
 /* Seletor "Ordenar" na barra da tela Feedbacks. */
 .fb-sort { display: inline-flex; align-items: center; gap: 8px; }
 .fb-sort-label { font-size: 12.5px; color: var(--text-faint); }
