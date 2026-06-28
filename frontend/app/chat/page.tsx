@@ -123,6 +123,31 @@ export default function ChatPage() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [thread]);
 
+  // Chat ao vivo: re-busca status + conversas + thread aberta a cada 12s, SEM piscar os
+  // loadings (refresh silencioso — ignora blip transitório). Pausa com a aba oculta.
+  useEffect(() => {
+    const REFRESH_MS = 12_000;
+    const tick = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      wa.status().then(setStatus).catch(() => {});
+      try {
+        const r = await wa.conversations(search.trim() || undefined, so1a1);
+        setConvs(r.conversations);
+      } catch {
+        /* silencioso */
+      }
+      if (selectedId) {
+        try {
+          setThread(await wa.thread(selectedId));
+        } catch {
+          /* silencioso */
+        }
+      }
+    };
+    const id = setInterval(tick, REFRESH_MS);
+    return () => clearInterval(id);
+  }, [selectedId, search, so1a1]);
+
   const conectado = !!status?.conectado;
   const isGrupo = !!thread?.contact.is_grupo;
   const alcancavel = !!thread?.contact.alcancavel;

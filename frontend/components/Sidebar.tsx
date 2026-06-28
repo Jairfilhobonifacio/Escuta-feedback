@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import {
   MessageSquare,
   MessageCircle,
@@ -16,13 +16,13 @@ import {
   Radar,
   LogOut,
 } from "lucide-react";
-import { auth } from "@/lib/api";
+import { auth, whatsapp as wa } from "@/lib/api";
 
 /* Ícones da família Lucide (traço, currentColor): herdam a cor do item da nav
    (dim -> text no hover; gold no item de destaque). Coesos com o tema claro.
    stroke 1.75 acompanha a linguagem editorial do painel. */
 type IconType = ComponentType<{ size?: number; strokeWidth?: number; "aria-hidden"?: boolean }>;
-type NavItem = { href: string; label: string; icon: IconType; feature?: boolean };
+type NavItem = { href: string; label: string; icon: IconType; feature?: boolean; statusDot?: boolean };
 
 /* Navegação ENXUTA, organizada pelo FLUXO real da operação manual (decisão do dono:
    simplicidade — "bato o olho e entendo"):
@@ -60,11 +60,56 @@ const groups: { label: string; items: NavItem[] }[] = [
   {
     label: "Config",
     items: [
-      { href: "/conexao", label: "Conexão", icon: Smartphone },
+      { href: "/conexao", label: "Conexão", icon: Smartphone, statusDot: true },
       { href: "/config", label: "Configurações", icon: Settings },
     ],
   },
 ];
+
+/* Indicador GLOBAL da conexão do WhatsApp: um ponto no item "Conexão", visível em todas
+   as telas. Verde=conectado, vermelho=desconectado, cinza=verificando. Poll leve de 30s,
+   pausa com a aba oculta — sem peso. Fonte: o MESMO `wa.status()` da tela de Conexão. */
+function WaDot() {
+  const [conectado, setConectado] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const tick = () =>
+      wa
+        .status()
+        .then((s) => alive && setConectado(!!s?.conectado))
+        .catch(() => alive && setConectado(null));
+    tick();
+    const id = setInterval(() => {
+      if (typeof document === "undefined" || !document.hidden) tick();
+    }, 30_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+  const cor = conectado == null ? "var(--text-ghost, #9aa0aa)" : conectado ? "#22c55e" : "#ef4444";
+  const titulo =
+    conectado == null
+      ? "WhatsApp: verificando…"
+      : conectado
+        ? "WhatsApp conectado"
+        : "WhatsApp desconectado — clique para reconectar";
+  return (
+    <span
+      title={titulo}
+      aria-label={titulo}
+      style={{
+        marginLeft: "auto",
+        width: 8,
+        height: 8,
+        borderRadius: 999,
+        background: cor,
+        flex: "0 0 auto",
+        boxShadow: conectado ? "0 0 0 3px rgba(34,197,94,.15)" : undefined,
+      }}
+    />
+  );
+}
 
 export default function Sidebar() {
   const path = usePathname();
@@ -119,6 +164,7 @@ export default function Sidebar() {
                     <Icon size={18} strokeWidth={1.75} aria-hidden />
                   </span>
                   {it.label}
+                  {it.statusDot && <WaDot />}
                 </Link>
               );
             })}
