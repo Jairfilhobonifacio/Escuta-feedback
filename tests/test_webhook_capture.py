@@ -284,3 +284,21 @@ async def test_captura_churn_por_subscription_state_ganha_respondeu(client, org,
     assert "respondeu" in (c.profile_data.get("selos") or [])
     log = c.profile_data.get("selos_log") or []
     assert any(e["selo"] == "respondeu" and e["origem"] == "inbound" for e in log)
+
+
+@pytest.mark.asyncio
+async def test_session_status_e_tratado(client):
+    """session.status agora é TRATADO (antes caía em 'ignored'). SCAN_QR_CODE só loga —
+    não dispara restart (que precisaria de QR humano), então não toca rede."""
+    r = await client.post(
+        "/api/webhook/waha",
+        json={
+            "event": "session.status",
+            "session": "default",
+            "payload": {"status": "SCAN_QR_CODE"},
+        },
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["status"] == "session_status"
+    assert data["session_status"] == "SCAN_QR_CODE"

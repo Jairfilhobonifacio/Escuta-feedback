@@ -421,6 +421,24 @@ async def waha_webhook(
         logger.warning("WAHA webhook: corpo inválido (não-JSON)")
         return {"status": "ignored"}
 
+    # Evento de STATUS DA SESSÃO (session.status): o WAHA avisa quando a sessão muda de
+    # estado (cai p/ FAILED/STOPPED, pede QR, etc.). Antes era descartado (só message* era
+    # tratado). Agora: loga e tenta AUTO-CURAR (restart) quando cai em FAILED/STOPPED —
+    # best-effort, nunca derruba o webhook. SCAN_QR_CODE precisa de QR humano (só loga).
+    if isinstance(raw, dict) and raw.get("event") == "session.status":
+        _p = raw.get("payload") if isinstance(raw.get("payload"), dict) else {}
+        _sess = str(raw.get("session") or settings.waha_session)
+        _novo = str(_p.get("status") or "")
+        logger.warning("WAHA session.status: sessão=%s status=%s", _sess, _novo)
+        if _novo in ("FAILED", "STOPPED"):
+            try:
+                _waha = WAHAService(settings.waha_base_url, settings.waha_api_key, _sess)
+                await _waha.restart_session(_sess)
+                logger.warning("WAHA session.status: restart automático disparado (sessão=%s)", _sess)
+            except Exception:  # noqa: BLE001 — auto-cura é best-effort; nunca derruba o webhook.
+                logger.warning("WAHA session.status: restart automático falhou", exc_info=True)
+        return {"status": "session_status", "session_status": _novo}
+
     inbound = _extract_inbound(raw)
     if inbound is None:
         if settings.self_chat_test:
