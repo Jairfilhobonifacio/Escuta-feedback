@@ -1791,6 +1791,47 @@ export const config = {
   update: (body: ConfigUpdate) => api.put<ConfigResponse>("/api/config", body),
 };
 
+// --- Central do Agente (liga/desliga as features de IA) ---------------------
+// O dono governa o que o agente faz por toggles. Cada feature traz seu `grupo`
+// (a UI agrupa em seções) e um `locked`: quando o env-piso da feature está OFF,
+// o painel NÃO pode ligá-la — só o administrador (via variável de ambiente).
+
+/** Uma feature do agente de IA, com seu estado atual. `grupo` define a seção na
+    UI; `locked=true` = bloqueada pelo env-piso (o painel não consegue ligar). */
+export interface AgentFeature {
+  key: string;
+  label: string;
+  /** Seção da UI (ex.: "Atendimento automático", "Inteligência", "Organização"). */
+  grupo: string;
+  /** Microcópia que explica o que a feature faz. */
+  descricao: string;
+  enabled: boolean;
+  /** Env-piso OFF → o painel não pode ligar (switch desabilitado + selo). */
+  locked: boolean;
+}
+
+/** Resposta de GET /api/agent-config — todas as features com seu estado. */
+export interface AgentConfigResponse {
+  features: AgentFeature[];
+}
+
+/** Resposta de PUT /api/agent-config — estado EFETIVO da feature após a troca
+    (pode vir `enabled:false`+`locked:true` se o env-piso barrou o "ligar"). */
+export interface AgentFeatureState {
+  key: string;
+  enabled: boolean;
+  locked: boolean;
+}
+
+/** Helpers tipados da CENTRAL DO AGENTE (toggles das features de IA). */
+export const agentConfig = {
+  /** Lista as features e o estado de cada uma (a UI agrupa por `grupo`). */
+  get: () => api.get<AgentConfigResponse>("/api/agent-config"),
+  /** Liga/desliga UMA feature. Retorna o estado efetivo resultante. */
+  set: (key: string, enabled: boolean) =>
+    api.put<AgentFeatureState>("/api/agent-config", { key, enabled }),
+};
+
 // --- Auth do OPERADOR (login por cookie httpOnly via BFF) -------------------
 // O JWT nunca chega ao JS: o BFF (`app/api/[...path]/route.ts`) grava/lê o
 // cookie `escuta_session` (httpOnly). Aqui só falamos os contratos públicos.

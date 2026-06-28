@@ -13,6 +13,7 @@ import {
   ClipboardList,
   Smartphone,
   Settings,
+  Bot,
   Radar,
   LogOut,
 } from "lucide-react";
@@ -61,6 +62,7 @@ const groups: { label: string; items: NavItem[] }[] = [
     label: "Config",
     items: [
       { href: "/conexao", label: "Conexão", icon: Smartphone, statusDot: true },
+      { href: "/agente", label: "Agente", icon: Bot },
       { href: "/config", label: "Configurações", icon: Settings },
     ],
   },
