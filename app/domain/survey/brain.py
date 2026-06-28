@@ -18,10 +18,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from app.config import settings
+from app.domain.features import feature_enabled
 from app.services.llm import GroqLLM
 
 if TYPE_CHECKING:  # evita ciclo de import em runtime; só para a anotação de tipo.
     from app.domain.feedback.correction_loop import CorrectionExample
+    from app.models.core import Organization
 
 logger = logging.getLogger(__name__)
 
@@ -47,17 +49,6 @@ def _no_kb_fallback_enabled() -> bool:
     """Lê a flag NO_KB_FALLBACK em call-time (settings é frozen; isto é o ponto de
     indireção que os testes monkeypatcham para alternar o comportamento honesto)."""
     return settings.no_kb_fallback_enabled
-
-
-def _sentiment_pt_v2_enabled() -> bool:
-    """Lê SENTIMENT_PT_V2_ENABLED em call-time (settings frozen → ponto de indireção
-    monkeypatchável). OFF = prompt + gravação de sentimento atuais byte-a-byte."""
-    return settings.sentiment_pt_v2_enabled
-
-
-def _correction_loop_enabled() -> bool:
-    """Lê CORRECTION_LOOP_ENABLED em call-time. OFF = classify ignora `examples`."""
-    return settings.correction_loop_enabled
 
 
 # Defesa-em-profundidade anti-prompt-injection: conteúdo NÃO-confiável (texto do cliente,
@@ -388,19 +379,24 @@ class SurveyBrain:
         survey_name: str,
         *,
         examples: Optional[list["CorrectionExample"]] = None,
+        org: "Organization | None" = None,
     ) -> Optional[FeedbackTags]:
         """Classifica o motivo textual ao fechar uma response.
 
-        Modo v2 (SENTIMENT_PT_V2_ENABLED ON): usa o prompt PT-BR reforçado + few-shot e
-        lê `confidence` do JSON ("alta"|"media"|"baixa"; default "media"). Modo legado
-        (flag OFF): prompt e parsing IDÊNTICOS ao de hoje → `confianca="alta"` sempre.
+        As 2 flags abaixo respeitam o painel POR-ORG (Central do Agente) via
+        `feature_enabled(org, ...)`: o override gravado em `Organization.settings`
+        vence; sem `org` (default None) cai no ENV — retro-compatível.
 
-        `examples` (Feature 2, CORRECTION_LOOP_ENABLED ON): pares "texto -> tags" de
-        edições humanas, injetados como CALIBRAÇÃO no `user` serializados em JSON (o
-        texto do cliente vira string JSON escapada — não consegue forjar separador nem
-        fronteira), nunca como instrução. Vazio/flag OFF = sem exemplos.
+        Modo v2 (`sentiment_pt_v2_enabled` ON para a org): usa o prompt PT-BR reforçado
+        + few-shot e lê `confidence` do JSON ("alta"|"media"|"baixa"; default "media").
+        Modo legado (OFF): prompt e parsing IDÊNTICOS ao de hoje → `confianca="alta"`.
+
+        `examples` (Feature 2, `correction_loop_enabled` ON para a org): pares "texto ->
+        tags" de edições humanas, injetados como CALIBRAÇÃO no `user` serializados em
+        JSON (o texto do cliente vira string JSON escapada — não consegue forjar
+        separador nem fronteira), nunca como instrução. Vazio/flag OFF = sem exemplos.
         """
-        v2 = _sentiment_pt_v2_enabled()
+        v2 = feature_enabled(org, "sentiment_pt_v2_enabled")
         system = _CLASSIFY_SYSTEM_V2 if v2 else _CLASSIFY_SYSTEM
         user = (
             f"Pesquisa: {survey_name!r}\n"
@@ -412,7 +408,7 @@ class SurveyBrain:
         # o texto do cliente poderia FORJAR), serializamos os exemplos como JSON — o `texto`
         # vira string JSON escapada e não consegue criar um par de calibração falso nem furar
         # a fronteira do bloco.
-        if examples and _correction_loop_enabled():
+        if examples and feature_enabled(org, "correction_loop_enabled"):
             exemplos_json = json.dumps(
                 [
                     {"texto": e.texto, "sentiment": e.sentiment, "themes": e.themes}

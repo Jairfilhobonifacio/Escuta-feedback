@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.domain.survey.parsers import nps_bucket
+from app.models.core import Organization
 from app.models.feedback import FeedbackItem
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,10 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
 
 
-async def _classify(item: FeedbackItem) -> None:
-    """Sentimento/tema/urgência via LLM — best-effort, nunca lança."""
+async def _classify(item: FeedbackItem, org: Organization | None = None) -> None:
+    """Sentimento/tema/urgência via LLM — best-effort, nunca lança.
+
+    `org` faz as flags de IA respeitarem o painel por-org (None ⇒ ENV)."""
     if not (settings.llm_enabled and settings.groq_api_key and item.text):
         return
     try:
@@ -45,7 +48,9 @@ async def _classify(item: FeedbackItem) -> None:
         from app.services.llm import GroqLLM
 
         brain = SurveyBrain(GroqLLM(settings.groq_api_key, settings.groq_model))
-        tags = await brain.classify_feedback(item.text, item.score, f"{item.source}:{item.type}")
+        tags = await brain.classify_feedback(
+            item.text, item.score, f"{item.source}:{item.type}", org=org
+        )
     except Exception:  # noqa: BLE001 — IA é enriquecedor, nunca ponto de falha.
         logger.warning("feedback classify falhou — seguindo sem tags", exc_info=True)
         return
@@ -53,7 +58,7 @@ async def _classify(item: FeedbackItem) -> None:
         return
     from app.domain.feedback.enrich import apply_tags
 
-    apply_tags(item, tags, model=settings.groq_model)
+    apply_tags(item, tags, model=settings.groq_model, org=org)
 
 
 async def ingest_feedback_item(
@@ -86,6 +91,11 @@ async def ingest_feedback_item(
     pre_themes = spec.get("themes")
     pre_ai_meta = spec.get("ai_meta")
 
+    # Org p/ o gate por-org das flags de IA (Central do Agente). Só busca quando vamos
+    # classificar; None ⇒ classify cai no default por ENV (retro-compat). session.get
+    # usa o identity-map, então é barato mesmo quando o caller já tem a org carregada.
+    org = await session.get(Organization, organization_id) if classify else None
+
     existing = None
     if external_id:
         existing = (
@@ -116,7 +126,7 @@ async def ingest_feedback_item(
         if pre_ai_meta is not None:
             existing.ai_meta = {**(existing.ai_meta or {}), **pre_ai_meta}
         if classify and text_changed:
-            await _classify(existing)
+            await _classify(existing, org)
         await session.flush()
         return existing
 
@@ -138,6 +148,6 @@ async def ingest_feedback_item(
     session.add(item)
     await session.flush()
     if classify:
-        await _classify(item)
+        await _classify(item, org)
         await session.flush()
     return item

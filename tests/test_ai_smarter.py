@@ -519,3 +519,98 @@ async def test_chat_suggest_rascunho_quando_ligado(client, session, reset_flags)
     assert data["rascunho"]
     assert data["fonte"] == "ai"
     app.dependency_overrides.pop(get_brain, None)
+
+
+# === GATE POR-ORG (Fase 2): o painel manda nas 2 flags via feature_enabled ======
+# `classify_feedback(org=...)` e `apply_tags(org=...)` leem o override gravado em
+# Organization.settings["features"]; org=None segue o ENV (retro-compat = os 9 testes
+# acima). Org só-em-memória (sem DB): feature_enabled lê apenas `.settings`.
+
+
+def _org_features(**features) -> Organization:
+    return Organization(slug="o", name="O", settings={"features": features})
+
+
+@pytest.mark.asyncio
+async def test_classify_v2_por_org_liga_com_env_off(reset_flags):
+    """Painel LIGA o v2 para a org mesmo com o ENV OFF → usa o caminho v2 (incerto)."""
+    _set_flag("sentiment_pt_v2_enabled", False)  # env global desligado
+    org = _org_features(sentiment_pt_v2_enabled=True)
+    llm = FakeJsonLLM({"sentiment": "negativo", "themes": ["x"], "urgency": "media",
+                       "confidence": "baixa"})
+    tags = await SurveyBrain(llm).classify_feedback("meh", None, "NPS", org=org)
+    assert "confidence" in llm.systems[0]  # prompt v2 (override por-org venceu o env OFF)
+    assert tags.confianca == "baixa"
+    assert tags.incerto is True
+
+
+@pytest.mark.asyncio
+async def test_classify_v2_por_org_desliga_com_env_on(reset_flags):
+    """Painel DESLIGA o v2 para a org mesmo com o ENV ON → caminho legado (alta)."""
+    _set_flag("sentiment_pt_v2_enabled", True)  # env global ligado
+    org = _org_features(sentiment_pt_v2_enabled=False)
+    llm = FakeJsonLLM({"sentiment": "neutro", "themes": ["x"], "urgency": "baixa",
+                       "confidence": "baixa"})
+    tags = await SurveyBrain(llm).classify_feedback("podia ser pior", 7, "NPS", org=org)
+    assert "confidence" not in llm.systems[0]  # prompt legado
+    assert tags.confianca == "alta"
+    assert tags.incerto is False
+
+
+@pytest.mark.asyncio
+async def test_classify_org_none_segue_o_env(reset_flags):
+    """Retro-compat: sem org, o gate é o ENV (comportamento atual)."""
+    _set_flag("sentiment_pt_v2_enabled", True)
+    llm = FakeJsonLLM({"sentiment": "neutro", "themes": ["x"], "urgency": "baixa",
+                       "confidence": "media"})
+    tags = await SurveyBrain(llm).classify_feedback("x", 7, "NPS")  # org default None
+    assert "confidence" in llm.systems[0]
+    assert tags.confianca == "media"
+
+
+@pytest.mark.asyncio
+async def test_correction_loop_por_org_liga_com_env_off(reset_flags):
+    """Few-shot injetado quando o painel LIGA correction_loop para a org (env OFF)."""
+    _set_flag("correction_loop_enabled", False)
+    from app.domain.feedback.correction_loop import CorrectionExample
+
+    org = _org_features(correction_loop_enabled=True)
+    llm = FakeJsonLLM({"sentiment": "negativo", "themes": ["x"], "urgency": "media"})
+    ex = [CorrectionExample(texto="o app trava", sentiment="negativo", themes=["estabilidade"])]
+    await SurveyBrain(llm).classify_feedback("trava", 2, "NPS", examples=ex, org=org)
+    assert "CORREÇÕES FEITAS POR HUMANOS" in llm.users[0]
+
+
+@pytest.mark.asyncio
+async def test_correction_loop_por_org_desliga_com_env_on(reset_flags):
+    """Sem few-shot quando o painel DESLIGA correction_loop para a org (env ON)."""
+    _set_flag("correction_loop_enabled", True)
+    from app.domain.feedback.correction_loop import CorrectionExample
+
+    org = _org_features(correction_loop_enabled=False)
+    llm = FakeJsonLLM({"sentiment": "negativo", "themes": ["x"], "urgency": "media"})
+    ex = [CorrectionExample(texto="o app trava", sentiment="negativo", themes=["estabilidade"])]
+    await SurveyBrain(llm).classify_feedback("trava", 2, "NPS", examples=ex, org=org)
+    assert "CORREÇÕES FEITAS POR HUMANOS" not in llm.users[0]
+
+
+def test_apply_tags_por_org_liga_segura_sentiment(reset_flags):
+    """apply_tags com override v2=ON na org (env OFF) segura o sentiment no incerto."""
+    _set_flag("sentiment_pt_v2_enabled", False)
+    org = _org_features(sentiment_pt_v2_enabled=True)
+    item = FeedbackItem(organization_id=uuid.uuid4(), source="s", type="nps", text="meh")
+    item.sentiment = None
+    tags = FeedbackTags(sentiment="negativo", themes=["x"], urgency="baixa", confianca="baixa")
+    apply_tags(item, tags, model="m", org=org)
+    assert item.sentiment is None
+    assert item.ai_meta["sentiment_sugerido"] == "negativo"
+
+
+def test_apply_tags_por_org_desliga_grava_com_env_on(reset_flags):
+    """apply_tags com override v2=OFF na org (env ON) grava normal (legado)."""
+    _set_flag("sentiment_pt_v2_enabled", True)
+    org = _org_features(sentiment_pt_v2_enabled=False)
+    item = FeedbackItem(organization_id=uuid.uuid4(), source="s", type="nps", text="meh")
+    tags = FeedbackTags(sentiment="neutro", themes=[], urgency="baixa", confianca="baixa")
+    apply_tags(item, tags, model="m", org=org)
+    assert item.sentiment == "neutro"
