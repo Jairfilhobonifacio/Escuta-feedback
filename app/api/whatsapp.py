@@ -22,6 +22,7 @@ e resolve o WAHAService a partir de settings (mesmo padrão do webhook.py). O ro
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -187,6 +188,13 @@ class WhatsAppImportIn(BaseModel):
 
     confirm: bool = False
     limit: int = Field(default=100, ge=1, le=500)
+
+
+class WhatsAppBatchImportIn(BaseModel):
+    """Importação em lote do histórico WhatsApp para todos os contatos da org."""
+
+    limit_per_contact: int = Field(default=200, ge=1, le=500)
+    dry_run: bool = False
 
 
 class HandoffIn(BaseModel):
@@ -519,6 +527,328 @@ async def whatsapp_import_history(
         "already_imported": len(parsed) - len(new_items),
         "messages": preview_messages,
     }
+
+
+# --- BATCH: import + análise IA em lote -------------------------------------
+
+
+async def _build_waha_phone_map(
+    waha: WAHAService, chats: list[dict[str, Any]]
+) -> dict[str, str]:
+    """Resolve lista de chats WAHA → {phone_digits: chat_id}.
+
+    LIDs (@lid) são resolvidos em paralelo (semáforo 10). Grupos (@g.us) ignorados.
+    Chamado uma vez por batch-import para evitar N chamadas a get_chats().
+    """
+    result: dict[str, str] = {}
+    lid_chats: list[str] = []
+
+    for chat in chats:
+        chat_id = _chat_id(chat)
+        if not chat_id or chat_id.endswith("@g.us"):
+            continue
+        if chat_id.endswith("@c.us"):
+            result[chat_id.split("@", 1)[0]] = chat_id
+        elif chat_id.endswith("@lid"):
+            lid_chats.append(chat_id)
+
+    if lid_chats:
+        sem = asyncio.Semaphore(10)
+
+        async def _resolve(lid: str) -> None:
+            async with sem:
+                phone = await waha.resolve_lid(lid, settings.waha_session)
+                if phone:
+                    result[phone] = lid
+
+        await asyncio.gather(*[_resolve(lid) for lid in lid_chats])
+
+    return result
+
+
+def _match_contact_in_map(
+    contact: Contact, phone_map: dict[str, str]
+) -> tuple[str | None, str | None]:
+    """Encontra (chat_id, phone_digits) usando o mapa pré-resolvido (sem WAHA)."""
+    phone = contact.phone or ""
+    variants = set(phone_variants(phone) or [])
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if digits:
+        variants.add(digits)
+    for v in variants:
+        if v in phone_map:
+            return phone_map[v], v
+    return None, None
+
+
+@router.post("/whatsapp/batch-import")
+async def whatsapp_batch_import(
+    body: WhatsAppBatchImportIn,
+    session: AsyncSession = Depends(get_session),
+    waha: WAHAService = Depends(get_waha),
+) -> dict[str, Any]:
+    """Importa histórico WhatsApp de TODOS os contatos da org de uma vez.
+
+    Fluxo:
+    1. Carrega todos os chats do WAHA (1 chamada) + resolve @lid em paralelo.
+    2. Cruza cada contato (com telefone) contra o mapa.
+    3. Para os que bateram: busca mensagens em paralelo (semáforo 8).
+    4. Grava mensagens novas (dedup por channel_msg_id).
+
+    dry_run=true → retorna o que SERIA importado sem gravar.
+    """
+    org = await _get_org(session)
+
+    if not await waha.is_connected(settings.waha_session):
+        raise HTTPException(status_code=409, detail="WAHA não conectado — ligue a sessão e tente de novo")
+
+    all_chats = await waha.get_chats(settings.waha_session, limit=1000)
+    phone_map = await _build_waha_phone_map(waha, all_chats)
+
+    contacts = (
+        await session.execute(
+            select(Contact).where(
+                Contact.organization_id == org.id,
+                Contact.phone.isnot(None),
+                Contact.phone != "",
+            )
+        )
+    ).scalars().all()
+
+    matched: list[tuple[Contact, str, str]] = []
+    not_found_contacts: list[Contact] = []
+    for contact in contacts:
+        chat_id, phone_digits = _match_contact_in_map(contact, phone_map)
+        if chat_id:
+            matched.append((contact, chat_id, phone_digits or ""))
+        else:
+            not_found_contacts.append(contact)
+
+    # Busca mensagens em paralelo (só WAHA, sem DB)
+    fetch_sem = asyncio.Semaphore(8)
+
+    async def _fetch(chat_id: str) -> list[dict[str, Any]]:
+        async with fetch_sem:
+            return await waha.get_chat_messages(
+                chat_id, settings.waha_session,
+                limit=body.limit_per_contact,
+                download_media=False,
+            )
+
+    raw_results = await asyncio.gather(
+        *[_fetch(cid) for _, cid, _ in matched],
+        return_exceptions=True,
+    )
+
+    # Dedup + gravar (sequential — sessão única)
+    details: list[dict[str, Any]] = []
+    imported_total = 0
+    errors = 0
+
+    for (contact, chat_id, phone_digits), raw in zip(matched, raw_results):
+        if isinstance(raw, Exception):
+            errors += 1
+            details.append({
+                "contact_id": str(contact.id),
+                "name": contact.name,
+                "phone": contact.phone,
+                "status": "error",
+                "found": 0,
+                "new": 0,
+            })
+            continue
+
+        parsed: list[dict[str, Any]] = []
+        channel_ids: list[str] = []
+        for msg in raw:
+            channel_id = _message_id(msg)
+            parsed.append({
+                "channel_msg_id": channel_id,
+                "direction": "outbound" if bool(msg.get("fromMe")) else "inbound",
+                "body": _message_body(msg),
+                "at": _message_created_at(msg),
+                "from_me": bool(msg.get("fromMe")),
+            })
+            if channel_id:
+                channel_ids.append(channel_id)
+
+        existing: set[str] = set()
+        if channel_ids:
+            existing = set(
+                (
+                    await session.execute(
+                        select(Message.channel_msg_id).where(
+                            Message.organization_id == org.id,
+                            Message.channel_msg_id.in_(channel_ids),
+                        )
+                    )
+                ).scalars().all()
+            )
+
+        new_items = [m for m in parsed if m["channel_msg_id"] and m["channel_msg_id"] not in existing]
+
+        if not body.dry_run:
+            for m in new_items:
+                session.add(
+                    Message(
+                        organization_id=org.id,
+                        contact_id=contact.id,
+                        direction=m["direction"],
+                        body=m["body"],
+                        channel_msg_id=m["channel_msg_id"],
+                        msg_metadata={
+                            "source_event": "waha_history_import",
+                            "chat_id": chat_id,
+                            "resolved_phone": phone_digits,
+                            "from_me": m["from_me"],
+                        },
+                        created_at=m["at"] or datetime.now(timezone.utc),
+                    )
+                )
+            if new_items:
+                await session.flush()
+
+        imported_total += len(new_items)
+        details.append({
+            "contact_id": str(contact.id),
+            "name": contact.name,
+            "phone": contact.phone,
+            "chat_id": chat_id,
+            "status": "imported" if (new_items and not body.dry_run) else ("preview" if new_items else "already_done"),
+            "found": len(parsed),
+            "new": len(new_items),
+        })
+
+    for contact in not_found_contacts:
+        details.append({
+            "contact_id": str(contact.id),
+            "name": contact.name,
+            "phone": contact.phone,
+            "status": "not_found",
+            "found": 0,
+            "new": 0,
+        })
+
+    if not body.dry_run and imported_total > 0:
+        await session.commit()
+
+    return {
+        "dry_run": body.dry_run,
+        "total_contacts": len(contacts),
+        "matched": len(matched),
+        "not_found": len(not_found_contacts),
+        "imported": imported_total,
+        "errors": errors,
+        "details": details,
+    }
+
+
+@router.post("/whatsapp/batch-analyze")
+async def whatsapp_batch_analyze(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Analisa conversas WhatsApp importadas e cria/atualiza FeedbackItems com IA.
+
+    Para cada contato com mensagens inbound no transcript:
+    - Agrega texto das últimas 50 mensagens recebidas (palavras do cliente).
+    - Classifica via Groq (sentimento/temas/urgência).
+    - Cria ou atualiza um FeedbackItem type='whatsapp_history' (dedup por external_id).
+
+    Idempotente: re-executar atualiza o FeedbackItem existente com texto mais recente.
+    """
+    from app.domain.feedback.ingest import ingest_feedback_item
+    from app.models.feedback import FeedbackItem as FI
+
+    org = await _get_org(session)
+
+    contact_ids: list[Any] = (
+        await session.execute(
+            select(Message.contact_id)
+            .where(
+                Message.organization_id == org.id,
+                Message.direction == "inbound",
+                Message.contact_id.isnot(None),
+            )
+            .distinct()
+        )
+    ).scalars().all()
+
+    if not contact_ids:
+        return {"analyzed": 0, "created": 0, "updated": 0, "errors": 0, "details": []}
+
+    analyzed = 0
+    created = 0
+    updated = 0
+    errors = 0
+    details: list[dict[str, Any]] = []
+
+    for contact_id in contact_ids:
+        try:
+            rows = (
+                await session.execute(
+                    select(Message.body, Message.created_at)
+                    .where(
+                        Message.organization_id == org.id,
+                        Message.contact_id == contact_id,
+                        Message.direction == "inbound",
+                        Message.body.isnot(None),
+                        Message.body != "",
+                    )
+                    .order_by(Message.created_at.desc())
+                    .limit(50)
+                )
+            ).all()
+
+            if not rows:
+                continue
+
+            bodies = [r.body.strip() for r in reversed(rows) if r.body and r.body.strip()]
+            text = " | ".join(bodies)
+            if len(text) > 3000:
+                text = text[-3000:]
+            if not text:
+                continue
+
+            external_id = f"whatsapp_history:{contact_id}"
+            existing_id = (
+                await session.execute(
+                    select(FI.id).where(
+                        FI.organization_id == org.id,
+                        FI.external_id == external_id,
+                    )
+                )
+            ).scalar_one_or_none()
+
+            await ingest_feedback_item(
+                session,
+                org.id,
+                contact_id,
+                {
+                    "source": "whatsapp",
+                    "type": "whatsapp_history",
+                    "external_id": external_id,
+                    "text": text,
+                    "extra": {"msg_count": len(rows)},
+                },
+                classify=True,
+            )
+            await session.flush()
+
+            analyzed += 1
+            if existing_id:
+                updated += 1
+                details.append({"contact_id": str(contact_id), "status": "updated", "msg_count": len(rows)})
+            else:
+                created += 1
+                details.append({"contact_id": str(contact_id), "status": "created", "msg_count": len(rows)})
+
+        except Exception as exc:  # noqa: BLE001 — best-effort por contato.
+            errors += 1
+            logger.warning("batch_analyze erro para contato %s: %s", contact_id, exc)
+            details.append({"contact_id": str(contact_id), "status": "error", "error": str(exc)[:100]})
+
+    await session.commit()
+    return {"analyzed": analyzed, "created": created, "updated": updated, "errors": errors, "details": details}
 
 
 # --- LEITURA: conversas + thread (painel de chat) ----------------------------

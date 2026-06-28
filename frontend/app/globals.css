@@ -2121,6 +2121,76 @@ tbody tr:hover td { color: var(--text); }
   .wa-import-stats { grid-template-columns: 1fr; }
 }
 
+/* ===== Ingestão em lote (BatchWhatsAppSection) =============================
+   Card operacional na tela Monitorar: ação primária à direita, resultados
+   em linha abaixo. Visual discreto para não competir com o NPS hero. */
+.batch-wa-card {
+  padding: var(--pad-card-y) var(--pad-card-x);
+}
+.batch-wa-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.batch-wa-desc {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  max-width: 54ch;
+}
+.batch-wa-desc strong { color: var(--text); }
+.batch-wa-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 176px;
+  justify-content: center;
+}
+.batch-err { color: var(--detractor); font-size: 13px; }
+.batch-spinner {
+  width: 13px; height: 13px;
+  border: 2px solid rgba(255,255,255,.28);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.65s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.batch-wa-results {
+  margin-top: var(--s-4);
+  border-top: 1px solid var(--charcoal);
+  padding-top: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.batch-wa-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.batch-wa-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--indigo-light);
+  min-width: 40px;
+}
+.batch-wa-stat {
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+.batch-wa-stat strong { color: var(--text); }
+@media (max-width: 640px) {
+  .batch-wa-top { flex-direction: column; align-items: flex-start; }
+  .batch-wa-btn { width: 100%; }
+}
+
 /* ===== Painel de Chat (conversas + thread + envio) =========================
    Mesma alma da tela Monitorar: respiro generoso (escala --s-*), hierarquia
    clara (nome em display, prévia/meta calmos), divisores discretos. "Apertado
