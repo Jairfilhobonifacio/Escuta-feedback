@@ -76,6 +76,13 @@ def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
+def _parse_uuid(user_id: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="id de usuário inválido")
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -182,7 +189,7 @@ async def update_user(
         await session.execute(
             select(User).where(
                 User.organization_id == org.id,
-                User.id == uuid.UUID(user_id),
+                User.id == _parse_uuid(user_id),
             )
         )
     ).scalar_one_or_none()
@@ -219,7 +226,7 @@ async def delete_user(
         await session.execute(
             select(User).where(
                 User.organization_id == org.id,
-                User.id == uuid.UUID(user_id),
+                User.id == _parse_uuid(user_id),
             )
         )
     ).scalar_one_or_none()
@@ -247,7 +254,7 @@ async def set_password(
         await session.execute(
             select(User).where(
                 User.organization_id == org.id,
-                User.id == uuid.UUID(user_id),
+                User.id == _parse_uuid(user_id),
             )
         )
     ).scalar_one_or_none()
