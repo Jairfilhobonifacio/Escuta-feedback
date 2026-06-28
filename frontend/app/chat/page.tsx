@@ -170,6 +170,29 @@ export default function ChatPage() {
     }
   }
 
+  // Hand-off: operador assume a conversa (pausa o bot p/ este contato) ou devolve ao
+  // automático. O webhook respeita `needs_human_handoff` e não auto-responde quando true.
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  async function toggleHandoff() {
+    if (!selectedId || !thread || handoffBusy) return;
+    const novo = !thread.contact.needs_human_handoff;
+    setHandoffBusy(true);
+    try {
+      await wa.handoff(selectedId, novo);
+      await loadThread(selectedId);
+      setFlash({
+        kind: "ok",
+        msg: novo
+          ? "Você assumiu a conversa — bot pausado para este contato."
+          : "Conversa devolvida ao fluxo automático.",
+      });
+    } catch (e) {
+      setFlash({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setHandoffBusy(false);
+    }
+  }
+
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -332,6 +355,24 @@ export default function ChatPage() {
                     )}
                   </div>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={toggleHandoff}
+                  disabled={handoffBusy}
+                  style={
+                    thread.contact.needs_human_handoff
+                      ? { borderColor: "#22c55e", color: "#16a34a" }
+                      : undefined
+                  }
+                  title={
+                    thread.contact.needs_human_handoff
+                      ? "Você assumiu — o bot está pausado para este contato. Clique para devolver ao automático."
+                      : "Assumir a conversa e pausar o bot para este contato."
+                  }
+                >
+                  {thread.contact.needs_human_handoff ? "Você assumiu" : "Assumir"}
+                </Button>
                 <Link href={`/contatos/${thread.contact.id}`}>
                   <Button variant="outline" size="sm" className="chat-head-360">
                     Ficha 360

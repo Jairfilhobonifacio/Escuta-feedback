@@ -563,3 +563,23 @@ async def test_import_history_waha_desconectado_409(make_client, org, session):
     async with make_client(fake) as client:
         r = await client.post(f"/api/contacts/{contact.id}/whatsapp/import", json={})
     assert r.status_code == 409, r.text
+
+
+@pytest.mark.asyncio
+async def test_handoff_pausa_e_devolve(make_client, org, session):
+    """POST /whatsapp/handoff liga/desliga needs_human_handoff do contato (idempotente).
+    Quando true, o webhook pausa o bot (operador assume pelo Chat)."""
+    contact = await _contact(session, org, _CEL)
+    fake = FakeWAHA(connected=True)
+    async with make_client(fake) as client:
+        r = await client.post(
+            f"/api/contacts/{contact.id}/whatsapp/handoff", json={"ativar": True}
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["needs_human_handoff"] is True
+        # devolve ao fluxo automático
+        r2 = await client.post(
+            f"/api/contacts/{contact.id}/whatsapp/handoff", json={"ativar": False}
+        )
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["needs_human_handoff"] is False

@@ -189,6 +189,28 @@ class WhatsAppImportIn(BaseModel):
     limit: int = Field(default=100, ge=1, le=500)
 
 
+class HandoffIn(BaseModel):
+    """Liga/desliga o hand-off humano de um contato (assumir/devolver a conversa)."""
+
+    ativar: bool = True
+
+
+@router.post("/contacts/{contact_id}/whatsapp/handoff")
+async def whatsapp_handoff(
+    contact_id: str,
+    body: HandoffIn,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """ativar=true PAUSA o bot p/ este contato (o webhook respeita `needs_human_handoff`
+    e NÃO auto-responde — o operador assume a conversa pelo Chat); ativar=false devolve ao
+    fluxo automático. Idempotente. Retorna o estado atual do flag."""
+    org = await _get_org(session)
+    contact = await _get_contact(session, org, contact_id)
+    contact.needs_human_handoff = bool(body.ativar)
+    await session.commit()
+    return {"contact_id": str(contact.id), "needs_human_handoff": contact.needs_human_handoff}
+
+
 @router.post("/contacts/{contact_id}/whatsapp/send")
 async def whatsapp_send(
     contact_id: str,
@@ -615,6 +637,7 @@ async def whatsapp_thread(
             "estado": _estado_do_contato(contact),
             "selos": _selos_do_contato(contact),
             "opt_in": contact.opt_in,
+            "needs_human_handoff": contact.needs_human_handoff,
         },
         "mensagens": [
             {

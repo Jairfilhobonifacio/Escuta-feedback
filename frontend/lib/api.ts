@@ -1361,6 +1361,8 @@ export interface WhatsappThread {
     estado: string | null;
     selos: string[];
     opt_in: boolean;
+    /** Operador assumiu a conversa? Quando true, o bot fica pausado p/ este contato. */
+    needs_human_handoff: boolean;
   };
   mensagens: WhatsappThreadMsg[];
 }
@@ -1426,6 +1428,13 @@ export const whatsapp = {
       limit,
       confirm: true,
     }),
+  /** Liga/desliga o hand-off humano: ativar=true PAUSA o bot p/ este contato (operador
+      assume a conversa pelo Chat); false devolve ao fluxo automático. Idempotente. */
+  handoff: (contactId: string, ativar: boolean) =>
+    api.post<{ contact_id: string; needs_human_handoff: boolean }>(
+      `/api/contacts/${contactId}/whatsapp/handoff`,
+      { ativar },
+    ),
   /** PREVIEW: NÃO envia nada; devolve o que SERIA enviado + se WAHA está conectado. */
   sendPreview: (contactId: string, body: WhatsappSendInput) =>
     api.post<WhatsappSendPreview>(`/api/contacts/${contactId}/whatsapp/send`, {
