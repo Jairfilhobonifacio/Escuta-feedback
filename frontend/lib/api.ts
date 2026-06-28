@@ -1832,6 +1832,54 @@ export const agentConfig = {
     api.put<AgentFeatureState>("/api/agent-config", { key, enabled }),
 };
 
+// --- Central de Fontes (liga/desliga + sincroniza cada fonte de dados) -------
+// O dono governa CADA fonte (WhatsApp, cobrança, app, formulários…): liga/desliga
+// e dispara um "Sincronizar agora" ASSÍNCRONO. O backend roda em segundo plano e
+// expõe o PROGRESSO (`sync`); a UI faz polling enquanto alguma fonte está rodando.
+
+/** Estado da última (ou atual) sincronização de uma fonte.
+    status: 'idle' = nunca/parada · 'running' = em andamento (mostra barra) ·
+    'done' = concluída · 'error' = falhou (`error_msg` explica). Os contadores
+    (`processed`/`total`/…) alimentam a barra de progresso e o resumo. */
+export interface SourceSync {
+  status: "idle" | "running" | "done" | "error";
+  started_at: string | null;
+  finished_at: string | null;
+  processed: number;
+  total: number;
+  created: number;
+  updated: number;
+  errors: number;
+  error_msg: string | null;
+}
+
+/** Uma FONTE de dados da org. `available=false` → chave não configurada no
+    servidor (deploy): o painel não pode ligar/sincronizar (controles travados).
+    `enabled` é o liga/desliga do dono; `sync` carrega o progresso/resultado. */
+export interface Source {
+  key: string;
+  label: string;
+  descricao: string;
+  available: boolean;
+  enabled: boolean;
+  sync: SourceSync;
+}
+
+/** Helpers tipados da CENTRAL DE FONTES. Endpoints sob /api/sources (passam pelo
+    BFF, como o resto). `setEnabled` pode lançar ApiError(409) ao tentar ligar uma
+    fonte indisponível; `sync` ApiError(409) se a fonte está desligada/indisponível
+    ou já em andamento — a UI exibe a mensagem do erro. */
+export const sources = {
+  /** Lista as fontes e o estado de sincronização de cada uma. */
+  list: () => api.get<{ sources: Source[] }>("/api/sources"),
+  /** Liga/desliga UMA fonte. Retorna a fonte atualizada. */
+  setEnabled: (key: string, enabled: boolean) =>
+    api.put<Source>(`/api/sources/${key}`, { enabled }),
+  /** Dispara a sincronização (assíncrona). Retorna a fonte+sync já em 'running'. */
+  sync: (key: string) =>
+    api.post<{ key: string; sync: SourceSync }>(`/api/sources/${key}/sync`, {}),
+};
+
 // --- Auth do OPERADOR (login por cookie httpOnly via BFF) -------------------
 // O JWT nunca chega ao JS: o BFF (`app/api/[...path]/route.ts`) grava/lê o
 // cookie `escuta_session` (httpOnly). Aqui só falamos os contratos públicos.
