@@ -5,10 +5,13 @@ import Link from "next/link";
 import { Reveal, Stagger, StaggerItem } from "@/components/Motion";
 import {
   central as centralApi,
+  whatsapp as whatsappApi,
   type CentralOverview,
   type CentralNpsResponse,
   type CentralNpsItem,
   type CentralFilaResponse,
+  type WhatsappBatchImportResult,
+  type WhatsappBatchAnalyzeResult,
 } from "@/lib/api";
 
 /* ============================================================================
@@ -291,6 +294,122 @@ function FilaAbordar() {
             </Link>
           );
         })}
+      </div>
+    </Reveal>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Seção de ingestão em lote: importa histórico WAHA + cria FeedbackItems com IA
+   para 100% da base. Dois passos encadeados: import → analyze.
+   --------------------------------------------------------------------------- */
+type BatchStep = "idle" | "importing" | "analyzing" | "done" | "error";
+
+interface BatchState {
+  step: BatchStep;
+  importResult: WhatsappBatchImportResult | null;
+  analyzeResult: WhatsappBatchAnalyzeResult | null;
+  errorMsg: string | null;
+}
+
+function BatchWhatsAppSection({ base }: { base: number }) {
+  const [state, setState] = useState<BatchState>({
+    step: "idle",
+    importResult: null,
+    analyzeResult: null,
+    errorMsg: null,
+  });
+
+  async function runBatch() {
+    setState({ step: "importing", importResult: null, analyzeResult: null, errorMsg: null });
+    try {
+      const importResult = await whatsappApi.batchImport(false, 200);
+      setState((s) => ({ ...s, step: "analyzing", importResult }));
+      const analyzeResult = await whatsappApi.batchAnalyze();
+      setState((s) => ({ ...s, step: "done", analyzeResult }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setState((s) => ({ ...s, step: "error", errorMsg: msg }));
+    }
+  }
+
+  const { step, importResult: ir, analyzeResult: ar } = state;
+  const loading = step === "importing" || step === "analyzing";
+
+  return (
+    <Reveal className="mon-section">
+      <div className="mon-section-head">
+        <div className="section-title">Ingestão em lote</div>
+        <span className="mon-rule sm" aria-hidden />
+        <div className="card-head-sub">
+          importa histórico WhatsApp de todos os contatos e classifica com IA
+        </div>
+      </div>
+
+      <div className="card batch-wa-card">
+        <div className="batch-wa-top">
+          <div className="batch-wa-desc">
+            <strong>{base} contatos na base.</strong>{" "}
+            {step === "idle" && "Clique para cruzar com o WAHA e classificar as conversas."}
+            {step === "importing" && "Importando histórico do WhatsApp..."}
+            {step === "analyzing" && "Analisando conversas com IA (Groq)..."}
+            {step === "done" && "Concluído."}
+            {step === "error" && <span className="batch-err">{state.errorMsg}</span>}
+          </div>
+          <button
+            className="btn-primary batch-wa-btn"
+            onClick={runBatch}
+            disabled={loading}
+          >
+            {loading ? (
+              <>
+                <span className="batch-spinner" aria-hidden />
+                {step === "importing" ? "Importando..." : "Analisando com IA..."}
+              </>
+            ) : step === "done" ? (
+              "Executar novamente"
+            ) : (
+              "Importar e Analisar Todos"
+            )}
+          </button>
+        </div>
+
+        {(ir || ar) && (
+          <div className="batch-wa-results">
+            {ir && (
+              <div className="batch-wa-row">
+                <span className="batch-wa-label">WhatsApp</span>
+                <span className="batch-wa-stat">
+                  <strong>{ir.matched}</strong> encontrados de {ir.total_contacts}
+                </span>
+                <span className="batch-wa-stat">
+                  <strong className="nps-good">{ir.imported}</strong> mensagens novas
+                </span>
+                {ir.not_found > 0 && (
+                  <span className="batch-wa-stat faint">{ir.not_found} sem chat</span>
+                )}
+                {ir.errors > 0 && (
+                  <span className="batch-wa-stat nps-bad">{ir.errors} erros</span>
+                )}
+              </div>
+            )}
+            {ar && (
+              <div className="batch-wa-row">
+                <span className="batch-wa-label">IA</span>
+                <span className="batch-wa-stat">
+                  <strong>{ar.analyzed}</strong> conversas classificadas
+                </span>
+                <span className="batch-wa-stat nps-good">
+                  <strong>{ar.created}</strong> novos ·{" "}
+                  <strong>{ar.updated}</strong> atualizados
+                </span>
+                {ar.errors > 0 && (
+                  <span className="batch-wa-stat nps-bad">{ar.errors} erros</span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Reveal>
   );
@@ -644,6 +763,9 @@ export default function MonitorarPage() {
           )}
         </Reveal>
       )}
+
+      {/* 3.5) INGESTÃO EM LOTE — importar + analisar todas as conversas WhatsApp */}
+      <BatchWhatsAppSection base={overview.abordagem.contatos_total} />
 
       {/* 4) AS RESPOSTAS — badge em coluna fixa, fala, nota mono à direita. */}
       <Reveal className="mon-section">

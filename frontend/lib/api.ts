@@ -1367,6 +1367,35 @@ export interface WhatsappThread {
   mensagens: WhatsappThreadMsg[];
 }
 
+export interface WhatsappBatchImportDetail {
+  contact_id: string;
+  name: string | null;
+  phone: string | null;
+  status: "imported" | "preview" | "already_done" | "not_found" | "error";
+  chat_id?: string;
+  found: number;
+  new: number;
+  error?: string;
+}
+
+export interface WhatsappBatchImportResult {
+  dry_run: boolean;
+  total_contacts: number;
+  matched: number;
+  not_found: number;
+  imported: number;
+  errors: number;
+  details: WhatsappBatchImportDetail[];
+}
+
+export interface WhatsappBatchAnalyzeResult {
+  analyzed: number;
+  created: number;
+  updated: number;
+  errors: number;
+  details: { contact_id: string; status: string; msg_count?: number; error?: string }[];
+}
+
 export interface WhatsappImportPreviewMessage {
   direction: "inbound" | "outbound";
   body: string;
@@ -1428,6 +1457,15 @@ export const whatsapp = {
       limit,
       confirm: true,
     }),
+  /** BATCH IMPORT: importa histórico WAHA de todos os contatos da org. */
+  batchImport: (dryRun = false, limitPerContact = 200) =>
+    api.post<WhatsappBatchImportResult>("/api/whatsapp/batch-import", {
+      dry_run: dryRun,
+      limit_per_contact: limitPerContact,
+    }),
+  /** BATCH ANALYZE: cria FeedbackItems com IA para conversas já importadas. */
+  batchAnalyze: () =>
+    api.post<WhatsappBatchAnalyzeResult>("/api/whatsapp/batch-analyze", {}),
   /** Liga/desliga o hand-off humano: ativar=true PAUSA o bot p/ este contato (operador
       assume a conversa pelo Chat); false devolve ao fluxo automático. Idempotente. */
   handoff: (contactId: string, ativar: boolean) =>
