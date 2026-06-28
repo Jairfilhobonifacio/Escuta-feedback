@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any
 
 from sqlalchemy import text
 
@@ -46,21 +47,22 @@ async def embed_feedback_item_bg(item_id: uuid.UUID, org_id: uuid.UUID, content:
         logger.warning("clustering inline: falha ao gerar embedding do feedback %s", item_id, exc_info=True)
 
 
-def maybe_schedule_embed(item_id: uuid.UUID, org_id: uuid.UUID, content: str | None) -> None:
-    """Agenda o embed em background SE a flag estiver ON. No-op se OFF/sem texto.
+def maybe_schedule_embed(item_id: uuid.UUID, org: Any, content: str | None) -> None:
+    """Agenda o embed em background SE a feature estiver ON para a org. No-op se OFF/sem texto.
 
-    Síncrono e à prova de queda: cria a task e retorna na hora (fire-and-forget).
+    Síncrono e à prova de queda: cria a task e retorna na hora (fire-and-forget). O gate é
+    por-org (Central do Agente): override em Organization.settings vence o env (default).
     """
-    from app.config import settings  # tardio: lê o estado atual da flag
+    from app.domain.features import feature_enabled  # tardio: lê o estado atual + override
 
-    if not settings.clustering_inline_enabled:
+    if not feature_enabled(org, "clustering_inline_enabled"):
         return
     if not (content or "").strip():
         return
     try:
         import asyncio
 
-        asyncio.create_task(embed_feedback_item_bg(item_id, org_id, content or ""))
+        asyncio.create_task(embed_feedback_item_bg(item_id, org.id, content or ""))
     except RuntimeError:
         # Sem event loop rodando (contexto não-async) — ignora silenciosamente.
         logger.debug("clustering inline: sem event loop para agendar embedding")

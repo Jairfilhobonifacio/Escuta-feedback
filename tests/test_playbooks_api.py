@@ -5,7 +5,6 @@ get_session) + messaging fake. Nenhum teste toca Supabase/WAHA.
 """
 from __future__ import annotations
 
-import dataclasses
 import os
 import sys
 from datetime import datetime, timezone
@@ -19,7 +18,6 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-import app.api.tasks as _tasks_mod  # noqa: E402
 from app.api.admin import get_messaging  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
@@ -687,12 +685,15 @@ async def test_tarefa_de_outra_org_nao_aparece(client, org, session):
 # --- Esteira (Fase D, REGRA 1): concluir tarefa resolve o feedback vinculado ----
 
 
-def _set_esteira(monkeypatch, enabled: bool) -> None:
-    """Liga/desliga a flag esteira_enabled no binding `settings` que o handler de
-    tarefas usa (frozen dataclass -> dataclasses.replace, igual ao padrão do projeto)."""
-    monkeypatch.setattr(
-        _tasks_mod, "settings", dataclasses.replace(_tasks_mod.settings, esteira_enabled=enabled)
-    )
+def _set_esteira(org, enabled: bool) -> None:
+    """Liga/desliga a feature `esteira_enabled` POR ORG (Central do Agente). O handler de
+    tarefas lê via feature_enabled(org, ...); aqui gravamos o override em
+    settings["features"] (copia-edita-reatribui o JSONB, padrão do projeto)."""
+    s = dict(org.settings or {})
+    feats = dict(s.get("features") or {})
+    feats["esteira_enabled"] = enabled
+    s["features"] = feats
+    org.settings = s
 
 
 async def _mk_tarefa_com_feedback(session, org, *, action_status="a_abordar"):
@@ -719,7 +720,7 @@ async def _mk_tarefa_com_feedback(session, org, *, action_status="a_abordar"):
 async def test_esteira_concluir_tarefa_resolve_feedback(client, org, session, monkeypatch):
     """Flag ON + tarefa->concluida + feedback não-terminal: feedback vira 'resolvido'
     e o retorno traz feedback_resolvido=True."""
-    _set_esteira(monkeypatch, True)
+    _set_esteira(org, True)
     t, fb = await _mk_tarefa_com_feedback(session, org, action_status="a_abordar")
 
     r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
@@ -736,7 +737,7 @@ async def test_esteira_concluir_tarefa_resolve_feedback(client, org, session, mo
 async def test_esteira_feedback_ja_resolvido_e_noop(client, org, session, monkeypatch):
     """Feedback já em estado terminal (resolvido) -> a esteira não mexe e
     feedback_resolvido=False (idempotência)."""
-    _set_esteira(monkeypatch, True)
+    _set_esteira(org, True)
     t, fb = await _mk_tarefa_com_feedback(session, org, action_status="resolvido")
 
     r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
@@ -750,7 +751,7 @@ async def test_esteira_feedback_ja_resolvido_e_noop(client, org, session, monkey
 @pytest.mark.asyncio
 async def test_esteira_descartado_tambem_e_noop(client, org, session, monkeypatch):
     """O outro estado terminal ('descartado') também é preservado (não vira resolvido)."""
-    _set_esteira(monkeypatch, True)
+    _set_esteira(org, True)
     t, fb = await _mk_tarefa_com_feedback(session, org, action_status="descartado")
 
     r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
@@ -764,7 +765,7 @@ async def test_esteira_descartado_tambem_e_noop(client, org, session, monkeypatc
 @pytest.mark.asyncio
 async def test_esteira_flag_off_nao_mexe(client, org, session, monkeypatch):
     """Flag OFF: concluir a tarefa NÃO toca o feedback e feedback_resolvido=False."""
-    _set_esteira(monkeypatch, False)
+    _set_esteira(org, False)
     t, fb = await _mk_tarefa_com_feedback(session, org, action_status="a_abordar")
 
     r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "concluida"})
@@ -778,7 +779,7 @@ async def test_esteira_flag_off_nao_mexe(client, org, session, monkeypatch):
 @pytest.mark.asyncio
 async def test_esteira_status_diferente_de_concluida_nao_mexe(client, org, session, monkeypatch):
     """PATCH que NÃO conclui (ex.: status=em_andamento) não dispara a esteira."""
-    _set_esteira(monkeypatch, True)
+    _set_esteira(org, True)
     t, fb = await _mk_tarefa_com_feedback(session, org, action_status="a_abordar")
 
     r = await client.patch(f"/api/tarefas/{t.id}", json={"status": "em_andamento"})
@@ -792,7 +793,7 @@ async def test_esteira_status_diferente_de_concluida_nao_mexe(client, org, sessi
 @pytest.mark.asyncio
 async def test_esteira_tarefa_sem_feedback_nao_quebra(client, org, session, monkeypatch):
     """Concluir tarefa SEM feedback vinculado: feedback_resolvido=False, sem erro."""
-    _set_esteira(monkeypatch, True)
+    _set_esteira(org, True)
     ana = Contact(organization_id=org.id, phone="5531900000002", name="Bia", opt_in=True, profile_data={})
     session.add(ana)
     await session.flush()

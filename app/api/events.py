@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import get_session
 from app.domain.contacts.whatsapp import phone_key, phone_variants
+from app.domain.features import feature_enabled
 from app.domain.interfaces.messaging_service import IMessagingService
 from app.domain.survey.brain import SurveyBrain
 from app.domain.survey.constants import STATUS_INGESTED
@@ -381,7 +382,7 @@ async def bizzu_event(
     # Fase 2 (Playbooks): plugue INLINE do motor, atrás de flag (default OFF) e
     # best-effort — roda os playbooks cujo gatilho casa com o evento recebido (ex.:
     # 'churn_detected' num 'subscription_cancelled'). NUNCA derruba o endpoint.
-    await _maybe_run_playbooks_inline(session, org.id, payload.event, messaging)
+    await _maybe_run_playbooks_inline(session, org, payload.event, messaging)
 
     return {
         "dispatched": True,
@@ -393,18 +394,18 @@ async def bizzu_event(
 
 async def _maybe_run_playbooks_inline(
     session: AsyncSession,
-    org_id: "uuid.UUID",
+    org: Organization,
     event: str,
     messaging: IMessagingService,
 ) -> None:
-    """Roda o motor de Playbooks atrás de `PLAYBOOKS_INLINE_ENABLED` (default OFF).
+    """Roda o motor de Playbooks atrás da feature `playbooks_inline_enabled` (por org).
 
-    Com a flag OFF é no-op — o motor só roda via POST /api/playbooks/run. Com ON,
+    Com a feature OFF é no-op — o motor só roda via POST /api/playbooks/run. Com ON,
     aciona o motor (dry_run=False) restrito aos gatilhos mapeados pelo evento. O
     mapeamento é conservador (só churn por ora); demais eventos não acionam nada.
     Best-effort: try/except que loga e engole — o endpoint de eventos nunca cai.
     """
-    if not settings.playbooks_inline_enabled:
+    if not feature_enabled(org, "playbooks_inline_enabled"):
         return
     triggers = _EVENT_TRIGGER_MAP.get(event)
     if not triggers:
@@ -412,6 +413,6 @@ async def _maybe_run_playbooks_inline(
     try:
         from app.domain.cs.engine import run_playbooks
 
-        await run_playbooks(session, org_id, triggers=triggers, dry_run=False, messaging=messaging)
+        await run_playbooks(session, org.id, triggers=triggers, dry_run=False, messaging=messaging)
     except Exception:  # noqa: BLE001 — motor é enriquecedor, nunca ponto de falha.
         logger.warning("playbooks inline (events): falhou — seguindo", exc_info=True)

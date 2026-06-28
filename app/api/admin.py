@@ -24,6 +24,7 @@ from app.api.auth import require_operator
 from app.config import settings
 from app.db import get_session
 from app.domain.clustering.inline import maybe_schedule_embed
+from app.domain.features import agent_config_view, feature_enabled, feature_locked, set_feature
 from app.domain.contacts.whatsapp import sem_whatsapp, tem_whatsapp
 # Alias: dentro de list_clientes o query param chama-se `tem_whatsapp` (str) e
 # sombreia a função homônima; usamos este alias para o validador lá dentro.
@@ -1534,7 +1535,7 @@ async def create_feedback(
     logger.info("audit feedback_create por=%s id=%s type=%s", operator, item.id, item.type)
     # Camada 1: gera o embedding em background (fire-and-forget) SE a flag estiver ON.
     # Best-effort — não bloqueia nem pode derrubar a resposta. Off (default) = no-op.
-    maybe_schedule_embed(item.id, org.id, text)
+    maybe_schedule_embed(item.id, org, text)
     return _feedback_out(item, contact)
 
 
@@ -2297,12 +2298,12 @@ async def sugerir_resposta(
     fonte='fallback' e um rascunho neutro na voz da marca (o operador nunca trava).
     Guardrail anti-prompt-injection: o texto do cliente entra como DADO delimitado e o
     endpoint é fisicamente incapaz de agir (não envia, não muta)."""
-    if not settings.response_suggestion_enabled:
+    org = await _get_org(session)
+    if not feature_enabled(org, "response_suggestion_enabled"):
         raise HTTPException(status_code=503, detail="sugestão de resposta desligada")
     if brain is None:
         raise HTTPException(status_code=503, detail="LLM não configurado")
 
-    org = await _get_org(session)
     try:
         fid = uuid.UUID(feedback_id)
     except ValueError:
@@ -2360,11 +2361,11 @@ async def sugerir_resposta_chat(
     """Rascunho de resposta para a conversa de Chat de um CONTATO (não um feedback): usa as
     últimas mensagens RECEBIDAS do cliente como contexto. NUNCA envia. Mesmo gating
     (response_suggestion_enabled + brain) e guardrail do /feedbacks/{id}/sugerir-resposta."""
-    if not settings.response_suggestion_enabled:
+    org = await _get_org(session)
+    if not feature_enabled(org, "response_suggestion_enabled"):
         raise HTTPException(status_code=503, detail="sugestão de resposta desligada")
     if brain is None:
         raise HTTPException(status_code=503, detail="LLM não configurado")
-    org = await _get_org(session)
     try:
         cid = uuid.UUID(contact_id)
     except ValueError:
@@ -3030,6 +3031,49 @@ async def put_config(body: ConfigIn, session: AsyncSession = Depends(get_session
     return _config_payload(org)
 
 
+# --- Central de Controle do Agente (feature flags por org em runtime) ---------
+
+
+class AgentFeatureIn(BaseModel):
+    key: str
+    enabled: bool
+
+
+@router.get("/agent-config")
+async def get_agent_config(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Central do Agente: catálogo de features + estado (ligado/travado) DESTA org.
+
+    Espelha get_config. `enabled` já é o estado EFETIVO por org (override vence o env nas
+    seguras; nas perigosas o env é piso). `locked` = perigosa com o deploy desligado (o
+    painel não consegue ligar). Contrato: {"features":[{key,label,grupo,descricao,enabled,
+    locked}, ...]}."""
+    org = await _get_org(session)
+    return {"features": agent_config_view(org)}
+
+
+@router.put("/agent-config")
+async def put_agent_config(
+    body: AgentFeatureIn, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    """Liga/desliga UMA feature da org em runtime (sem re-deploy). Espelha put_config.
+
+    422 se a key não existe no catálogo. Feature perigosa com o env OFF fica TRAVADA: o
+    PUT não altera nada (o painel nunca liga o que o deploy desligou). Grava o override em
+    settings["features"][key] (copia-edita-reatribui o JSONB) e retorna o estado EFETIVO
+    recalculado: {"key", "enabled", "locked"}."""
+    org = await _get_org(session)
+    try:
+        set_feature(org, body.key, body.enabled)
+    except KeyError:
+        raise HTTPException(status_code=422, detail=f"feature desconhecida: '{body.key}'")
+    await session.commit()
+    return {
+        "key": body.key,
+        "enabled": feature_enabled(org, body.key),
+        "locked": feature_locked(body.key),
+    }
+
+
 @router.patch("/improvements/{improvement_id}")
 async def update_improvement(
     improvement_id: str,
@@ -3084,7 +3128,7 @@ async def update_improvement(
     # UPDATE em lote: action_status='resolvido' em TODO FeedbackItem com improvement_id
     # == imp.id cujo action_status NÃO seja terminal (resolvido/descartado). Idempotente
     # e best-effort — nunca derruba o PATCH.
-    if entregou_agora and settings.esteira_enabled:
+    if entregou_agora and feature_enabled(org, "esteira_enabled"):
         try:
             await session.execute(
                 update(FeedbackItem)

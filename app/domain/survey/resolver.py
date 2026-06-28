@@ -30,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.domain.features import feature_enabled
 from app.domain.interfaces.messaging_service import IMessagingService
 from app.domain.knowledge.retriever import KnowledgeBase
 from app.domain.survey import brain as brain_mod
@@ -656,14 +657,16 @@ class SurveyContextResolver:
     async def _maybe_run_playbooks_inline(self, pending: SurveyResponse, contact_id: uuid.UUID) -> None:
         """Plugue INLINE do motor de Playbooks (Fase 2), atrás de flag e best-effort.
 
-        Com `PLAYBOOKS_INLINE_ENABLED` OFF (default) é um no-op — o motor só roda via
-        POST /api/playbooks/run. Com a flag ON, quando um DETRATOR fecha a pesquisa,
+        Com a feature `playbooks_inline_enabled` OFF (default) é um no-op — o motor só
+        roda via POST /api/playbooks/run. Com ela ON, quando um DETRATOR fecha a pesquisa,
         roda o motor restrito ao gatilho 'nps_detractor' (dry_run=False) para já criar
         a tarefa de CS. NUNCA propaga exceção: o webhook do WAHA não pode cair por isso.
         """
-        if not settings.playbooks_inline_enabled:
-            return
         if pending.nps_bucket != "detractor":
+            return
+        # Gate por-org (Central do Agente): só busca a org no caso (raro) de detrator.
+        org = await self.session.get(Organization, self.org_id)
+        if org is None or not feature_enabled(org, "playbooks_inline_enabled"):
             return
         try:
             from app.domain.cs.engine import run_playbooks

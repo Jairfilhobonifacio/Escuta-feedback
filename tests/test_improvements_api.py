@@ -7,7 +7,6 @@ SQLite in-memory (override de get_session) + messaging fake. Nada toca Supabase/
 """
 from __future__ import annotations
 
-import dataclasses
 import os
 import sys
 import uuid
@@ -22,7 +21,6 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-import app.api.admin as _admin_mod  # noqa: E402
 from app.api.admin import get_brain, get_messaging  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
@@ -567,12 +565,15 @@ async def test_filtro_theme_sem_match_vazio(client, org, session):
 # --- Esteira (Fase D, REGRA 2): melhoria entregue resolve os feedbacks ----------
 
 
-def _set_esteira(monkeypatch, enabled: bool) -> None:
-    """Liga/desliga esteira_enabled no binding `settings` do handler de admin
-    (frozen dataclass -> dataclasses.replace, padrão do projeto)."""
-    monkeypatch.setattr(
-        _admin_mod, "settings", dataclasses.replace(_admin_mod.settings, esteira_enabled=enabled)
-    )
+def _set_esteira(org, enabled: bool) -> None:
+    """Liga/desliga a feature `esteira_enabled` POR ORG (Central do Agente). O handler de
+    admin lê via feature_enabled(org, ...); gravamos o override em settings["features"]
+    (copia-edita-reatribui o JSONB, padrão do projeto)."""
+    s = dict(org.settings or {})
+    feats = dict(s.get("features") or {})
+    feats["esteira_enabled"] = enabled
+    s["features"] = feats
+    org.settings = s
 
 
 async def _mk_fb_acionavel(session, org, imp, action_status):
@@ -592,7 +593,7 @@ async def test_esteira_entregue_resolve_feedbacks_vinculados(client, org, sessio
     """Flag ON + status->entregue: TODO feedback vinculado não-terminal vira 'resolvido';
     os já terminais (resolvido/descartado) ficam intactos; feedback de OUTRA melhoria não
     é tocado."""
-    _set_esteira(monkeypatch, True)
+    _set_esteira(org, True)
     imp = Improvement(organization_id=org.id, title="Loop", status="em_andamento")
     outra = Improvement(organization_id=org.id, title="Outra", status="ideia")
     session.add_all([imp, outra])
@@ -623,7 +624,7 @@ async def test_esteira_entregue_resolve_feedbacks_vinculados(client, org, sessio
 @pytest.mark.asyncio
 async def test_esteira_entregue_flag_off_nao_mexe(client, org, session, monkeypatch):
     """Flag OFF: entregar a melhoria NÃO resolve os feedbacks vinculados."""
-    _set_esteira(monkeypatch, False)
+    _set_esteira(org, False)
     imp = Improvement(organization_id=org.id, title="Loop", status="em_andamento")
     session.add(imp)
     await session.flush()
@@ -642,7 +643,7 @@ async def test_esteira_entregue_flag_off_nao_mexe(client, org, session, monkeypa
 async def test_esteira_entregue_idempotente_reentrega_noop(client, org, session, monkeypatch):
     """Re-PATCH para 'entregue' (já estava entregue) não re-dispara a esteira: um feedback
     reaberto manualmente após a 1ª entrega permanece como o operador deixou."""
-    _set_esteira(monkeypatch, True)
+    _set_esteira(org, True)
     imp = Improvement(organization_id=org.id, title="Loop", status="em_andamento")
     session.add(imp)
     await session.flush()

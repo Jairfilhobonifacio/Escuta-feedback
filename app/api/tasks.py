@@ -24,9 +24,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import _get_org, _partner_fields
-from app.config import settings
 from app.db import get_session
 from app.domain.cs.engine import PRIORITIES
+from app.domain.features import feature_enabled
 from app.domain.cs.health import compute_health
 from app.models.core import Contact
 from app.models.feedback import FeedbackItem
@@ -385,7 +385,7 @@ async def update_tarefa(
     """Edição parcial. status=concluida grava closed_at=agora; setar snoozed_until
     força status=adiada. 422 em status/priority inválidos.
 
-    Esteira (Fase D, atrás de settings.esteira_enabled): quando este PATCH conclui a
+    Esteira (Fase D, atrás da feature `esteira_enabled` por org): quando este PATCH conclui a
     tarefa (status=concluida) e ela tem feedback_item_id, o FeedbackItem vinculado
     (mesma org) passa a action_status='resolvido', salvo se já estiver terminal
     (resolvido/descartado). Best-effort e idempotente. O retorno ganha o booleano
@@ -461,7 +461,7 @@ async def update_tarefa(
     # SÓ quando esta chamada resolveu de fato (no-op se já estava resolvido/descartado,
     # se a flag está OFF, se a tarefa não tem feedback ou se o status != concluida).
     feedback_resolvido = False
-    if concluiu_agora and settings.esteira_enabled and task.feedback_item_id is not None:
+    if concluiu_agora and feature_enabled(org, "esteira_enabled") and task.feedback_item_id is not None:
         try:
             fb = (
                 await session.execute(
