@@ -5,25 +5,32 @@ auto-classify manual). Função PURA sobre o objeto (não toca a sessão/DB): re
 um alvo com `.sentiment`/`.themes`/`.ai_meta` (vale p/ FeedbackItem E SurveyResponse,
 duck-typing) e aplica `FeedbackTags`.
 
-Regra do incerto (Feature 1, SENTIMENT_PT_V2_ENABLED):
+Regra do incerto (Feature 1, `sentiment_pt_v2_enabled`):
 - confiança baixa (`tags.incerto`) E flag v2 ON ⇒ NÃO grava `sentiment` (deixa como
   está / None → "sem classificação", que a UI já trata) e guarda o palpite em
   `ai_meta["sentiment_sugerido"]`. Não chutamos uma classe quando a IA não tem certeza.
 - confiança alta/média (ou flag OFF) ⇒ grava `sentiment` normalmente, como hoje.
 Em qualquer caso, `themes` é gravado e `ai_meta` registra urgency/confianca/incerto/modelo.
+
+A flag v2 respeita o painel POR-ORG (Central do Agente) via `feature_enabled(org, ...)`:
+o chamador repassa a `org` quando a tem; sem `org` (default None) cai no ENV — retro-compat.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from app.domain.survey.brain import FeedbackTags, _sentiment_pt_v2_enabled
+from app.domain.features import feature_enabled
+from app.domain.survey.brain import FeedbackTags
 
 
-def apply_tags(target: Any, tags: FeedbackTags, *, model: str | None = None) -> None:
+def apply_tags(
+    target: Any, tags: FeedbackTags, *, model: str | None = None, org: Any = None
+) -> None:
     """Aplica `tags` ao `target` (FeedbackItem | SurveyResponse) in-place, sem DB.
 
     NÃO sobrescreve nada quando `tags is None` (chamador deve checar antes). Segue a
-    regra do incerto: quando incerto+v2, segura o `sentiment` e preserva o palpite."""
+    regra do incerto: quando incerto+v2 (por org/env), segura o `sentiment` e preserva
+    o palpite."""
     meta: dict[str, Any] = dict(getattr(target, "ai_meta", None) or {})
     meta["urgency"] = tags.urgency
     meta["confianca"] = tags.confianca
@@ -31,7 +38,7 @@ def apply_tags(target: Any, tags: FeedbackTags, *, model: str | None = None) -> 
     if model:
         meta["model"] = model
 
-    if tags.incerto and _sentiment_pt_v2_enabled():
+    if tags.incerto and feature_enabled(org, "sentiment_pt_v2_enabled"):
         # Não chuta: deixa o sentiment como está (None vira "sem classificação" na UI)
         # e preserva o palpite da IA para o operador conferir/revisar.
         meta["sentiment_sugerido"] = tags.sentiment

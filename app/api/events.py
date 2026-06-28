@@ -102,17 +102,22 @@ def _skip(reason: str, **extra: Any) -> dict[str, Any]:
     return {"dispatched": False, "reason": reason, **extra}
 
 
-async def _classify_response(resp: SurveyResponse, survey_name: str) -> None:
+async def _classify_response(
+    resp: SurveyResponse, survey_name: str, org: Organization | None = None
+) -> None:
     """Classifica o feedback textual (sentiment/themes/urgency) — best-effort.
 
     Espelha resolver._classify: nunca lança, nunca bloqueia o commit. Sem LLM
     ligado ou sem texto, vira no-op (a response fica apenas sem tags de IA).
+    `org` faz as flags de IA respeitarem o painel por-org (None ⇒ ENV).
     """
     if not (settings.llm_enabled and settings.groq_api_key and resp.answer_text):
         return
     try:
         brain = SurveyBrain(GroqLLM(settings.groq_api_key, settings.groq_model))
-        tags = await brain.classify_feedback(resp.answer_text, resp.answer_score, survey_name)
+        tags = await brain.classify_feedback(
+            resp.answer_text, resp.answer_score, survey_name, org=org
+        )
     except Exception:  # noqa: BLE001 — IA é enriquecedor, nunca ponto de falha.
         logger.warning("classify ingest falhou — seguindo sem tags", exc_info=True)
         return
@@ -120,7 +125,7 @@ async def _classify_response(resp: SurveyResponse, survey_name: str) -> None:
         return
     from app.domain.feedback.enrich import apply_tags
 
-    apply_tags(resp, tags, model=settings.groq_model)
+    apply_tags(resp, tags, model=settings.groq_model, org=org)
 
 
 async def _ingest_response(
@@ -170,7 +175,7 @@ async def _ingest_response(
     session.add(resp)
     await session.flush()  # idempotência: UNIQUE(survey_run_id, contact_id)
 
-    await _classify_response(resp, survey.name)
+    await _classify_response(resp, survey.name, org=org)
 
     await session.commit()
     return {

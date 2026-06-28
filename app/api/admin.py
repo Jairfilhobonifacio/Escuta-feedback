@@ -1386,6 +1386,7 @@ async def _auto_classify_feedback(
     themes: list[str] | None,
     session: AsyncSession | None = None,
     organization_id: uuid.UUID | None = None,
+    org: Organization | None = None,
 ) -> dict[str, Any] | None:
     """Auto-classifica um feedback manual via IA quando faltam tags — best-effort.
 
@@ -1395,8 +1396,10 @@ async def _auto_classify_feedback(
     quando não há nada a fazer ou a IA está indisponível/falhou (o endpoint segue sem
     tags). NUNCA lança — IA é enriquecedor, jamais ponto de falha (regra de ouro).
 
-    Feature 2 (CORRECTION_LOOP_ENABLED): se `session`+`organization_id` vierem, carrega
-    1× os exemplos de correções humanas e os passa como calibração ao classificador.
+    As 2 flags respeitam o painel POR-ORG (Central do Agente) via `feature_enabled(org,
+    ...)`: o override da org vence; sem `org` cai no ENV (retro-compat).
+    Feature 2 (correction_loop): se ON p/ a org + `session`+`organization_id`, carrega 1×
+    os exemplos de correções humanas e os passa como calibração ao classificador.
     Feature 1 (regra do incerto): quando a IA marca `incerto`, NÃO preenche `sentiment`
     (só guarda o palpite em ai_meta.sentiment_sugerido) — não chuta uma classe.
     """
@@ -1409,7 +1412,7 @@ async def _auto_classify_feedback(
 
     examples = None
     if (
-        settings.correction_loop_enabled
+        feature_enabled(org, "correction_loop_enabled")
         and session is not None
         and organization_id is not None
     ):
@@ -1422,7 +1425,9 @@ async def _auto_classify_feedback(
             examples = None
 
     try:
-        tags = await brain.classify_feedback(text, None, "feedback manual", examples=examples)
+        tags = await brain.classify_feedback(
+            text, None, "feedback manual", examples=examples, org=org
+        )
     except Exception:  # noqa: BLE001 — IA é enriquecedor, nunca ponto de falha.
         logger.warning("auto-classify feedback falhou — seguindo sem tags", exc_info=True)
         return None
@@ -1430,7 +1435,7 @@ async def _auto_classify_feedback(
         return None
 
     out: dict[str, Any] = {}
-    incerto = tags.incerto and settings.sentiment_pt_v2_enabled
+    incerto = tags.incerto and feature_enabled(org, "sentiment_pt_v2_enabled")
     # Preenche só o que o operador NÃO informou (não sobrescreve nada explícito) E só
     # quando a IA não está incerta (regra do "não chutar"; o palpite vai pro ai_meta).
     if sentiment is None and not incerto and tags.sentiment in SENTIMENTS:
@@ -1506,6 +1511,7 @@ async def create_feedback(
         themes=themes,
         session=session,
         organization_id=org.id,
+        org=org,
     )
     if enriched is not None:
         sentiment = enriched.get("sentiment", sentiment)

@@ -519,13 +519,17 @@ class SurveyContextResolver:
         """Classificação multi-eixo do feedback no fechamento (best-effort)."""
         if self.brain is None or not pending.answer_text:
             return
+        org = None
         try:
             run = await self.session.get(SurveyRun, pending.survey_run_id)
             survey = await self.session.get(Survey, run.survey_id) if run else None
+            # Gate por-org das flags de IA (Central do Agente): org=None cai no ENV.
+            org = await self.session.get(Organization, self.org_id)
             tags = await self.brain.classify_feedback(
                 pending.answer_text,
                 pending.answer_score,
                 survey.name if survey else "pesquisa",
+                org=org,
             )
         except Exception:  # noqa: BLE001
             logger.warning("SurveyBrain: classify_feedback lançou — seguindo sem tags", exc_info=True)
@@ -534,7 +538,7 @@ class SurveyContextResolver:
             return
         from app.domain.feedback.enrich import apply_tags
 
-        apply_tags(pending, tags, model=settings.groq_model)
+        apply_tags(pending, tags, model=settings.groq_model, org=org)
 
     async def _to_central(self, pending: SurveyResponse) -> None:
         """Leva a resposta fechada para a mega central (inbox de monitoramento).

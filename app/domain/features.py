@@ -26,11 +26,10 @@ DANGEROUS: set[str] = {"voc_agent_enabled", "voc_whatsapp_tool_enabled"}
 # Catálogo das features gerenciáveis pela Central do Agente — rótulos/descrições na
 # LINGUAGEM DO DONO (não jargão de código). `grupo` organiza a UI.
 #
-# NOTA (Fase 1): `sentiment_pt_v2_enabled` e `correction_loop_enabled` são lidos no
-# brain.py de forma GLOBAL (sem `org` à mão no call-site) — o override por-org já é
-# gravado e aparece no GET, mas o gate efetivo dessas duas ainda é por ENV até o
-# refactor que leva `org` ao construtor do brain. As demais seguras já respeitam o
-# override por-org em runtime.
+# Todas as features SEGURAS respeitam o override por-org em runtime: o gate efetivo é
+# `feature_enabled(org, key)`. `sentiment_pt_v2_enabled` e `correction_loop_enabled`
+# (Fase 2) leem a `org` repassada a `classify_feedback`/`apply_tags` nos call-sites que
+# a têm; onde a `org` não chega (ex.: scripts de lote), cai no ENV (default seguro).
 FEATURES: list[dict[str, Any]] = [
     {
         "key": "response_suggestion_enabled",
