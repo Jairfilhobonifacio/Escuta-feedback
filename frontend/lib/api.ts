@@ -1435,6 +1435,13 @@ export const whatsapp = {
       `/api/contacts/${contactId}/whatsapp/handoff`,
       { ativar },
     ),
+  /** Rascunho de resposta por IA p/ a conversa (NUNCA envia; preenche o textarea). 503
+      quando RESPONSE_SUGGESTION_ENABLED está off (a UI esconde o botão nesse caso). */
+  suggestReply: (contactId: string, tom?: string, instrucaoExtra?: string) =>
+    api.post<{ rascunho: string; fonte: string; modelo: string | null }>(
+      `/api/contacts/${contactId}/whatsapp/suggest-reply`,
+      { tom: tom ?? null, instrucao_extra: instrucaoExtra ?? null },
+    ),
   /** PREVIEW: NÃO envia nada; devolve o que SERIA enviado + se WAHA está conectado. */
   sendPreview: (contactId: string, body: WhatsappSendInput) =>
     api.post<WhatsappSendPreview>(`/api/contacts/${contactId}/whatsapp/send`, {

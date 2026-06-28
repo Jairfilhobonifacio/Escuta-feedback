@@ -2349,6 +2349,71 @@ async def sugerir_resposta(
     return SugerirRespostaOut(rascunho=_fallback_rascunho(nome), fonte="fallback", modelo=None)
 
 
+@router.post("/contacts/{contact_id}/whatsapp/suggest-reply", response_model=SugerirRespostaOut)
+async def sugerir_resposta_chat(
+    contact_id: str,
+    body: SugerirRespostaIn,
+    session: AsyncSession = Depends(get_session),
+    brain: SurveyBrain | None = Depends(get_brain),
+    operator: str = Depends(require_operator),
+) -> SugerirRespostaOut:
+    """Rascunho de resposta para a conversa de Chat de um CONTATO (não um feedback): usa as
+    últimas mensagens RECEBIDAS do cliente como contexto. NUNCA envia. Mesmo gating
+    (response_suggestion_enabled + brain) e guardrail do /feedbacks/{id}/sugerir-resposta."""
+    if not settings.response_suggestion_enabled:
+        raise HTTPException(status_code=503, detail="sugestão de resposta desligada")
+    if brain is None:
+        raise HTTPException(status_code=503, detail="LLM não configurado")
+    org = await _get_org(session)
+    try:
+        cid = uuid.UUID(contact_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="id inválido")
+    contact = (
+        await session.execute(
+            select(Contact).where(Contact.id == cid, Contact.organization_id == org.id)
+        )
+    ).scalar_one_or_none()
+    if contact is None:
+        raise HTTPException(status_code=404, detail="contato não encontrado")
+    # Contexto = últimas mensagens RECEBIDAS do cliente (inbound), em ordem cronológica.
+    msgs = (
+        (
+            await session.execute(
+                select(Message)
+                .where(
+                    Message.contact_id == cid,
+                    Message.organization_id == org.id,
+                    Message.direction == "inbound",
+                )
+                .order_by(Message.created_at.desc())
+                .limit(5)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    contexto = "\n".join(m.body for m in reversed(msgs) if m.body)
+    rascunho: str | None = None
+    try:
+        rascunho = await brain.suggest_reply(
+            feedback_text=contexto,
+            score=None,
+            sentiment=None,
+            contato_nome=contact.name,
+            tom=body.tom,
+            instrucao_extra=body.instrucao_extra,
+        )
+    except Exception:  # noqa: BLE001 — IA é enriquecedor, nunca ponto de falha.
+        logger.warning("suggest-reply chat: brain.suggest_reply lançou — fallback", exc_info=True)
+        rascunho = None
+    if rascunho:
+        return SugerirRespostaOut(rascunho=rascunho, fonte="ai", modelo=settings.groq_model)
+    return SugerirRespostaOut(
+        rascunho=_fallback_rascunho(contact.name), fonte="fallback", modelo=None
+    )
+
+
 # --- Clustering de temas (Fase 2) --------------------------------------------
 
 

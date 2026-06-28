@@ -492,3 +492,30 @@ async def test_auto_classify_confianca_alta_grava_sentiment(session, reset_flags
         session=session, organization_id=org.id,
     )
     assert out["sentiment"] == "negativo"
+
+
+@pytest.mark.asyncio
+async def test_chat_suggest_503_quando_flag_off(client, session, reset_flags):
+    """/contacts/{id}/whatsapp/suggest-reply: 503 quando RESPONSE_SUGGESTION_ENABLED off."""
+    _set_flag("response_suggestion_enabled", False)
+    app.dependency_overrides[get_brain] = lambda: SurveyBrain(FakeJsonLLM({"reply": "x"}))
+    _, f = await _seed_feedback(session)
+    r = await client.post(f"/api/contacts/{f.contact_id}/whatsapp/suggest-reply", json={})
+    assert r.status_code == 503
+    app.dependency_overrides.pop(get_brain, None)
+
+
+@pytest.mark.asyncio
+async def test_chat_suggest_rascunho_quando_ligado(client, session, reset_flags):
+    """Com a flag ON e LLM fake, devolve 200 + rascunho (fonte 'ai'). NUNCA envia."""
+    _set_flag("response_suggestion_enabled", True)
+    app.dependency_overrides[get_brain] = lambda: SurveyBrain(
+        FakeJsonLLM({"reply": "Oi! Vou te ajudar com isso."})
+    )
+    _, f = await _seed_feedback(session)
+    r = await client.post(f"/api/contacts/{f.contact_id}/whatsapp/suggest-reply", json={})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["rascunho"]
+    assert data["fonte"] == "ai"
+    app.dependency_overrides.pop(get_brain, None)

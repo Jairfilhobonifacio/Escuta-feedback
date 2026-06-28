@@ -193,6 +193,30 @@ export default function ChatPage() {
     }
   }
 
+  // Sugerir resposta por IA: preenche o textarea com um rascunho (editável, NUNCA
+  // auto-envia). 503 quando a flag RESPONSE_SUGGESTION_ENABLED está off.
+  const [sugerindo, setSugerindo] = useState(false);
+  async function sugerir() {
+    if (!selectedId || sugerindo) return;
+    setSugerindo(true);
+    setFlash(null);
+    try {
+      const r = await wa.suggestReply(selectedId);
+      setTexto(r.rascunho);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setFlash({
+        kind: "err",
+        msg:
+          msg.includes("503") || msg.toLowerCase().includes("deslig")
+            ? "Sugestão de resposta está desligada (ligue RESPONSE_SUGGESTION_ENABLED)."
+            : msg,
+      });
+    } finally {
+      setSugerindo(false);
+    }
+  }
+
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -449,6 +473,15 @@ export default function ChatPage() {
                   rows={2}
                   disabled={sending}
                 />
+                <Button
+                  variant="outline"
+                  onClick={sugerir}
+                  disabled={sugerindo || sending}
+                  className="h-10"
+                  title="Sugerir uma resposta por IA (preenche o campo; você revisa antes de enviar)"
+                >
+                  {sugerindo ? "Pensando\u{2026}" : "Sugerir"}
+                </Button>
                 <Button
                   variant="accent"
                   onClick={enviar}
