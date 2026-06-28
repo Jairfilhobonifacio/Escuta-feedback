@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import Integer, and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,19 @@ from app.config import settings
 from app.db import get_session
 from app.domain.clustering.inline import maybe_schedule_embed
 from app.domain.features import agent_config_view, feature_enabled, feature_locked, set_feature
+from app.domain.sources import (
+    DEFAULT_SYNC,
+    set_source_enabled,
+    source_available,
+    source_enabled,
+    source_known,
+    source_view,
+    sources_view,
+    sync_is_running,
+    sync_state,
+    write_sync,
+)
+from app.domain.sources.sync import run_bizzu_sync
 from app.domain.contacts.whatsapp import sem_whatsapp, tem_whatsapp
 # Alias: dentro de list_clientes o query param chama-se `tem_whatsapp` (str) e
 # sombreia a função homônima; usamos este alias para o validador lá dentro.
@@ -3072,6 +3085,90 @@ async def put_agent_config(
         "enabled": feature_enabled(org, body.key),
         "locked": feature_locked(body.key),
     }
+
+
+# --- Central de Fontes (fontes externas de dados por org, sync assíncrono) ------
+
+
+class SourceToggleIn(BaseModel):
+    enabled: bool
+
+
+@router.get("/sources")
+async def get_sources(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Central de Fontes: catálogo de fontes + estado (disponível? ligada? sync) DESTA org.
+
+    Espelha get_agent_config. `available` = a chave da fonte está no ambiente (bool; NUNCA
+    expõe a chave). `enabled` = override por org (default false). `sync` = estado do último
+    sync (ou o default 'idle' se nunca rodou). Contrato: {"sources":[{key,label,descricao,
+    available,enabled,sync}, ...]}."""
+    org = await _get_org(session)
+    return {"sources": sources_view(org)}
+
+
+@router.put("/sources/{key}")
+async def put_source(
+    key: str, body: SourceToggleIn, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    """Liga/desliga UMA fonte da org (sem re-deploy). Espelha put_agent_config.
+
+    422 se a key não existe no catálogo. 409 ao tentar LIGAR (enabled=true) uma fonte
+    INDISPONÍVEL (a chave não está no deploy). Grava o override em
+    settings["sources"][key]["enabled"] (copia-edita-reatribui o JSONB) e retorna o item da
+    fonte (mesmo shape do GET)."""
+    org = await _get_org(session)
+    if not source_known(key):
+        raise HTTPException(status_code=422, detail=f"fonte desconhecida: '{key}'")
+    if body.enabled and not source_available(key):
+        raise HTTPException(
+            status_code=409,
+            detail="fonte indisponível: configure BIZZU_PARTNER_API_KEY no deploy",
+        )
+    set_source_enabled(org, key, body.enabled)
+    await session.commit()
+    return source_view(org, key)
+
+
+@router.post("/sources/{key}/sync", status_code=202)
+async def post_source_sync(
+    key: str,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Dispara um sync ASSÍNCRONO da fonte e devolve 202 com o estado 'running'.
+
+    Pré-condições (422 só p/ key desconhecida; as demais são 409):
+      - key precisa existir (422);
+      - fonte DISPONÍVEL (chave no deploy) — senão 409;
+      - fonte LIGADA (enabled) — senão 409 "fonte desligada — ligue antes de sincronizar";
+      - sem outro sync 'running' iniciado há < 15 min — senão 409 "sincronização já em
+        andamento" (um sync travado há >= 15 min é stale e PODE ser redisparado).
+    Marca status='running'/started_at, ZERA os contadores, COMMITA (para o polling já ver
+    'running') e agenda o serviço via BackgroundTasks (roda fora do request, com a própria
+    sessão). Retorna {"key", "sync": {...}}."""
+    org = await _get_org(session)
+    if not source_known(key):
+        raise HTTPException(status_code=422, detail=f"fonte desconhecida: '{key}'")
+    if not source_available(key):
+        raise HTTPException(
+            status_code=409,
+            detail="fonte indisponível: configure BIZZU_PARTNER_API_KEY no deploy",
+        )
+    if not source_enabled(org, key):
+        raise HTTPException(status_code=409, detail="fonte desligada — ligue antes de sincronizar")
+    if sync_is_running(sync_state(org, key)):
+        raise HTTPException(status_code=409, detail="sincronização já em andamento")
+
+    sync = dict(DEFAULT_SYNC)
+    sync["status"] = "running"
+    sync["started_at"] = datetime.now(timezone.utc).isoformat()
+    write_sync(org, key, sync)
+    await session.commit()
+
+    # Só a base de clientes da Bizzu tem runner por ora. Referência ao global p/ ser
+    # monkeypatchável no teste (não roda de verdade na suíte).
+    background_tasks.add_task(run_bizzu_sync, org.id)
+    return {"key": key, "sync": sync}
 
 
 @router.patch("/improvements/{improvement_id}")
