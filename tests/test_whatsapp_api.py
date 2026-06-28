@@ -52,6 +52,9 @@ class FakeWAHA:
         self.connected = connected
         self.msg_id = msg_id
         self.sent: List[Dict[str, Any]] = []
+        self.chats: List[Dict[str, Any]] = []
+        self.messages_by_chat: Dict[str, List[Dict[str, Any]]] = {}
+        self.lid_map: Dict[str, str] = {}
 
     async def is_connected(self, session: str = None) -> bool:
         return self.connected
@@ -62,6 +65,21 @@ class FakeWAHA:
     async def send_text(self, chat_id: str, text: str, session: str = None) -> Dict[str, Any]:
         self.sent.append({"chat_id": chat_id, "text": text, "session": session})
         return {"success": True, "data": {"id": self.msg_id}}
+
+    async def get_chats(self, session: str = None, limit: int = 1000) -> List[Dict[str, Any]]:
+        return self.chats[:limit]
+
+    async def get_chat_messages(
+        self,
+        chat_id: str,
+        session: str = None,
+        limit: int = 100,
+        download_media: bool = False,
+    ) -> List[Dict[str, Any]]:
+        return self.messages_by_chat.get(chat_id, [])[:limit]
+
+    async def resolve_lid(self, lid: str, session: str = None) -> Optional[str]:
+        return self.lid_map.get(lid)
 
 
 @pytest_asyncio.fixture
@@ -439,3 +457,109 @@ async def test_thread_cronologica(make_client, org, session):
     assert bodies == ["primeira", "segunda", "terceira"]  # cronológico asc
     assert data["mensagens"][0]["direction"] == "inbound"
     assert data["mensagens"][1]["direction"] == "outbound"
+
+
+# --- IMPORTAÇÃO MANUAL DE HISTÓRICO WAHA ------------------------------------
+
+
+def _waha_chat(chat_id: str) -> Dict[str, Any]:
+    return {"id": {"_serialized": chat_id}, "timestamp": 1782560000}
+
+
+def _waha_msg(msg_id: str, body: str, *, from_me: bool, ts: int) -> Dict[str, Any]:
+    return {
+        "id": {"_serialized": msg_id},
+        "body": body,
+        "fromMe": from_me,
+        "timestamp": ts,
+    }
+
+
+@pytest.mark.asyncio
+async def test_import_history_preview_nao_grava_e_resolve_lid(make_client, org, session):
+    """Preview encontra chat @lid do contato, calcula novas e não grava transcript."""
+    contact = await _contact(session, org, _CEL, "Ana")
+    lid = "243026479857818@lid"
+    fake = FakeWAHA(connected=True)
+    fake.chats = [_waha_chat(lid)]
+    fake.lid_map[lid] = _CEL
+    fake.messages_by_chat[lid] = [
+        _waha_msg("wamid.1", "Oi, tenho uma sugestão", from_me=False, ts=1782560000),
+        _waha_msg("wamid.2", "Pode mandar", from_me=True, ts=1782560060),
+    ]
+
+    async with make_client(fake) as client:
+        r = await client.post(f"/api/contacts/{contact.id}/whatsapp/import", json={"limit": 10})
+
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["preview"] is True
+    assert data["imported"] is False
+    assert data["chat_id"] == lid
+    assert data["resolved_phone"] == _CEL
+    assert data["found"] == 2
+    assert data["new"] == 2
+    assert data["already_imported"] == 0
+    assert data["messages"][0]["body"] == "Oi, tenho uma sugestão"
+
+    msgs = (await session.execute(select(Message))).scalars().all()
+    assert msgs == []
+
+
+@pytest.mark.asyncio
+async def test_import_history_confirm_grava_somente_novas(make_client, org, session):
+    """Confirmação grava só mensagens ainda não importadas, preservando direção e id."""
+    contact = await _contact(session, org, _CEL, "Ana")
+    # Mensagem já importada antes: deve ser pulada.
+    session.add(
+        Message(
+            organization_id=org.id,
+            contact_id=contact.id,
+            direction="inbound",
+            body="antiga",
+            channel_msg_id="wamid.OLD",
+        )
+    )
+    await session.commit()
+
+    lid = "243026479857818@lid"
+    fake = FakeWAHA(connected=True)
+    fake.chats = [_waha_chat(lid)]
+    fake.lid_map[lid] = _CEL
+    fake.messages_by_chat[lid] = [
+        _waha_msg("wamid.OLD", "antiga", from_me=False, ts=1782560000),
+        _waha_msg("wamid.NEW1", "Cliente respondeu", from_me=False, ts=1782560060),
+        _waha_msg("wamid.NEW2", "Operador respondeu", from_me=True, ts=1782560120),
+    ]
+
+    async with make_client(fake) as client:
+        r = await client.post(
+            f"/api/contacts/{contact.id}/whatsapp/import",
+            json={"limit": 10, "confirm": True},
+        )
+
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["preview"] is False
+    assert data["imported"] is True
+    assert data["found"] == 3
+    assert data["new"] == 2
+    assert data["already_imported"] == 1
+
+    msgs = (
+        await session.execute(select(Message).where(Message.contact_id == contact.id))
+    ).scalars().all()
+    by_id = {m.channel_msg_id: m for m in msgs}
+    assert set(by_id) == {"wamid.OLD", "wamid.NEW1", "wamid.NEW2"}
+    assert by_id["wamid.NEW1"].direction == "inbound"
+    assert by_id["wamid.NEW2"].direction == "outbound"
+    assert by_id["wamid.NEW1"].msg_metadata["source_event"] == "waha_history_import"
+
+
+@pytest.mark.asyncio
+async def test_import_history_waha_desconectado_409(make_client, org, session):
+    contact = await _contact(session, org, _CEL, "Ana")
+    fake = FakeWAHA(connected=False)
+    async with make_client(fake) as client:
+        r = await client.post(f"/api/contacts/{contact.id}/whatsapp/import", json={})
+    assert r.status_code == 409, r.text

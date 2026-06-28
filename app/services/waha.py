@@ -95,6 +95,58 @@ class WAHAService:
             logger.exception("WAHA resolve_lid falhou para %s", lid)
             return None
 
+    async def get_chats(self, session: Optional[str] = None, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Lista chats conhecidos pela sessão WAHA (best-effort).
+
+        Usado pelo fluxo manual de backfill/preview: o operador decide puxar o
+        histórico de um contato já cadastrado. Nunca envia mensagem e nunca
+        grava nada; só lê a lista que o WAHA expõe em `/api/{session}/chats`.
+        """
+        sess = session or self.default_session
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                r = await client.get(
+                    f"{self.base_url}/api/{sess}/chats",
+                    params={"limit": max(1, min(int(limit), 1000))},
+                    headers=self._headers(),
+                )
+            if r.status_code >= 400:
+                logger.warning("WAHA get_chats %s: %s", r.status_code, r.text[:200])
+                return []
+            data = r.json()
+            return data if isinstance(data, list) else []
+        except Exception:  # noqa: BLE001 — leitura de histórico é best-effort.
+            logger.exception("WAHA get_chats falhou")
+            return []
+
+    async def get_chat_messages(
+        self,
+        chat_id: str,
+        session: Optional[str] = None,
+        limit: int = 100,
+        download_media: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Lê mensagens de um chat WAHA (best-effort, sem mídia por padrão)."""
+        sess = session or self.default_session
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                r = await client.get(
+                    f"{self.base_url}/api/{sess}/chats/{chat_id}/messages",
+                    params={
+                        "limit": max(1, min(int(limit), 500)),
+                        "downloadMedia": str(bool(download_media)).lower(),
+                    },
+                    headers=self._headers(),
+                )
+            if r.status_code >= 400:
+                logger.warning("WAHA get_chat_messages %s: %s", r.status_code, r.text[:200])
+                return []
+            data = r.json()
+            return data if isinstance(data, list) else []
+        except Exception:  # noqa: BLE001 — leitura de histórico é best-effort.
+            logger.exception("WAHA get_chat_messages falhou para %s", chat_id)
+            return []
+
     async def get_contacts(self, session: Optional[str] = None) -> List[Dict[str, Any]]:
         params = {"session": session or self.default_session}
         async with httpx.AsyncClient(timeout=self.timeout) as client:

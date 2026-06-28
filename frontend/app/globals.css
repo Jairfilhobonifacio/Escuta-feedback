@@ -1946,6 +1946,181 @@ tbody tr:hover td { color: var(--text); }
   margin-top: 12px; font-size: 12.5px; color: var(--text-dim); line-height: 1.5;
 }
 
+/* Importação manual de histórico: ação operacional, com preview claro antes de gravar. */
+.wa-import-block {
+  border-top: 1px solid var(--charcoal);
+  padding: var(--s-5) var(--pad-card-x);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--promoter-soft) 34%, transparent), transparent 78%);
+}
+.wa-import-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s-4);
+  align-items: start;
+}
+.wa-import-copy { min-width: 0; }
+.wa-import-kicker {
+  display: inline-flex; align-items: center; gap: 7px;
+  margin-bottom: 7px;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.055em;
+  text-transform: uppercase; color: var(--indigo-light);
+}
+.wa-import-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 16.5px;
+  font-weight: 750;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.wa-import-sub {
+  max-width: 58ch;
+  margin: 5px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.wa-import-actions {
+  display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap;
+}
+.wa-import-confirm { min-width: 104px; }
+.wa-import-preview {
+  margin-top: var(--s-4);
+  padding: 14px;
+  border: 1px solid var(--charcoal-2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ink) 86%, var(--promoter-soft));
+  box-shadow: var(--edge);
+}
+.wa-import-preview.has-chat {
+  border-color: color-mix(in srgb, var(--promoter-line) 55%, var(--charcoal-2));
+}
+.wa-import-preview.no-chat {
+  border-style: dashed;
+  background: var(--ink);
+}
+.wa-import-preview-top {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-3);
+}
+.wa-import-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 800; letter-spacing: 0.045em;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.wa-import-preview.has-chat .wa-import-status { color: var(--indigo-light); }
+.wa-import-chat {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-faint);
+  word-break: break-word;
+}
+.wa-import-done {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--promoter-soft);
+  border: 1px solid var(--promoter-line);
+  color: var(--indigo-light);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.045em;
+  white-space: nowrap;
+}
+.wa-import-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 13px;
+}
+.wa-import-stats > div {
+  min-width: 0;
+  padding: 10px 11px;
+  border-radius: var(--radius-xs);
+  background: var(--ink-700);
+  border: 1px solid var(--charcoal);
+}
+.wa-import-stats strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text);
+}
+.wa-import-stats span {
+  display: block;
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.wa-import-stats .is-hot {
+  border-color: var(--promoter-line);
+  background: var(--promoter-soft);
+}
+.wa-import-stats .is-hot strong { color: var(--indigo-light); }
+.wa-import-samples {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--charcoal);
+}
+.wa-import-samples-head {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px;
+  font-weight: 750;
+  color: var(--text-dim);
+}
+.wa-import-bubble {
+  max-width: min(100%, 620px);
+  padding: 10px 12px 8px;
+  border-radius: var(--radius-sm);
+}
+.wa-import-bubble.inbound {
+  align-self: flex-start;
+  background: var(--ink-700);
+  border: 1px solid var(--charcoal);
+  border-bottom-left-radius: 5px;
+}
+.wa-import-bubble.outbound {
+  align-self: flex-end;
+  background: var(--promoter-soft);
+  border: 1px solid var(--promoter-line);
+  border-bottom-right-radius: 5px;
+}
+.wa-import-bubble-body {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.wa-import-bubble-meta {
+  margin-top: 5px;
+  text-align: right;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.wa-import-empty {
+  margin-top: 12px;
+  padding: 11px 12px;
+  border-radius: var(--radius-xs);
+  background: var(--ink-700);
+  border: 1px solid var(--charcoal);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.wa-import-flash { margin-top: 14px; margin-bottom: 0; }
+@media (max-width: 680px) {
+  .wa-import-shell { grid-template-columns: 1fr; }
+  .wa-import-actions { justify-content: flex-start; }
+  .wa-import-stats { grid-template-columns: 1fr; }
+}
+
 /* ===== Painel de Chat (conversas + thread + envio) =========================
    Mesma alma da tela Monitorar: respiro generoso (escala --s-*), hierarquia
    clara (nome em display, prévia/meta calmos), divisores discretos. "Apertado

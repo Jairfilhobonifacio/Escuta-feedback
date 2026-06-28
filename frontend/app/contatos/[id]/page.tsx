@@ -58,6 +58,7 @@ import {
   type SeloVivo,
   type SeloOrigem,
   type Timeline360Item,
+  type WhatsappImportResult,
   type WhatsappSendPreview,
   type WhatsappThread,
 } from "@/lib/api";
@@ -1663,9 +1664,158 @@ function EnviarWhatsapp({
   );
 }
 
+// ===== Puxar conversa do WAHA (preview + importação confirmada) ==============
+
+function ImportarConversaWhatsapp({
+  contactId,
+  onImported,
+}: {
+  contactId: string;
+  onImported: () => void;
+}) {
+  const [preview, setPreview] = useState<WhatsappImportResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
+  const limit = 100;
+
+  async function puxarPreview() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setOkMsg(null);
+    try {
+      setPreview(await whatsappApi.importPreview(contactId, limit));
+    } catch (e) {
+      setPreview(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importar() {
+    if (busy || !preview || preview.new === 0) return;
+    setBusy(true);
+    setError(null);
+    setOkMsg(null);
+    try {
+      const out = await whatsappApi.importConfirm(contactId, limit);
+      setPreview(out);
+      setOkMsg(`${out.new} ${out.new === 1 ? "mensagem nova importada" : "mensagens novas importadas"}.`);
+      onImported();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const canImport = Boolean(preview && preview.new > 0);
+  const hasChat = Boolean(preview?.chat_id);
+
+  return (
+    <section className="wa-import-block">
+      <div className="wa-import-shell">
+        <div className="wa-import-copy">
+          <div className="wa-import-kicker">
+            <RefreshCw size={14} aria-hidden /> Histórico do WhatsApp
+          </div>
+          <h3 className="wa-import-title">Puxar conversa deste cliente</h3>
+          <p className="wa-import-sub">
+            Primeiro eu confiro o chat e mostro a prévia. A central só grava depois da sua confirmação.
+          </p>
+        </div>
+
+        <div className="wa-import-actions">
+          <Button type="button" variant="secondary" onClick={puxarPreview} disabled={busy}>
+            <Search size={15} aria-hidden />
+            {busy && !preview ? "Buscando..." : "Verificar"}
+          </Button>
+          <button
+            type="button"
+            className="btn btn-wa wa-import-confirm"
+            onClick={importar}
+            disabled={busy || !canImport}
+            title={!preview ? "Verifique primeiro" : preview.new === 0 ? "Nada novo para importar" : "Importar mensagens novas"}
+          >
+            Importar
+          </button>
+        </div>
+      </div>
+
+      {preview && (
+        <div className={`wa-import-preview ${hasChat ? "has-chat" : "no-chat"}`}>
+          <div className="wa-import-preview-top">
+            <div>
+              <div className="wa-import-status">
+                {hasChat ? (
+                  <><Check size={13} strokeWidth={2.7} aria-hidden /> conversa encontrada</>
+                ) : (
+                  <><Search size={13} aria-hidden /> nada encontrado</>
+                )}
+              </div>
+              <div className="wa-import-chat">
+                Chat <span className="mono">{preview.chat_id || "não encontrado"}</span>
+              </div>
+            </div>
+            {preview.imported && (
+              <span className="wa-import-done">
+                <Check size={12} strokeWidth={2.8} aria-hidden /> importado
+              </span>
+            )}
+          </div>
+
+          {hasChat ? (
+            <>
+              <div className="wa-import-stats" aria-label="Resumo da importação">
+                <div>
+                  <strong>{preview.found}</strong>
+                  <span>encontradas</span>
+                </div>
+                <div className={preview.new > 0 ? "is-hot" : ""}>
+                  <strong>{preview.new}</strong>
+                  <span>novas</span>
+                </div>
+                <div>
+                  <strong>{preview.already_imported}</strong>
+                  <span>na central</span>
+                </div>
+              </div>
+
+              {preview.messages.length > 0 && (
+                <div className="wa-import-samples">
+                  <div className="wa-import-samples-head">
+                    <MessageCircle size={14} aria-hidden /> Amostra da conversa
+                  </div>
+                  {preview.messages.slice(0, 5).map((m, idx) => (
+                    <div key={`${m.at}-${idx}`} className={`wa-import-bubble ${m.direction}`}>
+                      <div className="wa-import-bubble-body">{m.body}</div>
+                      <div className="wa-import-bubble-meta">
+                        {fmtDate(m.at)}{m.already_imported ? " · já importada" : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="wa-import-empty">
+              A sessão WAHA está conectada, mas não localizei conversa 1:1 para este telefone.
+            </div>
+          )}
+        </div>
+      )}
+
+      {okMsg && <div className="flash ok wa-import-flash">{okMsg}</div>}
+      {error && <div className="flash err wa-import-flash">{error}</div>}
+    </section>
+  );
+}
+
 // ===== Conversa no WhatsApp (histórico real da thread, só leitura) ===========
 
-function ConversaWhatsapp({ contactId }: { contactId: string }) {
+function ConversaWhatsapp({ contactId, refreshKey = 0 }: { contactId: string; refreshKey?: number }) {
   const [thread, setThread] = useState<WhatsappThread | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1689,7 +1839,7 @@ function ConversaWhatsapp({ contactId }: { contactId: string }) {
     return () => {
       alive = false;
     };
-  }, [contactId]);
+  }, [contactId, refreshKey]);
 
   // Rola para a última mensagem (mais recente) quando a thread carrega.
   useEffect(() => {
@@ -1780,7 +1930,12 @@ function WhatsappSection({
   onSent: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [threadRefresh, setThreadRefresh] = useState(0);
   const panelId = useId();
+  function refreshAll() {
+    setThreadRefresh((v) => v + 1);
+    onSent();
+  }
   return (
     <Reveal delay={0.08} className="card">
       <button
@@ -1817,8 +1972,9 @@ function WhatsappSection({
 
       {open && (
         <div id={panelId} className="border-t border-[var(--charcoal)]">
-          <EnviarWhatsapp contactId={contactId} onSent={onSent} />
-          <ConversaWhatsapp contactId={contactId} />
+          <EnviarWhatsapp contactId={contactId} onSent={refreshAll} />
+          <ImportarConversaWhatsapp contactId={contactId} onImported={refreshAll} />
+          <ConversaWhatsapp contactId={contactId} refreshKey={threadRefresh} />
         </div>
       )}
     </Reveal>

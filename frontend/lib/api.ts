@@ -1365,6 +1365,24 @@ export interface WhatsappThread {
   mensagens: WhatsappThreadMsg[];
 }
 
+export interface WhatsappImportPreviewMessage {
+  direction: "inbound" | "outbound";
+  body: string;
+  at: string | null;
+  already_imported: boolean;
+}
+
+export interface WhatsappImportResult {
+  preview: boolean;
+  imported: boolean;
+  chat_id: string | null;
+  resolved_phone: string | null;
+  found: number;
+  new: number;
+  already_imported: number;
+  messages: WhatsappImportPreviewMessage[];
+}
+
 /** Helpers tipados do WhatsApp da central. Envio é GATED:
     `sendPreview` nunca envia; `sendConfirm` só envia com WAHA conectado (409) e
     telefone celular válido (422). */
@@ -1395,6 +1413,19 @@ export const whatsapp = {
   /** Thread cronológica de um contato (balões). */
   thread: (contactId: string) =>
     api.get<WhatsappThread>(`/api/contacts/${contactId}/whatsapp/thread`),
+  /** PREVIEW: procura o chat WAHA do contato e informa quantas mensagens seriam
+      importadas. NÃO grava nada. */
+  importPreview: (contactId: string, limit = 100) =>
+    api.post<WhatsappImportResult>(`/api/contacts/${contactId}/whatsapp/import`, {
+      limit,
+      confirm: false,
+    }),
+  /** IMPORTAÇÃO REAL: grava no transcript apenas mensagens novas, após preview. */
+  importConfirm: (contactId: string, limit = 100) =>
+    api.post<WhatsappImportResult>(`/api/contacts/${contactId}/whatsapp/import`, {
+      limit,
+      confirm: true,
+    }),
   /** PREVIEW: NÃO envia nada; devolve o que SERIA enviado + se WAHA está conectado. */
   sendPreview: (contactId: string, body: WhatsappSendInput) =>
     api.post<WhatsappSendPreview>(`/api/contacts/${contactId}/whatsapp/send`, {

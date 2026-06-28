@@ -42,7 +42,7 @@ from app.api.campanha import (
 )
 from app.config import settings
 from app.db import get_session
-from app.domain.contacts.whatsapp import classify_phone, tem_whatsapp
+from app.domain.contacts.whatsapp import classify_phone, phone_variants, tem_whatsapp
 from app.domain.interfaces.messaging_service import IMessagingService
 from app.models.core import Contact
 from app.models.survey import Message
@@ -177,6 +177,18 @@ class WhatsAppSendIn(BaseModel):
     confirm: bool = False
 
 
+class WhatsAppImportIn(BaseModel):
+    """Preview/importação manual de histórico do WhatsApp para um contato.
+
+    Gate de segurança igual ao envio: sem `confirm` não grava nada. O operador vê
+    o volume encontrado e decide. `limit` é limitado para evitar puxar conversas
+    gigantes por engano.
+    """
+
+    confirm: bool = False
+    limit: int = Field(default=100, ge=1, le=500)
+
+
 @router.post("/contacts/{contact_id}/whatsapp/send")
 async def whatsapp_send(
     contact_id: str,
@@ -278,6 +290,212 @@ async def whatsapp_send(
         "abordagem": abordagem,
         "selos": _selos_do_contato(contact),
         "channel_msg_id": str(channel_msg_id) if channel_msg_id is not None else None,
+    }
+
+
+def _chat_id(chat: dict[str, Any]) -> str:
+    raw = chat.get("id")
+    if isinstance(raw, dict):
+        return str(raw.get("_serialized") or raw.get("serialized") or "")
+    return str(raw or "")
+
+
+def _message_id(msg: dict[str, Any]) -> str | None:
+    raw = msg.get("id")
+    if isinstance(raw, dict):
+        val = raw.get("_serialized") or raw.get("id") or raw.get("remote")
+    else:
+        val = raw or msg.get("messageId") or msg.get("message_id")
+    return str(val) if val else None
+
+
+def _message_body(msg: dict[str, Any]) -> str:
+    body = msg.get("body") or msg.get("caption") or msg.get("text") or ""
+    if body:
+        return str(body)
+    media_type = msg.get("type") or msg.get("mediaType")
+    return f"[{media_type or 'mensagem'} sem texto]"
+
+
+def _message_created_at(msg: dict[str, Any]) -> datetime | None:
+    ts = msg.get("timestamp") or msg.get("t")
+    try:
+        if ts is None:
+            return None
+        n = float(ts)
+        if n > 10_000_000_000:  # alguns payloads usam milissegundos.
+            n = n / 1000
+        return datetime.fromtimestamp(n, tz=timezone.utc)
+    except Exception:  # noqa: BLE001 — timestamp ruim não bloqueia import.
+        return None
+
+
+async def _find_chat_for_contact(
+    waha: WAHAService, contact: Contact, *, limit: int = 1000
+) -> tuple[str | None, str | None]:
+    """Encontra o chat WAHA que parece ser do contato, cruzando telefone e LID.
+
+    O WhatsApp novo devolve muitos chats como `@lid`; quando isso acontece,
+    resolvemos o LID para telefone e comparamos contra as variantes do telefone
+    salvo no contato.
+    """
+    phone = contact.phone or ""
+    variants = set(phone_variants(phone) or [])
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if digits:
+        variants.add(digits)
+    if not variants:
+        return None, None
+
+    direct_ids = [f"{v}@c.us" for v in variants]
+    chats = await waha.get_chats(settings.waha_session, limit=limit)
+    seen_direct = {_chat_id(c) for c in chats}
+    for chat_id in direct_ids:
+        if chat_id in seen_direct:
+            return chat_id, chat_id.split("@", 1)[0]
+
+    for chat in chats:
+        chat_id = _chat_id(chat)
+        if not chat_id or chat_id.endswith("@g.us"):
+            continue
+        if chat_id.endswith("@c.us"):
+            phone_digits = chat_id.split("@", 1)[0]
+        elif chat_id.endswith("@lid"):
+            phone_digits = await waha.resolve_lid(chat_id, settings.waha_session)
+        else:
+            phone_digits = None
+        if phone_digits and phone_digits in variants:
+            return chat_id, phone_digits
+    return None, None
+
+
+@router.post("/contacts/{contact_id}/whatsapp/import")
+async def whatsapp_import_history(
+    contact_id: str,
+    body: WhatsAppImportIn,
+    session: AsyncSession = Depends(get_session),
+    waha: WAHAService = Depends(get_waha),
+) -> dict[str, Any]:
+    """Puxa histórico WAHA de um contato já cadastrado, com preview obrigatório.
+
+    - `confirm=false` (default): procura o chat e lista estatísticas; NÃO grava.
+    - `confirm=true`: grava apenas mensagens novas no transcript (`Message`),
+      deduplicando por `channel_msg_id`.
+
+    Não classifica nem cria FeedbackItem ainda; primeiro passo é trazer a
+    conversa para a central com controle humano.
+    """
+    org = await _get_org(session)
+    contact = await _get_contact(session, org, contact_id)
+
+    if _is_grupo(contact.phone):
+        raise HTTPException(status_code=422, detail="grupo do WhatsApp não tem importação 1:1")
+
+    conectado = await waha.is_connected(settings.waha_session)
+    if not conectado:
+        raise HTTPException(status_code=409, detail="WAHA não conectado — ligue a sessão e tente de novo")
+
+    chat_id, resolved_phone = await _find_chat_for_contact(waha, contact)
+    if not chat_id:
+        return {
+            "preview": not body.confirm,
+            "imported": False,
+            "chat_id": None,
+            "resolved_phone": None,
+            "found": 0,
+            "new": 0,
+            "already_imported": 0,
+            "messages": [],
+        }
+
+    raw_messages = await waha.get_chat_messages(
+        chat_id, settings.waha_session, limit=body.limit, download_media=False
+    )
+    parsed: list[dict[str, Any]] = []
+    channel_ids: list[str] = []
+    for msg in raw_messages:
+        channel_id = _message_id(msg)
+        direction = "outbound" if bool(msg.get("fromMe")) else "inbound"
+        item = {
+            "channel_msg_id": channel_id,
+            "direction": direction,
+            "body": _message_body(msg),
+            "at": _message_created_at(msg),
+            "from_me": bool(msg.get("fromMe")),
+        }
+        parsed.append(item)
+        if channel_id:
+            channel_ids.append(channel_id)
+
+    existing: set[str] = set()
+    if channel_ids:
+        existing = set(
+            (
+                await session.execute(
+                    select(Message.channel_msg_id).where(
+                        Message.organization_id == org.id,
+                        Message.channel_msg_id.in_(channel_ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    # Só importamos mensagens com id estável do WAHA; sem isso não há deduplicação
+    # confiável em uma nova execução do mesmo import.
+    new_items = [m for m in parsed if m["channel_msg_id"] and m["channel_msg_id"] not in existing]
+    preview_messages = [
+        {
+            "direction": m["direction"],
+            "body": m["body"],
+            "at": m["at"].isoformat() if m["at"] else None,
+            "already_imported": bool(m["channel_msg_id"] and m["channel_msg_id"] in existing),
+        }
+        for m in parsed[:10]
+    ]
+
+    if not body.confirm:
+        return {
+            "preview": True,
+            "imported": False,
+            "chat_id": chat_id,
+            "resolved_phone": resolved_phone,
+            "found": len(parsed),
+            "new": len(new_items),
+            "already_imported": len(parsed) - len(new_items),
+            "messages": preview_messages,
+        }
+
+    for m in new_items:
+        meta = {
+            "source_event": "waha_history_import",
+            "chat_id": chat_id,
+            "resolved_phone": resolved_phone,
+            "from_me": m["from_me"],
+        }
+        session.add(
+            Message(
+                organization_id=org.id,
+                contact_id=contact.id,
+                direction=m["direction"],
+                body=m["body"],
+                channel_msg_id=m["channel_msg_id"],
+                msg_metadata=meta,
+                created_at=m["at"] or datetime.now(timezone.utc),
+            )
+        )
+
+    await session.commit()
+    return {
+        "preview": False,
+        "imported": True,
+        "chat_id": chat_id,
+        "resolved_phone": resolved_phone,
+        "found": len(parsed),
+        "new": len(new_items),
+        "already_imported": len(parsed) - len(new_items),
+        "messages": preview_messages,
     }
 
 
