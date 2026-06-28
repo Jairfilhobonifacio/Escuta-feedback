@@ -39,6 +39,7 @@ from app.api.integration import router as integration_router
 from app.api.playbooks import router as playbooks_router
 from app.api.tasks import router as tasks_router
 from app.api.webhook import router as webhook_router
+from app.api.users import router as users_router
 from app.api.whatsapp import router as whatsapp_router
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,7 @@ app.include_router(campanha_router, prefix="/api", dependencies=_panel)
 app.include_router(central_router, prefix="/api", dependencies=_panel)
 app.include_router(boards_router, prefix="/api", dependencies=_panel)
 app.include_router(whatsapp_router, prefix="/api", dependencies=_panel)
+app.include_router(users_router, prefix="/api", dependencies=_panel)
 app.include_router(integration_router, prefix="/api")
 
 

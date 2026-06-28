@@ -16,6 +16,7 @@ import {
   Bot,
   Radar,
   LogOut,
+  UserCog,
 } from "lucide-react";
 import { auth, whatsapp as wa } from "@/lib/api";
 
@@ -64,6 +65,7 @@ const groups: { label: string; items: NavItem[] }[] = [
       { href: "/conexao", label: "Conexão", icon: Smartphone, statusDot: true },
       { href: "/agente", label: "Agente", icon: Bot },
       { href: "/config", label: "Configurações", icon: Settings },
+      { href: "/usuarios", label: "Usuários", icon: UserCog },
     ],
   },
 ];

@@ -1905,3 +1905,61 @@ export const auth = {
   /** Quem está logado (valida o JWT no FastAPI). 401 se sessão ausente/expirada. */
   me: () => api.get<MeResult>("/api/auth/me"),
 };
+
+// --- Usuários / Operadores da plataforma (gestão de acesso) -----------------
+
+/** Papel do usuário na org: owner → admin → member. */
+export type UserRole = "owner" | "admin" | "member";
+
+/** Um usuário/operador retornado pela API. `_env_operator=true` = entrada virtual
+    do operador ENV (não é uma linha do banco — não pode ser editado/removido aqui). */
+export interface OrgUser {
+  id: string;
+  email: string;
+  name: string | null;
+  role: UserRole;
+  is_active: boolean;
+  /** Tem senha definida? false = convite pendente (não consegue logar ainda). */
+  has_password: boolean;
+  last_login_at: string | null;
+  invited_by: string | null;
+  created_at: string | null;
+  /** Indica que é o operador ENV (virtual — sem id real no banco). */
+  _env_operator?: boolean;
+}
+
+/** Corpo de POST /api/users. `password` opcional: sem ele cria convite pendente. */
+export interface CreateUserInput {
+  email: string;
+  name?: string | null;
+  role?: UserRole;
+  password?: string;
+}
+
+/** Corpo de PATCH /api/users/{id}. Só campos presentes são tocados. */
+export interface UpdateUserInput {
+  name?: string | null;
+  role?: UserRole;
+  is_active?: boolean;
+}
+
+/** Corpo de POST /api/users/{id}/set-password. */
+export interface SetPasswordInput {
+  password: string;
+}
+
+/** Helpers tipados de USUÁRIOS (gestão de membros da equipe no painel). */
+export const users = {
+  /** Lista todos os usuários da org (inclui operador ENV como entrada virtual). */
+  list: () => api.get<OrgUser[]>("/api/users"),
+  /** Cria um usuário. Sem `password` → convite pendente (has_password=false). */
+  create: (body: CreateUserInput) => api.post<OrgUser>("/api/users", body),
+  /** Edita nome, papel ou status ativo. `id` "env" → 403. */
+  update: (id: string, body: UpdateUserInput) =>
+    api.patch<OrgUser>(`/api/users/${id}`, body),
+  /** Remove o usuário da org. `id` "env" → 403. Backend responde 204. */
+  remove: (id: string) => api.del(`/api/users/${id}`),
+  /** Define ou troca a senha (ativa um convite pendente). `id` "env" → 403. */
+  setPassword: (id: string, body: SetPasswordInput) =>
+    api.post<OrgUser>(`/api/users/${id}/set-password`, body),
+};

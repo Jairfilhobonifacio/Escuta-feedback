@@ -23,11 +23,15 @@ from datetime import datetime, timezone
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._rate_limit import limiter
 from app.config import settings
+from app.db import get_session
+from app.models.core import User
 
 logger = logging.getLogger(__name__)
 
@@ -109,46 +113,74 @@ async def require_operator(authorization: str | None = Header(default=None)) -> 
 
 
 def _login_configured() -> bool:
-    return bool(
-        settings.jwt_secret
-        and settings.operator_user
-        and settings.operator_password_hash
-    )
+    return bool(settings.jwt_secret)
 
 
 @router.post("/auth/login")
 @limiter.limit("5/minute")
-async def login(request: Request, body: LoginIn) -> dict:
-    """Valida user+senha (bcrypt) e devolve o JWT. 401 mesma msg p/ user/senha errados;
-    503 se o login não estiver configurado (faltam env). NUNCA loga a senha."""
+async def login(
+    request: Request,
+    body: LoginIn,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Valida user+senha (bcrypt) e devolve o JWT.
+
+    Tenta o operador ENV primeiro (backward-compat); se não bater, busca na tabela
+    `users` pelo e-mail (suporte a múltiplos operadores). 401 mesma msg para user/senha
+    errados (mitiga enumeração); 503 se JWT_SECRET não estiver configurado.
+    """
     if not _login_configured():
-        # Sem hash/secret/user, login não pode funcionar (dev e prod): 503 explícito.
         raise HTTPException(status_code=503, detail="login não configurado")
 
-    expected_user = settings.operator_user or ""
-    expected_hash = (settings.operator_password_hash or "").encode("utf-8")
-
-    # 1 operador no piloto. Para crescer p/ N operadores: ler um CSV "user:hash" e
-    # procurar `body.user`; o checkpw dummy continua valendo p/ usuários inexistentes.
-    user_ok = bool(expected_user) and (body.user == expected_user)
     pw_bytes = body.password.encode("utf-8")
+
+    # --- Passo 1: operador ENV (mantém backward-compat) ---
+    env_user = settings.operator_user or ""
+    env_hash = (settings.operator_password_hash or "").encode("utf-8")
+    env_match = bool(env_user) and (body.user == env_user)
+
     try:
-        if user_ok:
-            pw_ok = bcrypt.checkpw(pw_bytes, expected_hash)
-        else:
-            # User desconhecido: checkpw contra dummy p/ não vazar (timing/enumeração).
-            bcrypt.checkpw(pw_bytes, _DUMMY_HASH)
-            pw_ok = False
+        if env_match and env_hash:
+            if bcrypt.checkpw(pw_bytes, env_hash):
+                token = _create_token(env_user)
+                return {"token": token, "user": env_user, "expires_in": JWT_TTL_SECONDS}
     except ValueError:
-        # Hash malformado no env — trata como falha de config (não vaza qual falhou).
-        logger.error("ESCUTA_OPERATOR_PASSWORD_HASH malformado (não é um hash bcrypt válido)")
-        raise HTTPException(status_code=503, detail="login não configurado")
+        logger.error("ESCUTA_OPERATOR_PASSWORD_HASH malformado")
 
-    if not (user_ok and pw_ok):
-        raise HTTPException(status_code=401, detail="credenciais inválidas")
+    # --- Passo 2: usuário na tabela `users` ---
+    db_user: User | None = None
+    try:
+        from app.api.admin import _get_org  # evita circular import no nível de módulo
+        org = await _get_org(session)
+        result = await session.execute(
+            select(User).where(
+                User.organization_id == org.id,
+                User.email == body.user,
+                User.is_active.is_(True),
+            )
+        )
+        db_user = result.scalar_one_or_none()
+    except Exception:  # noqa: BLE001
+        # DB indisponível não deve vazar stack; ainda tentamos o dummy abaixo.
+        pass
 
-    token = _create_token(expected_user)
-    return {"token": token, "user": expected_user, "expires_in": JWT_TTL_SECONDS}
+    if db_user and db_user.password_hash:
+        try:
+            if bcrypt.checkpw(pw_bytes, db_user.password_hash.encode("utf-8")):
+                # Atualiza last_login_at de forma best-effort
+                try:
+                    db_user.last_login_at = datetime.now(timezone.utc)
+                    await session.commit()
+                except Exception:  # noqa: BLE001
+                    pass
+                token = _create_token(db_user.email)
+                return {"token": token, "user": db_user.email, "expires_in": JWT_TTL_SECONDS}
+        except (ValueError, Exception):  # noqa: BLE001
+            pass
+
+    # Dummy checkpw para timing consistente quando user é desconhecido.
+    bcrypt.checkpw(pw_bytes, _DUMMY_HASH)
+    raise HTTPException(status_code=401, detail="credenciais inválidas")
 
 
 @router.get("/auth/me")
