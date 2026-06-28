@@ -81,6 +81,10 @@ def main() -> int:
         "ESCUTA_OPERATOR_USER": env.get("ESCUTA_OPERATOR_USER", ""),
         "ESCUTA_OPERATOR_PASSWORD_HASH": operator_hash,
         "WAHA_WEBHOOK_SECRET": env.get("WAHA_WEBHOOK_SECRET", ""),
+        # WAHA hospedado (EC2): repassa o endereco/key p/ o Modal alcancar o WAHA em prod.
+        "WAHA_BASE_URL": env.get("WAHA_BASE_URL", ""),
+        "WAHA_API_KEY": env.get("WAHA_API_KEY", ""),
+        "WAHA_SESSION": env.get("WAHA_SESSION", "default"),
         "CORS_ALLOWED_ORIGINS": env.get("CORS_ALLOWED_ORIGINS", ""),
         # Flags de IA Fase 2 — lidas do .env (default OFF "0"); ligar UMA por vez.
         # RAG_HYBRID/CLUSTERING_INLINE ficam inertes no Modal (sem torch/embeddings),
