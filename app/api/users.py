@@ -12,12 +12,13 @@ Requer require_operator em todas as rotas (injeta o panel key em main.py).
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,16 +33,29 @@ router = APIRouter(tags=["users"])
 
 _ROLES = {"owner", "admin", "member"}
 
+# Validação de e-mail LEVE (sem a dependência `email-validator` do EmailStr, que
+# não está na imagem do Modal — usar EmailStr derruba o import do app inteiro).
+# Suficiente para um painel interno de operadores: exige local@dominio.tld.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
 
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
 
 class CreateUserIn(BaseModel):
-    email: EmailStr
+    email: str = Field(max_length=254)
     name: str | None = Field(default=None, max_length=100)
     role: str = "member"
     password: str | None = Field(default=None, min_length=6, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def _valida_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL_RE.match(v):
+            raise ValueError("e-mail inválido")
+        return v
 
 
 class UpdateUserIn(BaseModel):
